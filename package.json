@@ -1,0 +1,21 @@
+{
+  "name": "bebetenkite-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dashboard de Vendas Bebetenkite - Next.js + Node.js",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "npm run dev -w apps/api",
+    "build": "npm run build -w apps/web && npm run build -w apps/api",
+    "start": "concurrently \"npm run start:api\" \"npm run start:web\"",
+    "start:web": "npm run start -w apps/web",
+    "start:api": "npm run start -w apps/api"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

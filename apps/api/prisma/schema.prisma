@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Usuarios do sistema
+model User {
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  name          String
+  role          String    // 'admin', 'gerente'
+  branchCodes   Int[]     @map("branch_codes") // Lojas permitidas
+  sellerCode    Int?      @map("seller_code")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  metaDistributions MetaDistribution[]
+
+  @@map("users")
+}
+
+// Distribuicoes de Meta
+model MetaDistribution {
+  id               Int       @id @default(autoincrement())
+  name             String?
+  ano              Int
+  mes              Int
+  totalValue       Decimal   @map("total_value") @db.Decimal(15, 2)
+  distributionType String?   @map("distribution_type") // 'manual', 'igual', 'proporcional'
+  createdById      Int?      @map("created_by")
+  createdBy        User?     @relation(fields: [createdById], references: [id])
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  items DistributionItem[]
+
+  @@map("meta_distributions")
+}
+
+// Itens da Distribuicao
+model DistributionItem {
+  id             Int       @id @default(autoincrement())
+  distributionId Int       @map("distribution_id")
+  distribution   MetaDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+  branchCode     Int       @map("branch_code")
+  sellerCode     Int?      @map("seller_code")
+  percentage     Decimal   @db.Decimal(5, 2)
+  valorCalculado Decimal   @map("valor_calculado") @db.Decimal(15, 2)
+  nivel1         Decimal?  @map("nivel_1") @db.Decimal(15, 2)
+  nivel2         Decimal?  @map("nivel_2") @db.Decimal(15, 2)
+  nivel3         Decimal?  @map("nivel_3") @db.Decimal(15, 2)
+  nivel4         Decimal?  @map("nivel_4") @db.Decimal(15, 2)
+  nivel5         Decimal?  @map("nivel_5") @db.Decimal(15, 2)
+
+  @@map("distribution_items")
+}
+
+// Metas (tabela existente - referencia)
+model Meta {
+  id         Int       @id @default(autoincrement())
+  ano        Int
+  mes        Int
+  branchCode Int       @map("branch_code")
+  sellerCode Int?      @map("seller_code")
+  nivel1     Decimal?  @map("nivel_1") @db.Decimal(15, 2)
+  nivel2     Decimal?  @map("nivel_2") @db.Decimal(15, 2)
+  nivel3     Decimal?  @map("nivel_3") @db.Decimal(15, 2)
+  nivel4     Decimal?  @map("nivel_4") @db.Decimal(15, 2)
+  nivel5     Decimal?  @map("nivel_5") @db.Decimal(15, 2)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([ano, mes, branchCode, sellerCode])
+  @@map("metas")
+}
+
+// Niveis de Meta (tabela existente - referencia)
+model MetaNivel {
+  id         Int       @id @default(autoincrement())
+  nivelOrdem Int       @map("nivel_ordem")
+  nivelNome  String    @map("nivel_nome")
+  nivelCor   String    @map("nivel_cor")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@map("meta_niveis")
+}

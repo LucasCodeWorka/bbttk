@@ -1,0 +1,378 @@
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+interface FetchOptions extends RequestInit {
+  token?: string;
+}
+
+async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
+  const { token, ...fetchOptions } = options;
+
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...fetchOptions,
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Erro desconhecido' }));
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Auth
+export const authApi = {
+  login: (email: string, password: string) =>
+    fetchApi<{ token: string; user: User }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  me: (token: string) =>
+    fetchApi<{ user: User }>('/api/auth/me', { token }),
+
+  getUsers: (token: string) =>
+    fetchApi<{ users: User[] }>('/api/auth/users', { token }),
+
+  createUser: (token: string, data: CreateUserData) =>
+    fetchApi<{ user: User }>('/api/auth/users', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateUser: (token: string, id: number, data: Partial<CreateUserData>) =>
+    fetchApi<{ user: User }>(`/api/auth/users/${id}`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteUser: (token: string, id: number) =>
+    fetchApi<{ success: boolean }>(`/api/auth/users/${id}`, {
+      token,
+      method: 'DELETE',
+    }),
+};
+
+// Vendas
+export const vendasApi = {
+  getPeriodo: (inicio: string, fim: string, branchCode?: number) =>
+    fetchApi<VendasResponse>(
+      `/api/vendas/periodo/${inicio}/${fim}${branchCode ? `/${branchCode}` : ''}`
+    ),
+
+  getDiarias: (inicio: string, fim: string, branchCode?: number) =>
+    fetchApi<VendasDiariasResponse>(
+      `/api/vendas/diarias/periodo/${inicio}/${fim}${branchCode ? `/${branchCode}` : ''}`
+    ),
+
+  getVendedores: (branchCode?: number) =>
+    fetchApi<VendedoresResponse>(
+      `/api/vendedores${branchCode ? `/${branchCode}` : ''}`
+    ),
+
+  getVendedoresLista: () =>
+    fetchApi<{ vendedores: { code: number; name: string }[] }>('/api/vendedores-lista'),
+
+  getTopProdutos: (branchCode?: number) =>
+    fetchApi<TopProdutosResponse>(
+      `/api/top-produtos${branchCode ? `/${branchCode}` : ''}`
+    ),
+
+  getComparativoAno: (inicio: string, fim: string) =>
+    fetchApi<ComparativoAnoResponse>(`/api/comparativo-ano/${inicio}/${fim}`),
+
+  getProjecaoMes: (branchCode?: number) =>
+    fetchApi<ProjecaoMesResponse>(
+      `/api/projecao-mes${branchCode ? `/${branchCode}` : ''}`
+    ),
+
+  getProjecaoFiliais: () =>
+    fetchApi<ProjecaoFiliaisResponse>('/api/projecao-filiais'),
+};
+
+// Metas
+export const metasApi = {
+  getNiveis: () =>
+    fetchApi<{ niveis: MetaNivel[] }>('/api/meta-niveis'),
+
+  updateNiveis: (token: string, niveis: MetaNivel[]) =>
+    fetchApi<{ success: boolean }>('/api/meta-niveis', {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ niveis }),
+    }),
+
+  getMetas: (ano: number, mes: number, branchCode?: number) =>
+    fetchApi<{ metas: Meta[]; ano: number; mes: number }>(
+      `/api/metas?ano=${ano}&mes=${mes}${branchCode ? `&branch_code=${branchCode}` : ''}`
+    ),
+
+  saveMeta: (token: string, data: MetaData) =>
+    fetchApi<{ success: boolean }>('/api/metas', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteMeta: (token: string, id: number) =>
+    fetchApi<{ success: boolean }>(`/api/metas/${id}`, {
+      token,
+      method: 'DELETE',
+    }),
+
+  distribuir: (token: string, data: DistribuicaoData) =>
+    fetchApi<{ success: boolean; distribution: MetaDistribution }>('/api/metas/distribuir', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getDistribuicoes: (ano: number, mes: number) =>
+    fetchApi<{ distributions: MetaDistribution[] }>(
+      `/api/metas/distribuicoes?ano=${ano}&mes=${mes}`
+    ),
+};
+
+// Types
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  branchCodes: number[];
+  sellerCode?: number;
+  isActive?: boolean;
+}
+
+export interface CreateUserData {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  branchCodes?: number[];
+  sellerCode?: number;
+}
+
+export interface Filial {
+  branch_code: number;
+  branch_name: string;
+  transacoes: number;
+  pecas: number;
+  faturamento: number;
+  pa: number;
+  tm: number;
+}
+
+export interface VendasResponse {
+  periodo: { inicio: string; fim: string };
+  filiais: Filial[];
+  total: {
+    faturamento: number;
+    pecas: number;
+    transacoes: number;
+    pa: number;
+    tm: number;
+  };
+}
+
+export interface VendasDiariasResponse {
+  periodo: { inicio: string; fim: string };
+  dados: {
+    data: string;
+    transacoes: number;
+    pecas: number;
+    faturamento: number;
+  }[];
+}
+
+export interface Vendedor {
+  seller_code: number;
+  seller_name: string;
+  transacoes: number;
+  pecas: number;
+  faturamento: number;
+  pa: number;
+  tm: number;
+}
+
+export interface VendedoresResponse {
+  periodo: { inicio: string; fim: string };
+  vendedores: Vendedor[];
+}
+
+export interface Produto {
+  referencia: string;
+  nome: string;
+  quantidade: number;
+  valor: number;
+}
+
+export interface TopProdutosResponse {
+  periodo: { inicio: string; fim: string };
+  produtos: Produto[];
+}
+
+export interface FilialComparativo {
+  branch_code: number;
+  branch_name: string;
+  atual: {
+    faturamento: number;
+    pecas: number;
+    transacoes: number;
+    pa: number;
+    tm: number;
+  };
+  ano_anterior: {
+    faturamento: number;
+    pecas: number;
+    transacoes: number;
+    pa: number;
+    tm: number;
+  };
+  variacao: {
+    faturamento: number;
+    pecas: number;
+    transacoes: number;
+  };
+}
+
+export interface ComparativoAnoResponse {
+  periodo_atual: { inicio: string; fim: string };
+  periodo_anterior: { inicio: string; fim: string };
+  filiais: FilialComparativo[];
+  total: {
+    atual: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number };
+    ano_anterior: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number };
+    variacao: {
+      faturamento: { atual: number; anterior: number; diferenca: number; percentual: number };
+      pecas: { atual: number; anterior: number; diferenca: number; percentual: number };
+      transacoes: { atual: number; anterior: number; diferenca: number; percentual: number };
+    };
+  };
+}
+
+export interface ProjecaoMesResponse {
+  periodo_atual: {
+    inicio: string;
+    fim: string;
+    dias_decorridos: number;
+    dias_restantes: number;
+    dias_total: number;
+  };
+  realizado: {
+    faturamento: number;
+    pecas: number;
+    transacoes: number;
+    tm: number;
+    pa: number;
+  };
+  caminhada: number;
+  projecao: { faturamento: number };
+  falta_vender: {
+    faturamento: number;
+    media_diaria_necessaria: number;
+  };
+  variacao_vs_ano_anterior: number;
+}
+
+export interface ProjecaoFilial {
+  branch_code: number;
+  branch_name: string;
+  realizado: number;
+  caminhada: number;
+  projecao: number;
+  falta: number;
+  ano_anterior_completo: number;
+  variacao_vs_ano_anterior: number;
+}
+
+export interface ProjecaoFiliaisResponse {
+  periodo: {
+    inicio: string;
+    fim: string;
+    dias_decorridos: number;
+    dias_restantes: number;
+  };
+  filiais: ProjecaoFilial[];
+  total: {
+    realizado: number;
+    projecao: number;
+    falta: number;
+    ano_anterior_completo: number;
+    variacao_vs_ano_anterior: number;
+  };
+}
+
+export interface MetaNivel {
+  nivel_ordem: number;
+  nivel_nome: string;
+  nivel_cor: string;
+}
+
+export interface Meta {
+  id: number;
+  ano: number;
+  mes: number;
+  branch_code: number;
+  seller_code: number | null;
+  nivel_1: number;
+  nivel_2: number;
+  nivel_3: number;
+  nivel_4: number;
+  nivel_5: number;
+}
+
+export interface MetaData {
+  ano: number;
+  mes: number;
+  branch_code: number;
+  seller_code?: number | null;
+  nivel_1: number;
+  nivel_2: number;
+  nivel_3: number;
+  nivel_4: number;
+  nivel_5: number;
+}
+
+export interface DistribuicaoItem {
+  branchCode: number;
+  sellerCode?: number;
+  percentage: number;
+}
+
+export interface DistribuicaoData {
+  name?: string;
+  ano: number;
+  mes: number;
+  totalValue: number;
+  distributionType: 'manual' | 'igual' | 'proporcional';
+  items: DistribuicaoItem[];
+}
+
+export interface MetaDistribution {
+  id: number;
+  name: string | null;
+  ano: number;
+  mes: number;
+  totalValue: number;
+  distributionType: string;
+  createdAt: string;
+  items: {
+    id: number;
+    branchCode: number;
+    sellerCode: number | null;
+    percentage: number;
+    valorCalculado: number;
+  }[];
+}
