@@ -1,10 +1,23 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
-import { FILIAIS, EXCLUDED_OPERATIONS } from '../config/constants.js';
+import { FILIAIS, EXCLUDED_OPERATIONS, EXCLUDED_BRANCH_CODES, DEVOLUTION_OPERATIONS } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
+import * as metasService from './metas.service.js';
 
-// Helper para criar lista de exclusão SQL
-const EXCLUDED_OPS_SQL = Array.from(EXCLUDED_OPERATIONS).join(',');
+// Operações de negócio (não venda, não devolução) sempre excluídas do cálculo
+const EXCLUDED_OPERATIONS_LIST = [...EXCLUDED_OPERATIONS];
+const DEVOLUTION_OPERATIONS_LIST = [...DEVOLUTION_OPERATIONS];
+const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
+
+// Filtro reutilizado: transação não cancelada, operação de negócio válida.
+// Inclui devoluções (elas entram com sinal negativo via DEVOLUTION_SIGN, não são excluídas).
+const SALE_OPERATION_FILTER = Prisma.sql`(t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)}))`;
+// Sinal: -1 para devolução (TOTVS operationMode='3'/operationsType='E'), +1 para venda
+const DEVOLUTION_SIGN = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -1 ELSE 1 END)`;
+// Só conta como "venda" (transação/cliente) quando não é devolução
+const IS_SALE = Prisma.sql`t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})`;
+// Filtro reutilizado: filial de venda (exclui Fábrica)
+const STORE_BRANCH_FILTER = Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`;
 
 interface VendasFilial {
   branch_code: number;
@@ -14,6 +27,10 @@ interface VendasFilial {
   faturamento: number;
   pa: number;
   tm: number;
+  clientes: number;
+  pm: number;
+  tm_cliente: number;
+  pac: number;
 }
 
 interface VendasDiarias {
@@ -51,7 +68,7 @@ function round(value: number, decimals: number = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
 
-// Vendas por período
+// Vendas por período (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasPeriodo(
   startDate: Date,
   endDate: Date,
@@ -65,20 +82,23 @@ export async function getVendasPeriodo(
     transacoes: bigint;
     pecas: Decimal;
     faturamento: Decimal;
+    clientes: bigint;
   }>>`
     SELECT
       t.branch_code,
       t.branch_name,
-      COUNT(DISTINCT t.transaction_code) as transacoes,
-      COALESCE(SUM(ti.quantity), 0) as pecas,
-      COALESCE(SUM(ti.net_value), 0) as faturamento
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
+      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.customer_code END) as clientes
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status != 6
-      AND (t.operation_code IS NULL OR t.operation_code NOT IN (140,76,25,26,27,273,44,240,241,242,243,244,245,239,238,237,236))
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
     GROUP BY t.branch_code, t.branch_name
     ORDER BY faturamento DESC
@@ -88,6 +108,7 @@ export async function getVendasPeriodo(
     const transacoes = Number(row.transacoes);
     const pecas = decimalToNumber(row.pecas);
     const faturamento = decimalToNumber(row.faturamento);
+    const clientes = Number(row.clientes);
 
     return {
       branch_code: row.branch_code,
@@ -97,11 +118,15 @@ export async function getVendasPeriodo(
       faturamento: round(faturamento),
       pa: transacoes > 0 ? round(pecas / transacoes) : 0,
       tm: transacoes > 0 ? round(faturamento / transacoes) : 0,
+      clientes,
+      pm: pecas > 0 ? round(faturamento / pecas) : 0,
+      tm_cliente: clientes > 0 ? round(faturamento / clientes) : 0,
+      pac: clientes > 0 ? round(pecas / clientes) : 0,
     };
   });
 }
 
-// Vendas diárias
+// Vendas diárias (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasDiarias(
   startDate: Date,
   endDate: Date,
@@ -117,16 +142,17 @@ export async function getVendasDiarias(
   }>>`
     SELECT
       t.transaction_date as data,
-      COUNT(DISTINCT t.transaction_code) as transacoes,
-      COALESCE(SUM(ti.quantity), 0) as pecas,
-      COALESCE(SUM(ti.net_value), 0) as faturamento
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
+      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status != 6
-      AND (t.operation_code IS NULL OR t.operation_code NOT IN (140,76,25,26,27,273,44,240,241,242,243,244,245,239,238,237,236))
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
     GROUP BY t.transaction_date
     ORDER BY t.transaction_date
@@ -156,9 +182,9 @@ export async function getVendasVendedor(
   }>>`
     SELECT
       ti.seller_code,
-      COUNT(DISTINCT (ti.branch_code, ti.transaction_code)) as transacoes,
-      SUM(ti.quantity) as pecas,
-      SUM(ti.net_value) as faturamento
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
+      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as pecas,
+      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as faturamento
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -166,7 +192,7 @@ export async function getVendasVendedor(
       AND t.status != 6
       AND ti.seller_code != 1
       AND ti.seller_code IS NOT NULL
-      AND (t.operation_code IS NULL OR t.operation_code NOT IN (140,76,25,26,27,273,44,240,241,242,243,244,245,239,238,237,236))
+      AND ${SALE_OPERATION_FILTER}
       ${branchFilter}
     GROUP BY ti.seller_code
     ORDER BY faturamento DESC
@@ -206,8 +232,8 @@ export async function getTopProdutos(
     SELECT
       COALESCE(p.reference_code, ti.product_code::text) as referencia,
       COALESCE(p.reference_name, p.product_name, 'Produto ' || ti.product_code) as nome,
-      SUM(ti.quantity) as quantidade,
-      SUM(ti.net_value) as valor
+      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as quantidade,
+      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as valor
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -215,7 +241,7 @@ export async function getTopProdutos(
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status != 6
       AND ti.seller_code != 1
-      AND (t.operation_code IS NULL OR t.operation_code NOT IN (140,76,25,26,27,273,44,240,241,242,243,244,245,239,238,237,236))
+      AND ${SALE_OPERATION_FILTER}
       AND (p.is_finished_product = true OR p.product_code IS NULL)
       ${branchFilter}
     GROUP BY COALESCE(p.reference_code, ti.product_code::text),
@@ -232,11 +258,110 @@ export async function getTopProdutos(
   }));
 }
 
+// Devoluções por filial (operações com operationsType='E' e operationMode='3' no TOTVS)
+export async function getDevolucoesPorFilial(
+  startDate: Date,
+  endDate: Date
+): Promise<Map<number, { valor: number; qtde: number }>> {
+  const results = await prisma.$queryRaw<Array<{
+    branch_code: number;
+    qtde_dev: bigint;
+    valor_dev: Decimal;
+  }>>`
+    SELECT
+      t.branch_code,
+      COUNT(DISTINCT t.transaction_code) as qtde_dev,
+      COALESCE(SUM(ti.net_value), 0) as valor_dev
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status != 6
+      AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
+      AND ${STORE_BRANCH_FILTER}
+    GROUP BY t.branch_code
+  `;
+
+  const map = new Map<number, { valor: number; qtde: number }>();
+  for (const row of results) {
+    map.set(row.branch_code, {
+      valor: round(decimalToNumber(row.valor_dev)),
+      qtde: Number(row.qtde_dev),
+    });
+  }
+  return map;
+}
+
+// Clientes novos por filial: customer_code cuja primeira compra válida (em toda a história)
+// cai dentro do período. Faturamento CN = receita desses clientes no período, na filial onde compraram.
+export async function getClientesNovosPorFilial(
+  startDate: Date,
+  endDate: Date
+): Promise<Map<number, { qtde: number; faturamento: number }>> {
+  const results = await prisma.$queryRaw<Array<{
+    branch_code: number;
+    clientes_novos: bigint;
+    faturamento_cn: Decimal;
+  }>>`
+    WITH primeira_compra AS (
+      SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
+      FROM transacoes t
+      WHERE t.customer_code IS NOT NULL
+        AND t.status != 6
+        AND ${SALE_OPERATION_FILTER}
+        AND ${IS_SALE}
+        AND ${STORE_BRANCH_FILTER}
+      GROUP BY t.customer_code
+    ),
+    novos AS (
+      SELECT customer_code FROM primeira_compra
+      WHERE primeira_data BETWEEN ${startDate} AND ${endDate}
+    )
+    SELECT
+      t.branch_code,
+      COUNT(DISTINCT t.customer_code) as clientes_novos,
+      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento_cn
+    FROM transacoes t
+    JOIN novos n ON n.customer_code = t.customer_code
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status != 6
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+    GROUP BY t.branch_code
+  `;
+
+  const map = new Map<number, { qtde: number; faturamento: number }>();
+  for (const row of results) {
+    map.set(row.branch_code, {
+      qtde: Number(row.clientes_novos),
+      faturamento: round(decimalToNumber(row.faturamento_cn)),
+    });
+  }
+  return map;
+}
+
+// Meta (nível 3 = 100%) por filial, apenas metas de loja (seller_code IS NULL)
+export async function getMetasPorFilial(ano: number, mes: number): Promise<Map<number, number>> {
+  const metas = await metasService.getMetas(ano, mes);
+  const map = new Map<number, number>();
+  for (const m of metas) {
+    if (m.seller_code === null) {
+      map.set(m.branch_code, m.nivel_3);
+    }
+  }
+  return map;
+}
+
 // Calcular totais
 export function calcularTotais(filiais: VendasFilial[]) {
   const totalFaturamento = filiais.reduce((sum, f) => sum + f.faturamento, 0);
   const totalPecas = filiais.reduce((sum, f) => sum + f.pecas, 0);
   const totalTransacoes = filiais.reduce((sum, f) => sum + f.transacoes, 0);
+  const totalClientes = filiais.reduce((sum, f) => sum + f.clientes, 0);
 
   return {
     faturamento: round(totalFaturamento),
@@ -244,6 +369,10 @@ export function calcularTotais(filiais: VendasFilial[]) {
     transacoes: totalTransacoes,
     pa: totalTransacoes > 0 ? round(totalPecas / totalTransacoes) : 0,
     tm: totalTransacoes > 0 ? round(totalFaturamento / totalTransacoes) : 0,
+    clientes: totalClientes,
+    pm: totalPecas > 0 ? round(totalFaturamento / totalPecas) : 0,
+    tm_cliente: totalClientes > 0 ? round(totalFaturamento / totalClientes) : 0,
+    pac: totalClientes > 0 ? round(totalPecas / totalClientes) : 0,
   };
 }
 

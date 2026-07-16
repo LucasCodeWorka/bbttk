@@ -19,6 +19,15 @@ export const EXCLUDED_OPERATIONS = new Set([
   140, 76, 25, 26, 27, 273, 44, 240, 241, 242, 243, 244, 245, 239, 238, 237, 236
 ]);
 
+// Filiais que não são lojas de venda (2 = Fábrica)
+export const EXCLUDED_BRANCH_CODES = new Set([2]);
+
+// Operações de devolução (TOTVS: invoiceData.operationsType = 'E' e operationMode = '3')
+// Contam como faturamento negativo/devolução, não como venda.
+export const DEVOLUTION_OPERATIONS = new Set([
+  1, 46, 192, 604, 802, 900, 905, 9041
+]);
+
 // Níveis de meta (percentuais)
 export const NIVEL_PERCENTUAIS = {
   1: 0.80,  // Bronze: 80%

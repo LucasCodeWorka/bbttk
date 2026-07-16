@@ -35,6 +35,11 @@ export default function UsuariosPage() {
     isActive: true,
   });
 
+  // Modal Redefinir Senha
+  const [showSenhaModal, setShowSenhaModal] = useState(false);
+  const [usuarioSenha, setUsuarioSenha] = useState<User | null>(null);
+  const [novaSenha, setNovaSenha] = useState('');
+
   // Verificar acesso admin
   useEffect(() => {
     if (!isAdmin) {
@@ -138,6 +143,51 @@ export default function UsuariosPage() {
     }
   }
 
+  // Bloquear / desbloquear usuário
+  async function handleToggleAtivo(user: User) {
+    if (!token) return;
+
+    const acao = user.isActive ? 'bloquear' : 'desbloquear';
+    if (!confirm(`Tem certeza que deseja ${acao} o usuario "${user.name}"?`)) return;
+
+    try {
+      await authApi.updateUser(token, user.id, { isActive: !user.isActive });
+      showToast(user.isActive ? 'Usuario bloqueado!' : 'Usuario desbloqueado!', 'success');
+      carregarUsuarios();
+    } catch (error) {
+      showToast('Erro ao atualizar usuario', 'error');
+      console.error(error);
+    }
+  }
+
+  // Abrir modal de redefinir senha
+  function handleAbrirRedefinirSenha(user: User) {
+    setUsuarioSenha(user);
+    setNovaSenha('');
+    setShowSenhaModal(true);
+  }
+
+  // Confirmar redefinição de senha
+  async function handleRedefinirSenha() {
+    if (!token || !usuarioSenha) return;
+
+    if (!novaSenha || novaSenha.length < 6) {
+      showToast('A senha precisa ter pelo menos 6 caracteres', 'error');
+      return;
+    }
+
+    try {
+      await authApi.updateUser(token, usuarioSenha.id, { password: novaSenha });
+      showToast(`Senha de ${usuarioSenha.name} redefinida!`, 'success');
+      setShowSenhaModal(false);
+      setUsuarioSenha(null);
+      setNovaSenha('');
+    } catch (error) {
+      showToast('Erro ao redefinir senha', 'error');
+      console.error(error);
+    }
+  }
+
   // Deletar usuário
   async function handleDeletar(id: number) {
     if (!token || !confirm('Excluir este usuario?')) return;
@@ -232,13 +282,27 @@ export default function UsuariosPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="center">
-                    <div className="flex justify-center gap-2">
+                    <div className="flex justify-center gap-2 flex-wrap">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => handleEditarUsuario(user)}
                       >
                         Editar
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleAbrirRedefinirSenha(user)}
+                      >
+                        Redefinir Senha
+                      </Button>
+                      <Button
+                        variant={user.isActive ? 'danger' : 'secondary'}
+                        size="sm"
+                        onClick={() => handleToggleAtivo(user)}
+                      >
+                        {user.isActive ? 'Bloquear' : 'Desbloquear'}
                       </Button>
                       <Button
                         variant="danger"
@@ -357,6 +421,40 @@ export default function UsuariosPage() {
           </Button>
           <Button onClick={handleSalvar}>
             {editingUser ? 'Atualizar' : 'Criar Usuario'}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Modal Redefinir Senha */}
+      <Modal
+        isOpen={showSenhaModal}
+        onClose={() => setShowSenhaModal(false)}
+        title="Redefinir Senha"
+        size="sm"
+      >
+        {usuarioSenha && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Definir nova senha para <span className="font-medium">{usuarioSenha.name}</span>{' '}
+              ({usuarioSenha.email})
+            </p>
+            <Input
+              label="Nova Senha"
+              type="password"
+              value={novaSenha}
+              onChange={(e) => setNovaSenha(e.target.value)}
+              placeholder="Minimo 6 caracteres"
+              autoFocus
+            />
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+          <Button variant="ghost" onClick={() => setShowSenhaModal(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={handleRedefinirSenha}>
+            Redefinir Senha
           </Button>
         </div>
       </Modal>

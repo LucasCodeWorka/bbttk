@@ -7,86 +7,228 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Usuarios do sistema
 model User {
-  id            Int       @id @default(autoincrement())
-  email         String    @unique
-  passwordHash  String    @map("password_hash")
-  name          String
-  role          String    // 'admin', 'gerente'
-  branchCodes   Int[]     @map("branch_codes") // Lojas permitidas
-  sellerCode    Int?      @map("seller_code")
-  isActive      Boolean   @default(true) @map("is_active")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
+  id                Int                @id @default(autoincrement())
+  email             String             @unique @db.VarChar(255)
+  passwordHash      String             @map("password_hash") @db.VarChar(255)
+  name              String             @db.VarChar(100)
+  role              String             @db.VarChar(20)
+  branchCodes       Int[]              @map("branch_codes")
+  sellerCode        Int?               @map("seller_code")
+  isActive          Boolean?           @default(true) @map("is_active")
+  createdAt         DateTime?          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime?          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   metaDistributions MetaDistribution[]
 
   @@map("users")
 }
 
-// Distribuicoes de Meta
 model MetaDistribution {
-  id               Int       @id @default(autoincrement())
-  name             String?
+  id               Int                @id @default(autoincrement())
+  name             String?            @db.VarChar(100)
   ano              Int
   mes              Int
-  totalValue       Decimal   @map("total_value") @db.Decimal(15, 2)
-  distributionType String?   @map("distribution_type") // 'manual', 'igual', 'proporcional'
-  createdById      Int?      @map("created_by")
-  createdBy        User?     @relation(fields: [createdById], references: [id])
-  createdAt        DateTime  @default(now()) @map("created_at")
-
-  items DistributionItem[]
+  totalValue       Decimal            @map("total_value") @db.Decimal(15, 2)
+  distributionType String?            @map("distribution_type") @db.VarChar(20)
+  createdById      Int?               @map("created_by")
+  createdAt        DateTime?          @default(now()) @map("created_at") @db.Timestamp(6)
+  items            DistributionItem[]
+  createdBy        User?              @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("meta_distributions")
 }
 
-// Itens da Distribuicao
 model DistributionItem {
-  id             Int       @id @default(autoincrement())
-  distributionId Int       @map("distribution_id")
-  distribution   MetaDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
-  branchCode     Int       @map("branch_code")
-  sellerCode     Int?      @map("seller_code")
-  percentage     Decimal   @db.Decimal(5, 2)
-  valorCalculado Decimal   @map("valor_calculado") @db.Decimal(15, 2)
-  nivel1         Decimal?  @map("nivel_1") @db.Decimal(15, 2)
-  nivel2         Decimal?  @map("nivel_2") @db.Decimal(15, 2)
-  nivel3         Decimal?  @map("nivel_3") @db.Decimal(15, 2)
-  nivel4         Decimal?  @map("nivel_4") @db.Decimal(15, 2)
-  nivel5         Decimal?  @map("nivel_5") @db.Decimal(15, 2)
+  id             Int               @id @default(autoincrement())
+  distributionId Int?              @map("distribution_id")
+  branchCode     Int               @map("branch_code")
+  sellerCode     Int?              @map("seller_code")
+  percentage     Decimal           @db.Decimal(5, 2)
+  valorCalculado Decimal           @map("valor_calculado") @db.Decimal(15, 2)
+  nivel1         Decimal?          @map("nivel_1") @db.Decimal(15, 2)
+  nivel2         Decimal?          @map("nivel_2") @db.Decimal(15, 2)
+  nivel3         Decimal?          @map("nivel_3") @db.Decimal(15, 2)
+  nivel4         Decimal?          @map("nivel_4") @db.Decimal(15, 2)
+  nivel5         Decimal?          @map("nivel_5") @db.Decimal(15, 2)
+  distribution   MetaDistribution? @relation(fields: [distributionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("distribution_items")
 }
 
-// Metas (tabela existente - referencia)
 model Meta {
   id         Int       @id @default(autoincrement())
   ano        Int
   mes        Int
   branchCode Int       @map("branch_code")
   sellerCode Int?      @map("seller_code")
-  nivel1     Decimal?  @map("nivel_1") @db.Decimal(15, 2)
-  nivel2     Decimal?  @map("nivel_2") @db.Decimal(15, 2)
-  nivel3     Decimal?  @map("nivel_3") @db.Decimal(15, 2)
-  nivel4     Decimal?  @map("nivel_4") @db.Decimal(15, 2)
-  nivel5     Decimal?  @map("nivel_5") @db.Decimal(15, 2)
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+  nivel1     Decimal?  @default(0) @map("nivel_1") @db.Decimal(15, 2)
+  nivel2     Decimal?  @default(0) @map("nivel_2") @db.Decimal(15, 2)
+  nivel3     Decimal?  @default(0) @map("nivel_3") @db.Decimal(15, 2)
+  nivel4     Decimal?  @default(0) @map("nivel_4") @db.Decimal(15, 2)
+  nivel5     Decimal?  @default(0) @map("nivel_5") @db.Decimal(15, 2)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@unique([ano, mes, branchCode, sellerCode])
+  @@index([branchCode], map: "idx_metas_branch")
+  @@index([ano, mes], map: "idx_metas_periodo")
+  @@index([sellerCode], map: "idx_metas_seller")
   @@map("metas")
 }
 
-// Niveis de Meta (tabela existente - referencia)
 model MetaNivel {
   id         Int       @id @default(autoincrement())
-  nivelOrdem Int       @map("nivel_ordem")
-  nivelNome  String    @map("nivel_nome")
-  nivelCor   String    @map("nivel_cor")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+  nivelOrdem Int       @unique @map("nivel_ordem")
+  nivelNome  String    @map("nivel_nome") @db.VarChar(50)
+  nivelCor   String?   @default("#888888") @map("nivel_cor") @db.VarChar(20)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("meta_niveis")
+}
+
+model branches {
+  branch_code Int         @id
+  branch_name String      @db.VarChar(100)
+  updated_at  DateTime?   @default(now()) @db.Timestamp(6)
+  prd_saldo   prd_saldo[]
+}
+
+model etl_log {
+  id                 Int       @id @default(autoincrement())
+  branch_code        Int
+  extract_date       DateTime  @db.Date
+  transactions_count Int?
+  items_count        Int?
+  status             String?   @db.VarChar(20)
+  error_message      String?
+  started_at         DateTime? @db.Timestamp(6)
+  finished_at        DateTime? @db.Timestamp(6)
+
+  @@unique([branch_code, extract_date])
+}
+
+model operacoes {
+  operation_code  Int       @id
+  name            String?   @db.VarChar(255)
+  operation_mode  String?   @db.VarChar(10)
+  operations_type String?   @db.VarChar(10)
+  invoice_data    Json?
+  created_at      DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model prd_saldo {
+  id                        BigInt    @id @default(autoincrement())
+  product_sku               String    @db.VarChar(50)
+  branch_code               Int
+  stock_code                Int
+  stock_description         String?   @db.VarChar(100)
+  stock                     Decimal?  @db.Decimal(14, 3)
+  sales_order               Decimal?  @db.Decimal(14, 3)
+  input_transaction         Decimal?  @db.Decimal(14, 3)
+  output_transaction        Decimal?  @db.Decimal(14, 3)
+  production_planning       Decimal?  @db.Decimal(14, 3)
+  purchase_order            Decimal?  @db.Decimal(14, 3)
+  production_order_progress Decimal?  @db.Decimal(14, 3)
+  production_order_wait_lib Decimal?  @db.Decimal(14, 3)
+  stock_temp                Decimal?  @db.Decimal(14, 3)
+  totvs_change_date         DateTime? @db.Timestamp(6)
+  captured_at               DateTime  @default(now()) @db.Timestamp(6)
+  is_full_snapshot          Boolean   @default(false)
+  product_code              Int
+  branches                  branches  @relation(fields: [branch_code], references: [branch_code], onDelete: NoAction, onUpdate: NoAction)
+  produtos                  produtos  @relation(fields: [product_sku], references: [product_sku], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_code], map: "idx_prd_saldo_branch")
+  @@index([product_code, branch_code, stock_code, captured_at(sort: Desc)], map: "idx_prd_saldo_product_code_key_date")
+  @@index([product_sku], map: "idx_prd_saldo_product_sku")
+  @@index([totvs_change_date], map: "idx_prd_saldo_totvs_change_date")
+}
+
+model produtos {
+  product_sku          String      @id @db.VarChar(50)
+  product_name         String?     @db.VarChar(255)
+  color_code           String?     @db.VarChar(10)
+  color_name           String?     @db.VarChar(100)
+  size                 String?     @db.VarChar(20)
+  ncm                  String?     @db.VarChar(20)
+  cst                  String?     @db.VarChar(10)
+  cest                 String?     @db.VarChar(20)
+  is_active            Boolean?
+  is_finished_product  Boolean?
+  is_raw_material      Boolean?
+  is_bulk_material     Boolean?
+  is_own_production    Boolean?
+  measured_unit        String?     @db.VarChar(10)
+  minimum_stock_amount Decimal?    @db.Decimal(10, 2)
+  maximum_stock_amount Decimal?    @db.Decimal(10, 2)
+  ideal_stock_amount   Decimal?    @db.Decimal(10, 2)
+  reference_code       String?     @db.VarChar(100)
+  reference_id         Int?
+  reference_name       String?     @db.VarChar(255)
+  last_reference_code  String?     @db.VarChar(50)
+  grid_code            Int?
+  description          String?
+  is_blocked           Boolean?
+  created_at           DateTime?   @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?   @default(now()) @db.Timestamp(6)
+  product_code         Int?
+  prd_saldo            prd_saldo[]
+
+  @@index([color_code], map: "idx_color_code")
+  @@index([grid_code], map: "idx_grid_code")
+  @@index([is_active], map: "idx_is_active")
+  @@index([product_code], map: "idx_product_code")
+  @@index([reference_code], map: "idx_reference_code")
+}
+
+model sync_state {
+  sync_key   String    @id @db.VarChar(100)
+  sync_value String
+  updated_at DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model transacao_itens {
+  id                  Int       @id @default(autoincrement())
+  branch_code         Int
+  transaction_code    Int
+  item_index          Int
+  product_code        Int
+  measured_unit       String?   @db.VarChar(10)
+  quantity            Decimal?  @db.Decimal(15, 4)
+  value               Decimal?  @db.Decimal(15, 4)
+  unit_discount_value Decimal?  @db.Decimal(15, 4)
+  net_value           Decimal?  @db.Decimal(15, 4)
+  seller_code         Int?
+  price_table         String?   @db.VarChar(100)
+  created_at          DateTime? @default(now()) @db.Timestamp(6)
+
+  @@unique([branch_code, transaction_code, item_index])
+  @@index([product_code], map: "idx_itens_product")
+  @@index([branch_code, transaction_code], map: "idx_itens_transaction")
+}
+
+model transacoes {
+  id                     Int       @id @default(autoincrement())
+  branch_code            Int
+  branch_name            String?   @db.VarChar(100)
+  transaction_code       Int
+  transaction_date       DateTime  @db.Date
+  customer_code          BigInt?
+  last_change_date       DateTime? @db.Timestamp(6)
+  operation_code         Int?
+  seller_code            Int?
+  guide_code             Int?
+  payment_condition_code Int?
+  price_table_code       Int?
+  status                 Int?
+  origin_destination     String?   @db.VarChar(255)
+  additional_information String?
+  created_at             DateTime? @default(now()) @db.Timestamp(6)
+
+  @@unique([branch_code, transaction_code])
+  @@index([branch_code], map: "idx_transacoes_branch")
+  @@index([transaction_date], map: "idx_transacoes_date")
+  @@index([operation_code], map: "idx_transacoes_operation")
+  @@index([status], map: "idx_transacoes_status")
 }

@@ -9,7 +9,7 @@ import { KPICard } from '@/components/dashboard/KPICard';
 import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
-import { VariationBadge } from '@/components/ui/Badge';
+import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -167,7 +167,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Tabela de Filiais */}
+      {/* Tabela de Filiais - todas as colunas */}
       <Card>
         <CardHeader>
           <CardTitle>Comparativo por Filial</CardTitle>
@@ -175,39 +175,112 @@ export default function DashboardPage() {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell isHeader>Filial</TableCell>
-              <TableCell isHeader align="right">Fat. Atual</TableCell>
-              <TableCell isHeader align="right">Pecas</TableCell>
-              <TableCell isHeader align="right">TM</TableCell>
-              <TableCell isHeader align="right">Fat. Ant.</TableCell>
-              <TableCell isHeader align="center">Var %</TableCell>
-              <TableCell isHeader align="right">Projecao</TableCell>
-              <TableCell isHeader align="center">Vs Ano Ant.</TableCell>
+              <TableCell isHeader className="whitespace-nowrap sticky left-0 bg-gray-50">Filial</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Faturamento</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">%TT</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Fat. Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Pecas</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">%TT</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Pecas Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PM</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PM Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">TM</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">TM Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">TM Cliente</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">TM Cliente Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PA</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PA Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PAC</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">PAC Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Atendimento</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Atend. Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Devolucoes</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Qtde Dev</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">% Dev</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">% CN</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes Novos</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Faturamento CN</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Meta</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">% Meta</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Meta Dia</TableCell>
+              <TableCell isHeader align="right" className="whitespace-nowrap">Projecao</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Vs Ano Ant.</TableCell>
+              <TableCell isHeader align="center" className="whitespace-nowrap">Bate Meta</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {comparativo?.filiais.map((f) => {
               const proj = projecaoMap.get(f.branch_code);
+              const bateMeta = f.meta.valor > 0 && proj ? proj.projecao >= f.meta.valor : null;
               return (
                 <TableRow
                   key={f.branch_code}
                   onClick={() => setFilialSelecionada(f.branch_code)}
                 >
-                  <TableCell className="font-medium">{f.branch_name}</TableCell>
-                  <TableCell align="right">{formatMoney(f.atual.faturamento)}</TableCell>
-                  <TableCell align="right">{formatNumber(f.atual.pecas)}</TableCell>
-                  <TableCell align="right">{formatMoney(f.atual.tm)}</TableCell>
-                  <TableCell align="right" className="text-gray-500">
-                    {formatMoney(f.ano_anterior.faturamento)}
+                  <TableCell className="font-medium whitespace-nowrap sticky left-0 bg-white">{f.branch_name}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.faturamento)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_faturamento.toFixed(1)}%</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.faturamento)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.faturamento} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.pecas)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_pecas.toFixed(1)}%</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.pecas)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pecas} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.pm)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.pm)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pm} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm_cliente)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm_cliente)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm_cliente} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.atual.pa.toFixed(2)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{f.ano_anterior.pa.toFixed(2)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pa} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.atual.pac.toFixed(2)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{f.ano_anterior.pac.toFixed(2)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pac} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.clientes)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.clientes)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.clientes} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.transacoes)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.transacoes)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.transacoes} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.devolucoes.valor)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.devolucoes.qtde)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap">
+                    <Badge variant={f.devolucoes.pct > 10 ? 'danger' : f.devolucoes.pct > 5 ? 'warning' : 'default'}>
+                      {f.devolucoes.pct.toFixed(1)}%
+                    </Badge>
                   </TableCell>
-                  <TableCell align="center">
-                    <VariationBadge value={f.variacao.faturamento} />
+                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.clientes_novos.pct.toFixed(1)}%</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.clientes_novos.qtde)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.clientes_novos.faturamento)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.valor) : '-'}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap">
+                    {f.meta.valor > 0 ? <VariationBadge value={f.meta.pct - 100} /> : '-'}
                   </TableCell>
-                  <TableCell align="right">
-                    {proj ? formatMoney(proj.projecao) : '-'}
-                  </TableCell>
-                  <TableCell align="center">
+                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.meta_dia) : '-'}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{proj ? formatMoney(proj.projecao) : '-'}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap">
                     {proj ? <VariationBadge value={proj.variacao_vs_ano_anterior} /> : '-'}
+                  </TableCell>
+                  <TableCell align="center" className="whitespace-nowrap">
+                    {bateMeta === null ? '-' : (
+                      <Badge variant={bateMeta ? 'success' : 'danger'}>{bateMeta ? 'Sim' : 'Nao'}</Badge>
+                    )}
                   </TableCell>
                 </TableRow>
               );
@@ -215,28 +288,62 @@ export default function DashboardPage() {
             {/* Linha de Total */}
             {comparativo && (
               <TableRow isHighlighted>
-                <TableCell className="font-bold">TOTAL</TableCell>
-                <TableCell align="right" className="font-bold">
-                  {formatMoney(comparativo.total.atual.faturamento)}
+                <TableCell className="font-bold whitespace-nowrap sticky left-0 bg-yellow-50">TOTAL</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.faturamento)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.faturamento)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.faturamento.percentual} /></TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.pecas)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.pecas)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pecas.percentual} /></TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.pm)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.pm)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.tm)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.tm)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.tm_cliente)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.tm_cliente)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pa.toFixed(2)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pa.toFixed(2)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pac.toFixed(2)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pac.toFixed(2)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.clientes)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.clientes)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.transacoes)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.transacoes)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.transacoes.percentual} /></TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(comparativo.filiais.reduce((s, f) => s + f.devolucoes.valor, 0))}
                 </TableCell>
-                <TableCell align="right" className="font-bold">
-                  {formatNumber(comparativo.total.atual.pecas)}
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatNumber(comparativo.filiais.reduce((s, f) => s + f.devolucoes.qtde, 0))}
                 </TableCell>
-                <TableCell align="right" className="font-bold">
-                  {formatMoney(comparativo.total.atual.tm)}
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatNumber(comparativo.filiais.reduce((s, f) => s + f.clientes_novos.qtde, 0))}
                 </TableCell>
-                <TableCell align="right" className="text-gray-500">
-                  {formatMoney(comparativo.total.ano_anterior.faturamento)}
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(comparativo.filiais.reduce((s, f) => s + f.clientes_novos.faturamento, 0))}
                 </TableCell>
-                <TableCell align="center">
-                  <VariationBadge value={comparativo.total.variacao.faturamento.percentual} />
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0))}
                 </TableCell>
-                <TableCell align="right" className="font-bold">
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
                   {projecao ? formatMoney(projecao.total.projecao) : '-'}
                 </TableCell>
-                <TableCell align="center">
+                <TableCell align="center" className="whitespace-nowrap">
                   {projecao ? <VariationBadge value={projecao.total.variacao_vs_ano_anterior} /> : '-'}
                 </TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
               </TableRow>
             )}
           </TableBody>

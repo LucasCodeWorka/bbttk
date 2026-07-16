@@ -172,6 +172,41 @@ router.get('/vendedores-lista', async (_req: Request, res: Response) => {
   }
 });
 
+// Vendedores ativos numa filial nos 3 meses anteriores ao mes de referencia
+// (usado para distribuir a meta da loja entre os vendedores que realmente venderam la)
+router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, res: Response) => {
+  try {
+    const branchCode = parseInt(req.params.branchCode);
+    const ano = parseInt(req.params.ano);
+    const mes = parseInt(req.params.mes);
+
+    // Ex: meta de julho/2026 -> considera abril, maio e junho/2026
+    const startDate = new Date(ano, mes - 4, 1);
+    const endDate = new Date(ano, mes - 1, 0);
+
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCode);
+    const nomes = await getVendedoresApi();
+
+    const vendedoresComNomes = vendedores
+      .map(v => ({
+        seller_code: v.seller_code,
+        seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
+        faturamento: v.faturamento,
+      }))
+      .sort((a, b) => b.faturamento - a.faturamento);
+
+    res.json({
+      periodo: {
+        inicio: startDate.toISOString().split('T')[0],
+        fim: endDate.toISOString().split('T')[0],
+      },
+      vendedores: vendedoresComNomes,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // Comparativo ano
 router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response) => {
   try {
@@ -192,10 +227,29 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const endAnterior = new Date(endAtual);
     endAnterior.setFullYear(endAnterior.getFullYear() - 1);
 
-    const filiaisAtual = await vendasService.getVendasPeriodo(startAtual, endAtual);
-    const filiaisAnterior = await vendasService.getVendasPeriodo(startAnterior, endAnterior);
+    const ano = endAtual.getFullYear();
+    const mes = endAtual.getMonth() + 1;
+    const ultimoDiaMes = new Date(ano, mes, 0);
+    const diasRestantes = Math.max(ultimoDiaMes.getDate() - endAtual.getDate(), 0);
+
+    const [
+      filiaisAtual,
+      filiaisAnterior,
+      devolucoesMap,
+      clientesNovosMap,
+      metasMap,
+    ] = await Promise.all([
+      vendasService.getVendasPeriodo(startAtual, endAtual),
+      vendasService.getVendasPeriodo(startAnterior, endAnterior),
+      vendasService.getDevolucoesPorFilial(startAtual, endAtual),
+      vendasService.getClientesNovosPorFilial(startAtual, endAtual),
+      vendasService.getMetasPorFilial(ano, mes),
+    ]);
 
     const anteriorDict = new Map(filiaisAnterior.map(f => [f.branch_code, f]));
+
+    const totalFaturamentoAtual = filiaisAtual.reduce((sum, f) => sum + f.faturamento, 0);
+    const totalPecasAtual = filiaisAtual.reduce((sum, f) => sum + f.pecas, 0);
 
     const filiaisComparativo = filiaisAtual.map(f => {
       const ant = anteriorDict.get(f.branch_code) || {
@@ -204,11 +258,25 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
         transacoes: 0,
         pa: 0,
         tm: 0,
+        clientes: 0,
+        pm: 0,
+        tm_cliente: 0,
+        pac: 0,
       };
 
       const varFat = vendasService.calcularVariacao(f.faturamento, ant.faturamento);
       const varPecas = vendasService.calcularVariacao(f.pecas, ant.pecas);
       const varTrans = vendasService.calcularVariacao(f.transacoes, ant.transacoes);
+      const varClientes = vendasService.calcularVariacao(f.clientes, ant.clientes);
+      const varPm = vendasService.calcularVariacao(f.pm, ant.pm);
+      const varTm = vendasService.calcularVariacao(f.tm, ant.tm);
+      const varTmCliente = vendasService.calcularVariacao(f.tm_cliente, ant.tm_cliente);
+      const varPa = vendasService.calcularVariacao(f.pa, ant.pa);
+      const varPac = vendasService.calcularVariacao(f.pac, ant.pac);
+
+      const devolucao = devolucoesMap.get(f.branch_code) || { valor: 0, qtde: 0 };
+      const clientesNovos = clientesNovosMap.get(f.branch_code) || { qtde: 0, faturamento: 0 };
+      const metaValor = metasMap.get(f.branch_code) || 0;
 
       return {
         branch_code: f.branch_code,
@@ -219,6 +287,12 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
           transacoes: f.transacoes,
           pa: f.pa,
           tm: f.tm,
+          clientes: f.clientes,
+          pm: f.pm,
+          tm_cliente: f.tm_cliente,
+          pac: f.pac,
+          pct_tt_faturamento: totalFaturamentoAtual > 0 ? Math.round((f.faturamento / totalFaturamentoAtual) * 1000) / 10 : 0,
+          pct_tt_pecas: totalPecasAtual > 0 ? Math.round((f.pecas / totalPecasAtual) * 1000) / 10 : 0,
         },
         ano_anterior: {
           faturamento: ant.faturamento,
@@ -226,11 +300,40 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
           transacoes: ant.transacoes,
           pa: ant.pa,
           tm: ant.tm,
+          clientes: ant.clientes,
+          pm: ant.pm,
+          tm_cliente: ant.tm_cliente,
+          pac: ant.pac,
         },
         variacao: {
           faturamento: varFat.percentual,
           pecas: varPecas.percentual,
           transacoes: varTrans.percentual,
+          clientes: varClientes.percentual,
+          pm: varPm.percentual,
+          tm: varTm.percentual,
+          tm_cliente: varTmCliente.percentual,
+          pa: varPa.percentual,
+          pac: varPac.percentual,
+        },
+        devolucoes: {
+          valor: devolucao.valor,
+          qtde: devolucao.qtde,
+          pct: f.faturamento + devolucao.valor > 0
+            ? Math.round((devolucao.valor / (f.faturamento + devolucao.valor)) * 1000) / 10
+            : 0,
+        },
+        clientes_novos: {
+          qtde: clientesNovos.qtde,
+          faturamento: clientesNovos.faturamento,
+          pct: f.clientes > 0 ? Math.round((clientesNovos.qtde / f.clientes) * 1000) / 10 : 0,
+        },
+        meta: {
+          valor: metaValor,
+          pct: metaValor > 0 ? Math.round((f.faturamento / metaValor) * 1000) / 10 : 0,
+          meta_dia: metaValor > 0 && diasRestantes > 0
+            ? Math.round(((metaValor - f.faturamento) / diasRestantes) * 100) / 100
+            : 0,
         },
       };
     });

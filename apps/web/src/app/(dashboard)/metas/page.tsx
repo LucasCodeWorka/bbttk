@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { metasApi, vendasApi, Meta, MetaNivel, DistribuicaoItem } from '@/lib/api';
+import { metasApi, vendasApi, Meta, MetaNivel, DistribuicaoItem, VendedorPorFilial } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, MESES } from '@/lib/utils';
 
 export default function MetasPage() {
@@ -46,6 +46,13 @@ export default function MetasPage() {
     selectedBranches: [] as number[],
   });
   const [distPreview, setDistPreview] = useState<{ branchCode: number; name: string; percentage: number; valor: number }[]>([]);
+  const [distStep, setDistStep] = useState<'lojas' | 'vendedores'>('lojas');
+  const [lojasDistribuidas, setLojasDistribuidas] = useState<{ branchCode: number; name: string; valor: number }[]>([]);
+  const [lojaExpandida, setLojaExpandida] = useState<number | null>(null);
+  const [vendedoresPorLoja, setVendedoresPorLoja] = useState<Record<number, VendedorPorFilial[]>>({});
+  const [carregandoVendedoresLoja, setCarregandoVendedoresLoja] = useState<number | null>(null);
+  const [vendedorPercentuais, setVendedorPercentuais] = useState<Record<number, Record<number, number>>>({});
+  const [lojasVendedoresAplicadas, setLojasVendedoresAplicadas] = useState<Set<number>>(new Set());
 
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
@@ -165,7 +172,7 @@ export default function MetasPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [distForm.totalValue, distForm.selectedBranches, distForm.distributionType]);
 
-  // Aplicar distribuição
+  // Aplicar distribuição entre lojas -> avanca para o passo de distribuir entre vendedores
   async function handleDistribuir() {
     if (!token || distPreview.length === 0) {
       showToast('Configure a distribuicao primeiro', 'error');
@@ -186,17 +193,110 @@ export default function MetasPage() {
         items,
       });
 
-      showToast('Metas distribuidas com sucesso!', 'success');
-      setShowDistModal(false);
-      setDistForm({
-        totalValue: '',
-        distributionType: 'igual',
-        selectedBranches: [],
-      });
-      setDistPreview([]);
+      showToast('Metas das lojas distribuidas! Agora distribua entre os vendedores.', 'success');
+      setLojasDistribuidas(distPreview.map(p => ({ branchCode: p.branchCode, name: p.name, valor: p.valor })));
+      setDistStep('vendedores');
       carregarDados();
     } catch (error) {
       showToast('Erro ao distribuir metas', 'error');
+      console.error(error);
+    }
+  }
+
+  // Fechar modal e resetar todo o fluxo de distribuicao
+  function fecharModalDistribuicao() {
+    setShowDistModal(false);
+    setDistStep('lojas');
+    setDistForm({ totalValue: '', distributionType: 'igual', selectedBranches: [] });
+    setDistPreview([]);
+    setLojasDistribuidas([]);
+    setLojaExpandida(null);
+    setVendedoresPorLoja({});
+    setVendedorPercentuais({});
+    setLojasVendedoresAplicadas(new Set());
+  }
+
+  // Carregar vendedores ativos na loja (ultimos 3 meses antes do mes da meta) e expandir
+  async function toggleLojaVendedores(branchCode: number) {
+    if (lojaExpandida === branchCode) {
+      setLojaExpandida(null);
+      return;
+    }
+
+    if (!vendedoresPorLoja[branchCode]) {
+      setCarregandoVendedoresLoja(branchCode);
+      try {
+        const res = await vendasApi.getVendedoresPorFilial(branchCode, ano, mes);
+        setVendedoresPorLoja(prev => ({ ...prev, [branchCode]: res.vendedores }));
+
+        const n = res.vendedores.length;
+        const percentEach = n > 0 ? Math.round((100 / n) * 100) / 100 : 0;
+        const percentuais: Record<number, number> = {};
+        res.vendedores.forEach((v, i) => {
+          // Ajusta o ultimo para fechar em 100% exato
+          percentuais[v.seller_code] = i === n - 1
+            ? Math.round((100 - percentEach * (n - 1)) * 100) / 100
+            : percentEach;
+        });
+        setVendedorPercentuais(prev => ({ ...prev, [branchCode]: percentuais }));
+      } catch (error) {
+        showToast('Erro ao buscar vendedores da loja', 'error');
+        console.error(error);
+      } finally {
+        setCarregandoVendedoresLoja(null);
+      }
+    }
+
+    setLojaExpandida(branchCode);
+  }
+
+  function atualizarPercentualVendedor(branchCode: number, sellerCode: number, percentage: number) {
+    setVendedorPercentuais(prev => ({
+      ...prev,
+      [branchCode]: { ...prev[branchCode], [sellerCode]: percentage },
+    }));
+  }
+
+  function totalPercentualLoja(branchCode: number): number {
+    const percentuais = vendedorPercentuais[branchCode] || {};
+    return Object.values(percentuais).reduce((sum, p) => sum + (p || 0), 0);
+  }
+
+  // Aplicar distribuicao entre vendedores de uma loja especifica
+  async function aplicarVendedoresLoja(branchCode: number) {
+    if (!token) return;
+
+    const loja = lojasDistribuidas.find(l => l.branchCode === branchCode);
+    const percentuais = vendedorPercentuais[branchCode] || {};
+    const total = totalPercentualLoja(branchCode);
+
+    if (!loja || Object.keys(percentuais).length === 0) return;
+
+    if (Math.abs(total - 100) > 0.1) {
+      showToast('Os percentuais precisam somar 100%', 'error');
+      return;
+    }
+
+    const items: DistribuicaoItem[] = Object.entries(percentuais).map(([sellerCode, percentage]) => ({
+      branchCode,
+      sellerCode: parseInt(sellerCode),
+      percentage,
+    }));
+
+    try {
+      await metasApi.distribuir(token, {
+        ano,
+        mes,
+        totalValue: loja.valor,
+        distributionType: 'manual',
+        items,
+      });
+
+      showToast(`Vendedores de ${loja.name} distribuidos com sucesso!`, 'success');
+      setLojasVendedoresAplicadas(prev => new Set(prev).add(branchCode));
+      carregarDados();
+    } catch (error) {
+      showToast('Erro ao distribuir vendedores', 'error');
       console.error(error);
     }
   }
@@ -410,14 +510,26 @@ export default function MetasPage() {
       {/* Modal Distribuição */}
       <Modal
         isOpen={showDistModal}
-        onClose={() => setShowDistModal(false)}
+        onClose={fecharModalDistribuicao}
         title="Distribuir Metas"
         size="xl"
       >
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${distStep === 'lojas' ? 'bg-[var(--bbtk-red)] text-white' : 'bg-gray-100 text-gray-500'}`}>
+            1. Lojas
+          </span>
+          <span className="text-gray-300">-&gt;</span>
+          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${distStep === 'vendedores' ? 'bg-[var(--bbtk-red)] text-white' : 'bg-gray-100 text-gray-500'}`}>
+            2. Vendedores
+          </span>
+        </div>
+
         <p className="bg-[var(--bbtk-green)] text-white px-4 py-2 rounded-lg font-semibold text-center mb-4">
           Distribuicao para {MESES[mes]} de {ano}
         </p>
 
+        {distStep === 'lojas' && (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Formulário */}
           <div className="space-y-4">
@@ -530,7 +642,7 @@ export default function MetasPage() {
         </div>
 
         <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
-          <Button variant="ghost" onClick={() => setShowDistModal(false)}>
+          <Button variant="ghost" onClick={fecharModalDistribuicao}>
             Cancelar
           </Button>
           <Button
@@ -538,9 +650,120 @@ export default function MetasPage() {
             onClick={handleDistribuir}
             disabled={distPreview.length === 0}
           >
-            Aplicar Distribuicao
+            Aplicar e Ir para Vendedores
           </Button>
         </div>
+        </>
+        )}
+
+        {distStep === 'vendedores' && (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Para cada loja, os vendedores considerados sao os que venderam la nos 3 meses
+            anteriores a {MESES[mes]}/{ano}. Por padrao a meta e dividida igualmente entre eles
+            - ajuste os percentuais manualmente se quiser.
+          </p>
+
+          {lojasDistribuidas.map(loja => {
+            const expandida = lojaExpandida === loja.branchCode;
+            const vendedores = vendedoresPorLoja[loja.branchCode] || [];
+            const percentuais = vendedorPercentuais[loja.branchCode] || {};
+            const totalPct = totalPercentualLoja(loja.branchCode);
+            const aplicada = lojasVendedoresAplicadas.has(loja.branchCode);
+            const carregando = carregandoVendedoresLoja === loja.branchCode;
+
+            return (
+              <div key={loja.branchCode} className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => toggleLojaVendedores(loja.branchCode)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{loja.name}</span>
+                    <span className="text-sm text-gray-500">{formatMoney(loja.valor)}</span>
+                    {aplicada && (
+                      <span className="text-xs font-semibold text-white bg-green-600 px-2 py-0.5 rounded-full">
+                        Distribuido
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-gray-400">{expandida ? '-' : '+'}</span>
+                </button>
+
+                {expandida && (
+                  <div className="p-4 space-y-3">
+                    {carregando ? (
+                      <div className="text-center text-gray-500 py-4">Carregando vendedores...</div>
+                    ) : vendedores.length === 0 ? (
+                      <div className="text-center text-gray-500 py-4">
+                        Nenhum vendedor com vendas nessa loja nos ultimos 3 meses
+                      </div>
+                    ) : (
+                      <>
+                        <div className="max-h-64 overflow-y-auto space-y-2">
+                          {vendedores.map(v => (
+                            <div key={v.seller_code} className="flex items-center gap-3">
+                              <span className="flex-1 text-sm">
+                                {v.seller_name}
+                                <span className="text-gray-400 text-xs ml-1">
+                                  ({formatMoney(v.faturamento)} nos ultimos 3 meses)
+                                </span>
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={percentuais[v.seller_code] ?? 0}
+                                  onChange={(e) => atualizarPercentualVendedor(
+                                    loja.branchCode,
+                                    v.seller_code,
+                                    parseFloat(e.target.value) || 0
+                                  )}
+                                  className="w-20"
+                                />
+                                <span className="text-sm text-gray-500">%</span>
+                              </div>
+                              <span className="w-28 text-right text-sm text-gray-600">
+                                {formatMoney(loja.valor * (percentuais[v.seller_code] || 0) / 100)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t">
+                          <span className={`text-sm font-semibold ${Math.abs(totalPct - 100) > 0.1 ? 'text-red-600' : 'text-green-600'}`}>
+                            Total: {totalPct.toFixed(1)}%
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => aplicarVendedoresLoja(loja.branchCode)}
+                            disabled={Math.abs(totalPct - 100) > 0.1}
+                          >
+                            Aplicar Vendedores desta Loja
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+            <Button variant="ghost" onClick={() => setDistStep('lojas')}>
+              Voltar
+            </Button>
+            <Button variant="secondary" onClick={fecharModalDistribuicao}>
+              Concluir
+            </Button>
+          </div>
+        </div>
+        )}
       </Modal>
     </div>
   );

@@ -7,13 +7,11 @@ interface FetchOptions extends RequestInit {
 async function fetchApi<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
   const { token, ...fetchOptions } = options;
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const headers = new Headers(options.headers);
+  headers.set('Content-Type', 'application/json');
 
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers.set('Authorization', `Bearer ${token}`);
   }
 
   const response = await fetch(`${API_URL}${endpoint}`, {
@@ -83,6 +81,11 @@ export const vendasApi = {
 
   getVendedoresLista: () =>
     fetchApi<{ vendedores: { code: number; name: string }[] }>('/api/vendedores-lista'),
+
+  getVendedoresPorFilial: (branchCode: number, ano: number, mes: number) =>
+    fetchApi<VendedoresPorFilialResponse>(
+      `/api/vendedores-por-filial/${branchCode}/${ano}/${mes}`
+    ),
 
   getTopProdutos: (branchCode?: number) =>
     fetchApi<TopProdutosResponse>(
@@ -162,6 +165,7 @@ export interface CreateUserData {
   role: string;
   branchCodes?: number[];
   sellerCode?: number;
+  isActive?: boolean;
 }
 
 export interface Filial {
@@ -211,6 +215,17 @@ export interface VendedoresResponse {
   vendedores: Vendedor[];
 }
 
+export interface VendedorPorFilial {
+  seller_code: number;
+  seller_name: string;
+  faturamento: number;
+}
+
+export interface VendedoresPorFilialResponse {
+  periodo: { inicio: string; fim: string };
+  vendedores: VendedorPorFilial[];
+}
+
 export interface Produto {
   referencia: string;
   nome: string;
@@ -232,6 +247,12 @@ export interface FilialComparativo {
     transacoes: number;
     pa: number;
     tm: number;
+    clientes: number;
+    pm: number;
+    tm_cliente: number;
+    pac: number;
+    pct_tt_faturamento: number;
+    pct_tt_pecas: number;
   };
   ano_anterior: {
     faturamento: number;
@@ -239,11 +260,36 @@ export interface FilialComparativo {
     transacoes: number;
     pa: number;
     tm: number;
+    clientes: number;
+    pm: number;
+    tm_cliente: number;
+    pac: number;
   };
   variacao: {
     faturamento: number;
     pecas: number;
     transacoes: number;
+    clientes: number;
+    pm: number;
+    tm: number;
+    tm_cliente: number;
+    pa: number;
+    pac: number;
+  };
+  devolucoes: {
+    valor: number;
+    qtde: number;
+    pct: number;
+  };
+  clientes_novos: {
+    qtde: number;
+    faturamento: number;
+    pct: number;
+  };
+  meta: {
+    valor: number;
+    pct: number;
+    meta_dia: number;
   };
 }
 
@@ -252,8 +298,8 @@ export interface ComparativoAnoResponse {
   periodo_anterior: { inicio: string; fim: string };
   filiais: FilialComparativo[];
   total: {
-    atual: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number };
-    ano_anterior: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number };
+    atual: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number; clientes: number; pm: number; tm_cliente: number; pac: number };
+    ano_anterior: { faturamento: number; pecas: number; transacoes: number; pa: number; tm: number; clientes: number; pm: number; tm_cliente: number; pac: number };
     variacao: {
       faturamento: { atual: number; anterior: number; diferenca: number; percentual: number };
       pecas: { atual: number; anterior: number; diferenca: number; percentual: number };

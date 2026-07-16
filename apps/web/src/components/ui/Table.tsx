@@ -64,11 +64,12 @@ export function TableRow({ children, className, onClick, isHighlighted }: TableR
 interface TableCellProps {
   children: ReactNode;
   className?: string;
+  title?: string;
   align?: 'left' | 'center' | 'right';
   isHeader?: boolean;
 }
 
-export function TableCell({ children, className, align = 'left', isHeader }: TableCellProps) {
+export function TableCell({ children, className, title, align = 'left', isHeader }: TableCellProps) {
   const alignments = {
     left: 'text-left',
     center: 'text-center',
@@ -79,6 +80,7 @@ export function TableCell({ children, className, align = 'left', isHeader }: Tab
 
   return (
     <Tag
+      title={title}
       className={cn(
         'px-4 py-3',
         alignments[align],
