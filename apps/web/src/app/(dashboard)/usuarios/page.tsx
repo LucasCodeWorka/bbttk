@@ -14,6 +14,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { authApi, User } from '@/lib/api';
 import { FILIAIS } from '@/lib/utils';
 
+const MODULOS_DISPONIVEIS = [
+  { key: 'comercial', label: 'Comercial' },
+  { key: 'pcp', label: 'PCP' },
+];
+
 export default function UsuariosPage() {
   const router = useRouter();
   const { token, isAdmin } = useAuth();
@@ -31,6 +36,7 @@ export default function UsuariosPage() {
     name: '',
     role: 'gerente',
     branchCodes: [] as number[],
+    moduleAccess: [] as string[],
     sellerCode: '',
     isActive: true,
   });
@@ -75,6 +81,7 @@ export default function UsuariosPage() {
       name: '',
       role: 'gerente',
       branchCodes: [],
+      moduleAccess: [],
       sellerCode: '',
       isActive: true,
     });
@@ -90,6 +97,7 @@ export default function UsuariosPage() {
       name: user.name,
       role: user.role,
       branchCodes: user.branchCodes || [],
+      moduleAccess: user.moduleAccess || [],
       sellerCode: user.sellerCode?.toString() || '',
       isActive: user.isActive ?? true,
     });
@@ -117,6 +125,7 @@ export default function UsuariosPage() {
           name: form.name,
           role: form.role,
           branchCodes: form.branchCodes,
+          moduleAccess: form.moduleAccess,
           sellerCode: form.sellerCode ? parseInt(form.sellerCode) : undefined,
           isActive: form.isActive,
           password: form.password || undefined,
@@ -130,6 +139,7 @@ export default function UsuariosPage() {
           name: form.name,
           role: form.role,
           branchCodes: form.branchCodes,
+          moduleAccess: form.moduleAccess,
           sellerCode: form.sellerCode ? parseInt(form.sellerCode) : undefined,
         });
         showToast('Usuario criado!', 'success');
@@ -212,6 +222,16 @@ export default function UsuariosPage() {
     }));
   }
 
+  // Toggle seleção de modulo
+  function toggleModule(key: string) {
+    setForm(prev => ({
+      ...prev,
+      moduleAccess: prev.moduleAccess.includes(key)
+        ? prev.moduleAccess.filter(m => m !== key)
+        : [...prev.moduleAccess, key],
+    }));
+  }
+
   if (!isAdmin) {
     return null;
   }
@@ -251,6 +271,7 @@ export default function UsuariosPage() {
                 <TableCell isHeader>Email</TableCell>
                 <TableCell isHeader>Perfil</TableCell>
                 <TableCell isHeader>Lojas</TableCell>
+                <TableCell isHeader>Modulos</TableCell>
                 <TableCell isHeader align="center">Status</TableCell>
                 <TableCell isHeader align="center">Acoes</TableCell>
               </TableRow>
@@ -271,6 +292,19 @@ export default function UsuariosPage() {
                     ) : user.branchCodes?.length ? (
                       <span className="text-sm">
                         {user.branchCodes.map(c => FILIAIS[c] || c).join(', ')}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {user.role === 'admin' ? (
+                      <span className="text-gray-500 italic">Todos</span>
+                    ) : user.moduleAccess?.length ? (
+                      <span className="text-sm">
+                        {user.moduleAccess
+                          .map((m) => MODULOS_DISPONIVEIS.find((d) => d.key === m)?.label || m)
+                          .join(', ')}
                       </span>
                     ) : (
                       <span className="text-gray-400">-</span>
@@ -385,6 +419,30 @@ export default function UsuariosPage() {
                       className="w-4 h-4 text-[var(--bbtk-red)] rounded"
                     />
                     <span className="text-sm">{name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {form.role !== 'admin' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Modulos Permitidos
+              </label>
+              <div className="grid grid-cols-2 gap-2 border border-gray-200 rounded-lg p-3">
+                {MODULOS_DISPONIVEIS.map((modulo) => (
+                  <label
+                    key={modulo.key}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.moduleAccess.includes(modulo.key)}
+                      onChange={() => toggleModule(modulo.key)}
+                      className="w-4 h-4 text-[var(--bbtk-red)] rounded"
+                    />
+                    <span className="text-sm">{modulo.label}</span>
                   </label>
                 ))}
               </div>

@@ -10,6 +10,7 @@ interface TokenPayload {
   email: string;
   role: string;
   branchCodes: number[];
+  moduleAccess: string[];
 }
 
 export async function createUser(
@@ -18,7 +19,8 @@ export async function createUser(
   name: string,
   role: string,
   branchCodes: number[] = [],
-  sellerCode?: number
+  sellerCode?: number,
+  moduleAccess: string[] = []
 ) {
   const passwordHash = await bcrypt.hash(password, 10);
 
@@ -30,6 +32,7 @@ export async function createUser(
       role,
       branchCodes,
       sellerCode,
+      moduleAccess,
     },
   });
 }
@@ -59,6 +62,7 @@ export async function authenticateUser(email: string, password: string) {
       role: user.role,
       branchCodes: user.branchCodes,
       sellerCode: user.sellerCode,
+      moduleAccess: user.moduleAccess,
     },
   };
 }
@@ -68,12 +72,14 @@ export function generateToken(user: {
   email: string;
   role: string;
   branchCodes: number[];
+  moduleAccess: string[];
 }): string {
   const payload: TokenPayload = {
     userId: user.id,
     email: user.email,
     role: user.role,
     branchCodes: user.branchCodes,
+    moduleAccess: user.moduleAccess,
   };
 
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRATION });
@@ -98,6 +104,7 @@ export async function getUserById(id: number) {
       branchCodes: true,
       sellerCode: true,
       isActive: true,
+      moduleAccess: true,
     },
   });
 }
@@ -113,6 +120,7 @@ export async function getAllUsers() {
       sellerCode: true,
       isActive: true,
       createdAt: true,
+      moduleAccess: true,
     },
     orderBy: { name: 'asc' },
   });
@@ -127,6 +135,7 @@ export async function updateUser(
     sellerCode?: number | null;
     isActive?: boolean;
     password?: string;
+    moduleAccess?: string[];
   }
 ) {
   const updateData: Record<string, unknown> = { ...data };
@@ -147,6 +156,7 @@ export async function updateUser(
       branchCodes: true,
       sellerCode: true,
       isActive: true,
+      moduleAccess: true,
     },
   });
 }

@@ -56,7 +56,7 @@ router.get('/users', authMiddleware, adminOnly, async (_req: Request, res: Respo
 // Criar usuário (admin only)
 router.post('/users', authMiddleware, adminOnly, async (req: Request, res: Response) => {
   try {
-    const { email, password, name, role, branchCodes, sellerCode } = req.body;
+    const { email, password, name, role, branchCodes, sellerCode, moduleAccess } = req.body;
 
     if (!email || !password || !name || !role) {
       res.status(400).json({ error: 'Campos obrigatórios: email, password, name, role' });
@@ -69,7 +69,8 @@ router.post('/users', authMiddleware, adminOnly, async (req: Request, res: Respo
       name,
       role,
       branchCodes || [],
-      sellerCode
+      sellerCode,
+      moduleAccess || []
     );
 
     res.status(201).json({
@@ -80,6 +81,7 @@ router.post('/users', authMiddleware, adminOnly, async (req: Request, res: Respo
         role: user.role,
         branchCodes: user.branchCodes,
         sellerCode: user.sellerCode,
+        moduleAccess: user.moduleAccess,
       },
     });
   } catch (error) {
@@ -95,7 +97,7 @@ router.post('/users', authMiddleware, adminOnly, async (req: Request, res: Respo
 router.put('/users/:id', authMiddleware, adminOnly, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, role, branchCodes, sellerCode, isActive, password } = req.body;
+    const { name, role, branchCodes, sellerCode, isActive, password, moduleAccess } = req.body;
 
     const user = await authService.updateUser(id, {
       name,
@@ -104,6 +106,7 @@ router.put('/users/:id', authMiddleware, adminOnly, async (req: Request, res: Re
       sellerCode,
       isActive,
       password,
+      moduleAccess,
     });
 
     res.json({ user });

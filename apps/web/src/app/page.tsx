@@ -11,7 +11,7 @@ export default function RootPage() {
   useEffect(() => {
     if (!isLoading) {
       if (user) {
-        router.push('/dashboard');
+        router.push('/inicio');
       } else {
         router.push('/login');
       }

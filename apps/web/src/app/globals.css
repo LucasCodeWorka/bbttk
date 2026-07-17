@@ -100,3 +100,18 @@ body {
 .animate-pulse-soft {
   animation: pulse-soft 2s ease-in-out infinite;
 }
+
+@keyframes fillbar {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+.animate-fillbar {
+  animation-name: fillbar;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.animate-fillbar.paused {
+  animation-play-state: paused;
+}

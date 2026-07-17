@@ -11,6 +11,7 @@ interface AuthContextType {
   logout: () => void;
   isAdmin: boolean;
   canAccessBranch: (branchCode: number) => boolean;
+  canAccessModule: (moduleKey: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -61,6 +62,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user.branchCodes.includes(branchCode);
   }
 
+  function canAccessModule(moduleKey: string): boolean {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    return (user.moduleAccess || []).includes(moduleKey);
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -71,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         isAdmin: user?.role === 'admin',
         canAccessBranch,
+        canAccessModule,
       }}
     >
       {children}

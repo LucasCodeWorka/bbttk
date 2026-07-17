@@ -10,6 +10,7 @@ declare global {
         email: string;
         role: string;
         branchCodes: number[];
+        moduleAccess: string[];
       };
     }
   }
@@ -47,6 +48,22 @@ export function adminOnly(req: Request, res: Response, next: NextFunction) {
     return;
   }
   next();
+}
+
+// Exige que o usuario tenha o modulo liberado (admin sempre tem acesso a tudo).
+// Usar depois de authMiddleware.
+export function moduleAccess(moduleKey: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.user?.role === 'admin') {
+      next();
+      return;
+    }
+    if (!req.user?.moduleAccess?.includes(moduleKey)) {
+      res.status(403).json({ error: 'Acesso não autorizado a este modulo' });
+      return;
+    }
+    next();
+  };
 }
 
 export function branchAccessMiddleware(req: Request, res: Response, next: NextFunction) {

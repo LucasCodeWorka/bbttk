@@ -104,6 +104,65 @@ export const vendasApi = {
     fetchApi<ProjecaoFiliaisResponse>('/api/projecao-filiais'),
 };
 
+// Entregas
+export const entregasApi = {
+  getAll: () => fetchApi<{ entregas: Entrega[] }>('/api/entregas'),
+};
+
+// Upload de arquivo (nao usa fetchApi pois FormData nao pode ter Content-Type forcado)
+async function uploadFile<T>(endpoint: string, token: string, file: File): Promise<T> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Erro desconhecido' }));
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Produtos
+export const produtosApi = {
+  getCores: (token: string) =>
+    fetchApi<{ cores: CorProduto[] }>('/api/produtos/cores', { token }),
+
+  getImpactoAgrupamento: (token: string, tipo: string, cores: { color_code: string | null; color_name: string | null }[], excluirGrupoId?: number) =>
+    fetchApi<{ impacto: ImpactoAgrupamentoItem[] }>('/api/produtos/impacto-agrupamento', {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ tipo, cores, excluirGrupoId }),
+    }),
+};
+
+// Agrupamentos (configurador generico)
+export const agrupamentosApi = {
+  getGrupos: (token: string, tipo: string) =>
+    fetchApi<{ grupos: AgrupamentoGrupo[] }>(`/api/agrupamentos?tipo=${tipo}`, { token }),
+
+  createGrupo: (token: string, data: CreateGrupoData) =>
+    fetchApi<{ grupo: AgrupamentoGrupo }>('/api/agrupamentos', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteGrupo: (token: string, id: number) =>
+    fetchApi<{ success: boolean }>(`/api/agrupamentos/${id}`, { token, method: 'DELETE' }),
+
+  deleteMembro: (token: string, id: number) =>
+    fetchApi<{ success: boolean }>(`/api/agrupamentos/membros/${id}`, { token, method: 'DELETE' }),
+
+  uploadCoresCsv: (token: string, file: File) =>
+    uploadFile<{ cores: CorProduto[]; total_linhas: number }>('/api/agrupamentos/cores/csv', token, file),
+};
+
 // Metas
 export const metasApi = {
   getNiveis: () =>
@@ -156,6 +215,7 @@ export interface User {
   branchCodes: number[];
   sellerCode?: number;
   isActive?: boolean;
+  moduleAccess?: string[];
 }
 
 export interface CreateUserData {
@@ -166,6 +226,7 @@ export interface CreateUserData {
   branchCodes?: number[];
   sellerCode?: number;
   isActive?: boolean;
+  moduleAccess?: string[];
 }
 
 export interface Filial {
@@ -358,6 +419,55 @@ export interface ProjecaoFiliaisResponse {
     ano_anterior_completo: number;
     variacao_vs_ano_anterior: number;
   };
+}
+
+export interface Entrega {
+  title: string;
+  date: string;
+  modulo: string;
+  body: string;
+}
+
+export interface CorProduto {
+  color_code: string | null;
+  color_name: string | null;
+  qtd_referencias: number;
+  qtd_skus: number;
+}
+
+export interface ImpactoAgrupamentoItem {
+  reference_code: string;
+  reference_name: string | null;
+  color_code: string | null;
+  color_name: string | null;
+  qtd_skus: number;
+  ja_agrupado_em: string | null;
+}
+
+export interface AgrupamentoMembroData {
+  referenceCode: string;
+  colorCode: string | null;
+  colorName: string | null;
+}
+
+export interface AgrupamentoMembro extends AgrupamentoMembroData {
+  id: number;
+  grupoId: number;
+  createdAt: string;
+}
+
+export interface AgrupamentoGrupo {
+  id: number;
+  tipo: string;
+  nome: string;
+  createdAt: string;
+  membros: AgrupamentoMembro[];
+}
+
+export interface CreateGrupoData {
+  tipo: string;
+  nome: string;
+  membros: AgrupamentoMembroData[];
 }
 
 export interface MetaNivel {

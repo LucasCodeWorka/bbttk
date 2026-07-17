@@ -14,11 +14,13 @@ model User {
   name              String             @db.VarChar(100)
   role              String             @db.VarChar(20)
   branchCodes       Int[]              @map("branch_codes")
+  moduleAccess      String[]           @default([]) @map("module_access")
   sellerCode        Int?               @map("seller_code")
   isActive          Boolean?           @default(true) @map("is_active")
   createdAt         DateTime?          @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime?          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   metaDistributions MetaDistribution[]
+  agrupamentoGrupos AgrupamentoGrupo[]
 
   @@map("users")
 }
@@ -202,6 +204,7 @@ model transacao_itens {
   seller_code         Int?
   price_table         String?   @db.VarChar(100)
   created_at          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at          DateTime? @default(now()) @db.Timestamp(6)
 
   @@unique([branch_code, transaction_code, item_index])
   @@index([product_code], map: "idx_itens_product")
@@ -225,10 +228,41 @@ model transacoes {
   origin_destination     String?   @db.VarChar(255)
   additional_information String?
   created_at             DateTime? @default(now()) @db.Timestamp(6)
+  updated_at             DateTime? @default(now()) @db.Timestamp(6)
 
   @@unique([branch_code, transaction_code])
   @@index([branch_code], map: "idx_transacoes_branch")
   @@index([transaction_date], map: "idx_transacoes_date")
   @@index([operation_code], map: "idx_transacoes_operation")
   @@index([status], map: "idx_transacoes_status")
+}
+
+// Configurador generico de agrupamento (primeira aplicacao: agrupar cores de produto)
+model AgrupamentoGrupo {
+  id          Int      @id @default(autoincrement())
+  tipo        String   @db.VarChar(50)
+  nome        String   @db.VarChar(100)
+  createdById Int?     @map("created_by")
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  membros     AgrupamentoMembro[]
+
+  @@unique([tipo, nome])
+  @@map("agrupamento_grupos")
+}
+
+model AgrupamentoMembro {
+  id            Int              @id @default(autoincrement())
+  grupoId       Int              @map("grupo_id")
+  grupo         AgrupamentoGrupo @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  tipo          String           @db.VarChar(50)
+  referenceCode String           @map("reference_code") @db.VarChar(100)
+  colorCode     String?          @map("color_code") @db.VarChar(10)
+  colorName     String?          @map("color_name") @db.VarChar(100)
+  colorMatchKey String           @map("color_match_key") @db.VarChar(100)
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  @@unique([tipo, referenceCode, colorMatchKey])
+  @@map("agrupamento_membros")
 }

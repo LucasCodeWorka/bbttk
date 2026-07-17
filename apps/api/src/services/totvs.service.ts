@@ -30,8 +30,8 @@ async function getApiToken(): Promise<string | null> {
     });
 
     if (response.ok) {
-      const data = await response.json();
-      return data.access_token;
+      const data = await response.json() as { access_token?: string };
+      return data.access_token || null;
     }
     return null;
   } catch (error) {
@@ -85,7 +85,7 @@ export async function getVendedoresApi(): Promise<Map<number, string>> {
         });
 
         if (response.ok) {
-          const data = await response.json();
+          const data = await response.json() as { items?: Array<{ sellerCode?: number; code?: number; name?: string; sellerName?: string }>; hasNext?: boolean };
           const items = data.items || [];
 
           for (const item of items) {

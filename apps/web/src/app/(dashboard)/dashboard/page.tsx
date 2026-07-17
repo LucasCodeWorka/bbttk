@@ -72,7 +72,7 @@ export default function DashboardPage() {
 
   // Dados para o gráfico de barras
   const dadosBarras = vendas?.filiais.slice(0, 8).map(f => ({
-    name: f.branch_name.length > 12 ? f.branch_name.substring(0, 12) : f.branch_name,
+    name: f.branch_name,
     value: f.faturamento,
   })) || [];
 
@@ -82,14 +82,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard de Vendas</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            {dataInicio} a {dataFim}
-            {filialSelecionada && ` - ${FILIAIS[filialSelecionada]}`}
-          </p>
-        </div>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard de Vendas</h1>
 
         {/* Filtros */}
         <div className="flex flex-wrap items-end gap-3">
@@ -163,7 +157,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Vendas por Filial</CardTitle>
           </CardHeader>
-          <BarChart data={dadosBarras} />
+          <BarChart data={dadosBarras} horizontal />
         </Card>
       </div>
 

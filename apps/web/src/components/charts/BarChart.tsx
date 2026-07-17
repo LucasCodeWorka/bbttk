@@ -26,6 +26,61 @@ interface BarChartProps {
   formatValue?: (value: number) => string;
 }
 
+// Cores da marca, em ordem fixa (identidade sempre associada a mesma posicao)
+const CORES_MARCA = [
+  'var(--bbtk-red)',
+  'var(--bbtk-green)',
+  'var(--bbtk-purple)',
+  'var(--bbtk-orange)',
+  'var(--bbtk-turquoise)',
+  'var(--bbtk-yellow)',
+  'var(--bbtk-pink)',
+  'var(--bbtk-blue)',
+];
+
+function truncar(nome: string, max: number) {
+  return nome.length > max ? `${nome.slice(0, max - 1)}…` : nome;
+}
+
+// Ranking horizontal em HTML/CSS puro - evita os problemas de eixo categorico
+// do Recharts (largura/label sumindo) para listas de "top N" simples.
+function RankedBarList({
+  data,
+  formatValue,
+}: {
+  data: DataPoint[];
+  formatValue: (value: number) => string;
+}) {
+  const max = Math.max(...data.map((d) => d.value), 1);
+
+  return (
+    <div className="space-y-3.5 py-1">
+      {data.map((d, i) => {
+        const pct = Math.max((d.value / max) * 100, 2);
+        const cor = d.color || CORES_MARCA[i % CORES_MARCA.length];
+        return (
+          <div key={d.name}>
+            <div className="flex items-center justify-between text-sm mb-1 gap-3">
+              <span className="font-medium text-gray-700 truncate" title={d.name}>
+                {truncar(d.name, 26)}
+              </span>
+              <span className="text-gray-600 whitespace-nowrap text-xs font-semibold">
+                {formatValue(d.value)}
+              </span>
+            </div>
+            <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct}%`, backgroundColor: cor }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function BarChart({
   data,
   color = 'var(--bbtk-green)',
@@ -41,73 +96,38 @@ export function BarChart({
     );
   }
 
-  // Cores gradiente para as barras
-  const colors = [
-    'var(--bbtk-red)',
-    'var(--bbtk-green)',
-    'var(--bbtk-purple)',
-    'var(--bbtk-orange)',
-    'var(--bbtk-turquoise)',
-    'var(--bbtk-yellow)',
-    'var(--bbtk-pink)',
-    'var(--bbtk-blue)',
-  ];
+  if (horizontal) {
+    return <RankedBarList data={data} formatValue={formatValue} />;
+  }
 
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <RechartsBarChart
-        data={data}
-        layout={horizontal ? 'vertical' : 'horizontal'}
-        margin={{ top: 10, right: 30, left: horizontal ? 100 : 0, bottom: 0 }}
-      >
+      <RechartsBarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 40 }}>
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />}
-        {horizontal ? (
-          <>
-            <XAxis
-              type="number"
-              tickFormatter={(value) => {
-                if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
-                if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
-                return value.toString();
-              }}
-              tick={{ fontSize: 11, fill: '#666' }}
-              tickLine={false}
-              axisLine={{ stroke: '#e0e0e0' }}
-            />
-            <YAxis
-              type="category"
-              dataKey="name"
-              tick={{ fontSize: 11, fill: '#333' }}
-              tickLine={false}
-              axisLine={false}
-              width={90}
-            />
-          </>
-        ) : (
-          <>
-            <XAxis
-              dataKey="name"
-              tick={{ fontSize: 11, fill: '#666' }}
-              tickLine={false}
-              axisLine={{ stroke: '#e0e0e0' }}
-              interval={0}
-              angle={-45}
-              textAnchor="end"
-              height={60}
-            />
-            <YAxis
-              tickFormatter={(value) => {
-                if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
-                if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
-                return value.toString();
-              }}
-              tick={{ fontSize: 11, fill: '#666' }}
-              tickLine={false}
-              axisLine={false}
-            />
-          </>
-        )}
+        <XAxis
+          dataKey="name"
+          tickFormatter={(value: string) => truncar(value, 10)}
+          tick={{ fontSize: 11, fill: '#666' }}
+          tickLine={false}
+          axisLine={{ stroke: '#e0e0e0' }}
+          interval={0}
+          angle={-40}
+          textAnchor="end"
+          height={50}
+        />
+        <YAxis
+          tickFormatter={(value) => {
+            if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+            if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
+            return value.toString();
+          }}
+          tick={{ fontSize: 11, fill: '#666' }}
+          tickLine={false}
+          axisLine={false}
+          width={44}
+        />
         <Tooltip
+          cursor={{ fill: 'rgba(0,0,0,0.03)' }}
           contentStyle={{
             backgroundColor: '#fff',
             border: '1px solid #e5e5e5',
@@ -116,9 +136,9 @@ export function BarChart({
           }}
           formatter={(value: number) => [formatValue(value), 'Valor']}
         />
-        <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+        <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={48}>
           {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={entry.color || colors[index % colors.length]} />
+            <Cell key={`cell-${index}`} fill={entry.color || CORES_MARCA[index % CORES_MARCA.length]} />
           ))}
         </Bar>
       </RechartsBarChart>

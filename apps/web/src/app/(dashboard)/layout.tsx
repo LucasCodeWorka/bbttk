@@ -1,23 +1,37 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { cn } from '@/lib/utils';
+import { getModuleForPath, isAdminOnlyPath } from '@/lib/permissions';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isAdmin, canAccessModule } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const requiredModule = getModuleForPath(pathname);
+  const isAuthorized =
+    !requiredModule || canAccessModule(requiredModule);
+  const isAdminAuthorized = !isAdminOnlyPath(pathname) || isAdmin;
+  const bloqueado = !!user && (!isAuthorized || !isAdminAuthorized);
 
   useEffect(() => {
     if (!isLoading && !user) {
       router.push('/login');
+      return;
     }
-  }, [user, isLoading, router]);
+    if (!isLoading && user && bloqueado) {
+      router.push('/inicio');
+    }
+  }, [user, isLoading, bloqueado, router]);
 
   if (isLoading) {
     return (
@@ -30,14 +44,14 @@ export default function DashboardLayout({
     );
   }
 
-  if (!user) {
+  if (!user || bloqueado) {
     return null;
   }
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Sidebar />
-      <main className="ml-64 p-6 transition-all duration-300">
+      <Sidebar isCollapsed={isCollapsed} onToggleCollapse={() => setIsCollapsed((prev) => !prev)} />
+      <main className={cn('p-6 transition-all duration-300', isCollapsed ? 'ml-16' : 'ml-64')}>
         {children}
       </main>
     </div>

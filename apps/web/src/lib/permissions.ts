@@ -1,0 +1,19 @@
+// Mapeia prefixos de rota para o modulo que os protege.
+// Usado tanto pela Sidebar (o que mostrar) quanto pelo layout (o que bloquear).
+export const ROUTE_MODULES: { prefix: string; module: string }[] = [
+  { prefix: '/dashboard', module: 'comercial' },
+  { prefix: '/metas', module: 'comercial' },
+  { prefix: '/pcp', module: 'pcp' },
+];
+
+export function getModuleForPath(pathname: string): string | null {
+  const match = ROUTE_MODULES.find((r) => pathname.startsWith(r.prefix));
+  return match ? match.module : null;
+}
+
+// Rotas que exigem admin, independente de modulo
+export const ADMIN_ONLY_PREFIXES = ['/usuarios'];
+
+export function isAdminOnlyPath(pathname: string): boolean {
+  return ADMIN_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}

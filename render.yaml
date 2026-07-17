@@ -1,0 +1,43 @@
+services:
+  # API (Node.js + Express + Prisma)
+  - type: web
+    name: bebetenkite-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npx prisma generate --schema=apps/api/prisma/schema.prisma && npm run build -w apps/api
+    startCommand: npm run start -w apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: TOTVS_API_URL
+        sync: false
+      - key: TOTVS_CLIENT_ID
+        sync: false
+      - key: TOTVS_CLIENT_SECRET
+        sync: false
+      - key: TOTVS_USERNAME
+        sync: false
+      - key: TOTVS_PASSWORD
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+
+  # Web (Next.js)
+  - type: web
+    name: bebetenkite-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build -w apps/web
+    startCommand: npm run start -w apps/web
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
