@@ -55,6 +55,17 @@ body {
   text-transform: uppercase;
 }
 
+/* O preflight do Tailwind reseta text-transform pra "none" em elementos de formulario
+   (button, input, select, textarea) pra normalizar estilo entre navegadores - isso
+   sobrescreve o uppercase herdado do body, entao precisa reforcar aqui. */
+button,
+input,
+select,
+textarea,
+optgroup {
+  text-transform: uppercase;
+}
+
 /* Scrollbar personalizada */
 ::-webkit-scrollbar {
   width: 8px;

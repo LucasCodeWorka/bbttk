@@ -8,8 +8,15 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  LabelList,
 } from 'recharts';
 import { formatMoney, formatDateShort } from '@/lib/utils';
+
+function formatCompacto(value: number): string {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
+  return value.toFixed(0);
+}
 
 interface DataPoint {
   data: string;
@@ -79,7 +86,14 @@ export function LineChart({
           strokeWidth={2}
           dot={{ fill: color, strokeWidth: 2, r: 4 }}
           activeDot={{ r: 6, fill: color }}
-        />
+        >
+          <LabelList
+            dataKey={dataKey}
+            position="top"
+            formatter={(value: number) => formatCompacto(value)}
+            style={{ fontSize: 10, fill: '#4b5563', fontWeight: 600 }}
+          />
+        </Line>
       </RechartsLineChart>
     </ResponsiveContainer>
   );

@@ -707,7 +707,7 @@ export default function MetasPage() {
                               <span className="flex-1 text-sm">
                                 {v.seller_name}
                                 <span className="text-gray-400 text-xs ml-1">
-                                  ({formatMoney(v.faturamento)} nos ultimos 3 meses)
+                                  ({formatMoney(v.faturamento / 3)} media/mes, ultimos 3 meses)
                                 </span>
                               </span>
                               <div className="flex items-center gap-1">
