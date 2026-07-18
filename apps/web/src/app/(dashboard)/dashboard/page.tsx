@@ -38,8 +38,8 @@ export default function DashboardPage() {
         vendasApi.getPeriodo(dataInicio, dataFim, branchCode),
         vendasApi.getDiarias(dataInicio, dataFim, branchCode),
         vendasApi.getComparativoAno(dataInicio, dataFim),
-        vendasApi.getVendedores(branchCode),
-        vendasApi.getTopProdutos(branchCode),
+        vendasApi.getVendedores(dataInicio, dataFim, branchCode),
+        vendasApi.getTopProdutos(dataInicio, dataFim, branchCode),
         vendasApi.getProjecaoFiliais(),
       ]);
 
@@ -71,7 +71,7 @@ export default function DashboardPage() {
   const filialOptions = [{ value: '', label: 'Todas as Filiais' }, ...filiaisDisponiveis];
 
   // Dados para o gráfico de barras
-  const dadosBarras = vendas?.filiais.slice(0, 8).map(f => ({
+  const dadosBarras = vendas?.filiais?.slice(0, 8).map(f => ({
     name: f.branch_name,
     value: f.faturamento,
   })) || [];
@@ -118,27 +118,27 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard
           title="Faturamento"
-          value={formatMoney(vendas?.total.faturamento || 0)}
-          variation={comparativo?.total.variacao.faturamento.percentual}
+          value={formatMoney(vendas?.total?.faturamento || 0)}
+          variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
           isLoading={isLoading}
         />
         <KPICard
           title="Pecas"
-          value={formatNumber(vendas?.total.pecas || 0)}
-          variation={comparativo?.total.variacao.pecas.percentual}
+          value={formatNumber(vendas?.total?.pecas || 0)}
+          variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
           isLoading={isLoading}
         />
         <KPICard
           title="Ticket Medio"
-          value={formatMoney(vendas?.total.tm || 0)}
+          value={formatMoney(vendas?.total?.tm || 0)}
           color="yellow"
           isLoading={isLoading}
         />
         <KPICard
           title="Pecas/Atendimento"
-          value={(vendas?.total.pa || 0).toFixed(2)}
+          value={(vendas?.total?.pa || 0).toFixed(2)}
           color="purple"
           isLoading={isLoading}
         />

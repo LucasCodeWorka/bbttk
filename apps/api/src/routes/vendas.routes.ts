@@ -13,11 +13,6 @@ router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
 
     const filiais = await vendasService.getVendasPeriodo(today, today, branchCode);
 
-    if (branchCode && filiais.length > 0) {
-      res.json(filiais[0]);
-      return;
-    }
-
     const total = vendasService.calcularTotais(filiais);
 
     res.json({
@@ -38,11 +33,6 @@ router.get('/vendas/mes/:branchCode?', async (req: Request, res: Response) => {
     const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
     const filiais = await vendasService.getVendasPeriodo(startMonth, today, branchCode);
-
-    if (branchCode && filiais.length > 0) {
-      res.json(filiais[0]);
-      return;
-    }
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -69,11 +59,6 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
     const endDate = new Date(end);
 
     const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCode);
-
-    if (branchCode && filiais.length > 0) {
-      res.json(filiais[0]);
-      return;
-    }
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -107,19 +92,31 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
   }
 });
 
+// Resolve o periodo a partir de ?start=&end= na query string, com fallback pro mes atual
+function resolvePeriodo(req: Request): { startDate: Date; endDate: Date } {
+  const today = new Date();
+  const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const start = req.query.start as string | undefined;
+  const end = req.query.end as string | undefined;
+
+  return {
+    startDate: start ? new Date(start) : startMonth,
+    endDate: end ? new Date(end) : today,
+  };
+}
+
 // Top produtos
 router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
-    const today = new Date();
-    const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const { startDate, endDate } = resolvePeriodo(req);
 
-    const produtos = await vendasService.getTopProdutos(startMonth, today, branchCode);
+    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCode);
 
     res.json({
       periodo: {
-        inicio: startMonth.toISOString().split('T')[0],
-        fim: today.toISOString().split('T')[0],
+        inicio: startDate.toISOString().split('T')[0],
+        fim: endDate.toISOString().split('T')[0],
       },
       produtos,
     });
@@ -132,10 +129,9 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
 router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
-    const today = new Date();
-    const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const { startDate, endDate } = resolvePeriodo(req);
 
-    const vendedores = await vendasService.getVendasVendedor(startMonth, today, branchCode);
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCode);
 
     // Buscar nomes dos vendedores da API TOTVS
     const nomes = await getVendedoresApi();
@@ -148,8 +144,8 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
 
     res.json({
       periodo: {
-        inicio: startMonth.toISOString().split('T')[0],
-        fim: today.toISOString().split('T')[0],
+        inicio: startDate.toISOString().split('T')[0],
+        fim: endDate.toISOString().split('T')[0],
       },
       vendedores: vendedoresComNomes,
     });

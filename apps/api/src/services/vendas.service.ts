@@ -193,6 +193,7 @@ export async function getVendasVendedor(
       AND ti.seller_code != 1
       AND ti.seller_code IS NOT NULL
       AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
     GROUP BY ti.seller_code
     ORDER BY faturamento DESC
@@ -242,6 +243,7 @@ export async function getTopProdutos(
       AND t.status != 6
       AND ti.seller_code != 1
       AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
       AND (p.is_finished_product = true OR p.product_code IS NULL)
       ${branchFilter}
     GROUP BY COALESCE(p.reference_code, ti.product_code::text),

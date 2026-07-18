@@ -259,7 +259,7 @@ export default function InicioPage() {
       try {
         const [vendasRes, vendRes, entregasRes] = await Promise.all([
           vendasApi.getPeriodo(getMonthStart(), getToday()),
-          vendasApi.getVendedores(),
+          vendasApi.getVendedores(getMonthStart(), getToday()),
           entregasApi.getAll(),
         ]);
         setVendas(vendasRes);

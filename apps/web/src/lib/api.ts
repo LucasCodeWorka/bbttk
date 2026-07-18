@@ -74,9 +74,9 @@ export const vendasApi = {
       `/api/vendas/diarias/periodo/${inicio}/${fim}${branchCode ? `/${branchCode}` : ''}`
     ),
 
-  getVendedores: (branchCode?: number) =>
+  getVendedores: (inicio: string, fim: string, branchCode?: number) =>
     fetchApi<VendedoresResponse>(
-      `/api/vendedores${branchCode ? `/${branchCode}` : ''}`
+      `/api/vendedores${branchCode ? `/${branchCode}` : ''}?start=${inicio}&end=${fim}`
     ),
 
   getVendedoresLista: () =>
@@ -87,9 +87,9 @@ export const vendasApi = {
       `/api/vendedores-por-filial/${branchCode}/${ano}/${mes}`
     ),
 
-  getTopProdutos: (branchCode?: number) =>
+  getTopProdutos: (inicio: string, fim: string, branchCode?: number) =>
     fetchApi<TopProdutosResponse>(
-      `/api/top-produtos${branchCode ? `/${branchCode}` : ''}`
+      `/api/top-produtos${branchCode ? `/${branchCode}` : ''}?start=${inicio}&end=${fim}`
     ),
 
   getComparativoAno: (inicio: string, fim: string) =>
