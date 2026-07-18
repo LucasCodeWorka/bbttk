@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -117,12 +118,12 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps) {
       {/* Logo */}
       <div className="p-4 border-b border-gray-100">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[var(--bbtk-red)] to-[var(--bbtk-green)] flex items-center justify-center text-white font-bold text-lg">
-            B
+          <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 relative">
+            <Image src="/logo.png" alt="Bebetenkite" fill className="object-cover" />
           </div>
           {!isCollapsed && (
             <div>
-              <h1 className="font-bold text-gray-900">
+              <h1 className="font-bold text-gray-900 normal-case">
                 <span className="text-[var(--bbtk-red)]">bebê</span>
                 <span className="text-[var(--bbtk-green)]">tenkitê</span>
               </h1>

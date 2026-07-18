@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Select } from '@/components/ui/Select';
+import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { KPICard } from '@/components/dashboard/KPICard';
@@ -11,7 +11,7 @@ import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse } from '@/lib/api';
-import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday } from '@/lib/utils';
+import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function DashboardPage() {
@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [dataInicio, setDataInicio] = useState(getMonthStart());
   const [dataFim, setDataFim] = useState(getToday());
-  const [filialSelecionada, setFilialSelecionada] = useState<number | ''>('');
+  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
 
   // Dados
   const [vendas, setVendas] = useState<VendasResponse | null>(null);
@@ -29,17 +29,22 @@ export default function DashboardPage() {
   const [produtos, setProdutos] = useState<TopProdutosResponse | null>(null);
   const [projecao, setProjecao] = useState<ProjecaoFiliaisResponse | null>(null);
 
+  const mesUnico = isMesUnico(dataInicio, dataFim);
+
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
     try {
-      const branchCode = filialSelecionada || undefined;
+      const branchCodes = filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined;
+      const granularidade = isMesUnico(dataInicio, dataFim) ? 'diario' : 'mensal';
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
-        vendasApi.getPeriodo(dataInicio, dataFim, branchCode),
-        vendasApi.getDiarias(dataInicio, dataFim, branchCode),
+        vendasApi.getPeriodo(dataInicio, dataFim, branchCodes),
+        granularidade === 'diario'
+          ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes)
+          : vendasApi.getMensais(dataInicio, dataFim, branchCodes),
         vendasApi.getComparativoAno(dataInicio, dataFim),
-        vendasApi.getVendedores(dataInicio, dataFim, branchCode),
-        vendasApi.getTopProdutos(dataInicio, dataFim, branchCode),
+        vendasApi.getVendedores(dataInicio, dataFim, branchCodes),
+        vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes),
         vendasApi.getProjecaoFiliais(),
       ]);
 
@@ -54,7 +59,7 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataInicio, dataFim, filialSelecionada]);
+  }, [dataInicio, dataFim, filiaisSelecionadas]);
 
   useEffect(() => {
     carregarDados();
@@ -68,7 +73,7 @@ export default function DashboardPage() {
     })
     .map(([code, name]) => ({ value: code, label: name }));
 
-  const filialOptions = [{ value: '', label: 'Todas as Filiais' }, ...filiaisDisponiveis];
+  const filialOptions = filiaisDisponiveis.map((f) => ({ value: parseInt(f.value), label: f.label }));
 
   // Dados para o gráfico de barras
   const dadosBarras = vendas?.filiais?.slice(0, 8).map(f => ({
@@ -101,12 +106,12 @@ export default function DashboardPage() {
             label="Fim"
             className="w-36"
           />
-          <Select
-            value={filialSelecionada}
-            onChange={(e) => setFilialSelecionada(e.target.value ? parseInt(e.target.value) : '')}
+          <FilialMultiSelect
+            selected={filiaisSelecionadas}
+            onChange={setFiliaisSelecionadas}
             options={filialOptions}
             label="Filial"
-            className="w-44"
+            className="w-52"
           />
           <Button onClick={carregarDados} isLoading={isLoading}>
             Atualizar
@@ -150,7 +155,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Vendas Diarias</CardTitle>
           </CardHeader>
-          <LineChart data={vendasDiarias?.dados || []} />
+          <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
         </Card>
 
         <Card>
@@ -220,7 +225,7 @@ export default function DashboardPage() {
               return (
                 <TableRow
                   key={f.branch_code}
-                  onClick={() => setFilialSelecionada(f.branch_code)}
+                  onClick={() => setFiliaisSelecionadas([f.branch_code])}
                 >
                   <TableCell className="font-medium whitespace-nowrap sticky left-0 bg-white">{f.branch_name}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.faturamento)}</TableCell>

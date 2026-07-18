@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/Button';
@@ -34,10 +35,10 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--bbtk-red)] to-[var(--bbtk-green)] text-white text-2xl font-bold mb-4 shadow-lg">
-            B
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl overflow-hidden mb-4 shadow-lg relative">
+            <Image src="/logo.png" alt="Bebetenkite" fill className="object-cover" />
           </div>
-          <h1 className="text-2xl font-bold">
+          <h1 className="text-2xl font-bold normal-case">
             <span className="text-[var(--bbtk-red)]">bebê</span>
             <span className="text-[var(--bbtk-green)]">tenkitê</span>
           </h1>

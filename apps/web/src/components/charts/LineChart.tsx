@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
   LabelList,
 } from 'recharts';
-import { formatMoney, formatDateShort } from '@/lib/utils';
+import { formatMoney, formatDateShort, formatMonthShort } from '@/lib/utils';
 
 function formatCompacto(value: number): string {
   if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
@@ -31,6 +31,7 @@ interface LineChartProps {
   color?: string;
   showGrid?: boolean;
   formatValue?: (value: number) => string;
+  granularidade?: 'diario' | 'mensal';
 }
 
 export function LineChart({
@@ -39,7 +40,9 @@ export function LineChart({
   color = 'var(--bbtk-red)',
   showGrid = true,
   formatValue = formatMoney,
+  granularidade = 'diario',
 }: LineChartProps) {
+  const formatEixo = granularidade === 'mensal' ? formatMonthShort : formatDateShort;
   if (!data || data.length === 0) {
     return (
       <div className="h-[300px] flex items-center justify-center text-gray-500">
@@ -54,7 +57,7 @@ export function LineChart({
         {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />}
         <XAxis
           dataKey="data"
-          tickFormatter={formatDateShort}
+          tickFormatter={formatEixo}
           tick={{ fontSize: 12, fill: '#666' }}
           tickLine={false}
           axisLine={{ stroke: '#e0e0e0' }}
@@ -77,7 +80,7 @@ export function LineChart({
             boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
           }}
           formatter={(value: number) => [formatValue(value), dataKey === 'faturamento' ? 'Faturamento' : dataKey]}
-          labelFormatter={(label) => formatDateShort(label)}
+          labelFormatter={(label) => formatEixo(label)}
         />
         <Line
           type="monotone"

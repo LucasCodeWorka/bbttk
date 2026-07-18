@@ -7,11 +7,11 @@ const router = Router();
 // Vendas de hoje
 router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
   try {
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const filiais = await vendasService.getVendasPeriodo(today, today, branchCode);
+    const filiais = await vendasService.getVendasPeriodo(today, today, branchCodes);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -28,11 +28,11 @@ router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
 // Vendas do mês
 router.get('/vendas/mes/:branchCode?', async (req: Request, res: Response) => {
   try {
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
     const today = new Date();
     const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    const filiais = await vendasService.getVendasPeriodo(startMonth, today, branchCode);
+    const filiais = await vendasService.getVendasPeriodo(startMonth, today, branchCodes);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -53,12 +53,12 @@ router.get('/vendas/mes/:branchCode?', async (req: Request, res: Response) => {
 router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {
     const { start, end } = req.params;
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCode);
+    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -76,12 +76,12 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
 router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {
     const { start, end } = req.params;
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCode);
+    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCodes);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -91,6 +91,39 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
     res.status(500).json({ error: String(error) });
   }
 });
+
+// Vendas mensais por período (usado quando o periodo filtrado passa de 1 mes)
+router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const branchCodes = resolveBranchCodes(req);
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const dados = await vendasService.getVendasMensais(startDate, endDate, branchCodes);
+
+    res.json({
+      periodo: { inicio: start, fim: end },
+      dados,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Resolve as filiais filtradas: aceita ?branches=1,3,4 (multiplas) ou o :branchCode
+// antigo da URL (uma so), com prioridade pro query param. undefined = todas as filiais.
+function resolveBranchCodes(req: Request): number[] | undefined {
+  const branchesQuery = req.query.branches as string | undefined;
+  if (branchesQuery) {
+    const codes = branchesQuery.split(',').map(c => parseInt(c.trim())).filter(c => !isNaN(c));
+    return codes.length > 0 ? codes : undefined;
+  }
+
+  const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+  return branchCode ? [branchCode] : undefined;
+}
 
 // Resolve o periodo a partir de ?start=&end= na query string, com fallback pro mes atual
 function resolvePeriodo(req: Request): { startDate: Date; endDate: Date } {
@@ -108,10 +141,10 @@ function resolvePeriodo(req: Request): { startDate: Date; endDate: Date } {
 // Top produtos
 router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => {
   try {
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCode);
+    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes);
 
     res.json({
       periodo: {
@@ -128,10 +161,10 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
 // Vendedores
 router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
   try {
-    const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+    const branchCodes = resolveBranchCodes(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCode);
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes);
 
     // Buscar nomes dos vendedores da API TOTVS
     const nomes = await getVendedoresApi();
@@ -180,7 +213,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
     const startDate = new Date(ano, mes - 4, 1);
     const endDate = new Date(ano, mes - 1, 0);
 
-    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCode);
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
     const nomes = await getVendedoresApi();
 
     const vendedoresComNomes = vendedores

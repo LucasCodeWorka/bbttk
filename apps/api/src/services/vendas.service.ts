@@ -68,13 +68,19 @@ function round(value: number, decimals: number = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
 
+// Filtro de filiais reutilizado: aceita uma ou varias (undefined/vazio = todas)
+function buildBranchFilter(branchCodes?: number[]) {
+  if (!branchCodes || branchCodes.length === 0) return Prisma.empty;
+  return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
+}
+
 // Vendas por período (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasPeriodo(
   startDate: Date,
   endDate: Date,
-  branchCode?: number
+  branchCodes?: number[]
 ): Promise<VendasFilial[]> {
-  const branchFilter = branchCode ? Prisma.sql`AND t.branch_code = ${branchCode}` : Prisma.empty;
+  const branchFilter = buildBranchFilter(branchCodes);
 
   const results = await prisma.$queryRaw<Array<{
     branch_code: number;
@@ -130,9 +136,9 @@ export async function getVendasPeriodo(
 export async function getVendasDiarias(
   startDate: Date,
   endDate: Date,
-  branchCode?: number
+  branchCodes?: number[]
 ): Promise<VendasDiarias[]> {
-  const branchFilter = branchCode ? Prisma.sql`AND t.branch_code = ${branchCode}` : Prisma.empty;
+  const branchFilter = buildBranchFilter(branchCodes);
 
   const results = await prisma.$queryRaw<Array<{
     data: Date;
@@ -166,13 +172,54 @@ export async function getVendasDiarias(
   }));
 }
 
+// Vendas mensais (mesmo formato de getVendasDiarias, mas agregado por mes -
+// usado quando o periodo filtrado passa de 1 mes, pra nao poluir o grafico com dias)
+export async function getVendasMensais(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<VendasDiarias[]> {
+  const branchFilter = buildBranchFilter(branchCodes);
+
+  const results = await prisma.$queryRaw<Array<{
+    mes: Date;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+  }>>`
+    SELECT
+      DATE_TRUNC('month', t.transaction_date) as mes,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
+      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status != 6
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+    GROUP BY DATE_TRUNC('month', t.transaction_date)
+    ORDER BY mes
+  `;
+
+  return results.map(row => ({
+    data: row.mes.toISOString().split('T')[0],
+    transacoes: Number(row.transacoes),
+    pecas: Math.round(decimalToNumber(row.pecas)),
+    faturamento: round(decimalToNumber(row.faturamento)),
+  }));
+}
+
 // Vendas por vendedor
 export async function getVendasVendedor(
   startDate: Date,
   endDate: Date,
-  branchCode?: number
+  branchCodes?: number[]
 ): Promise<VendasVendedor[]> {
-  const branchFilter = branchCode ? Prisma.sql`AND t.branch_code = ${branchCode}` : Prisma.empty;
+  const branchFilter = buildBranchFilter(branchCodes);
 
   const results = await prisma.$queryRaw<Array<{
     seller_code: number;
@@ -219,10 +266,10 @@ export async function getVendasVendedor(
 export async function getTopProdutos(
   startDate: Date,
   endDate: Date,
-  branchCode?: number,
+  branchCodes?: number[],
   limit: number = 10
 ): Promise<Produto[]> {
-  const branchFilter = branchCode ? Prisma.sql`AND t.branch_code = ${branchCode}` : Prisma.empty;
+  const branchFilter = buildBranchFilter(branchCodes);
 
   const results = await prisma.$queryRaw<Array<{
     referencia: string;
@@ -410,9 +457,10 @@ export async function getProjecaoMes(branchCode?: number) {
   const startAntCompleto = new Date(today.getFullYear() - 1, today.getMonth(), 1);
 
   // Buscar dados
-  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCode);
-  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCode);
-  const vendasAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, branchCode);
+  const branchCodes = branchCode ? [branchCode] : undefined;
+  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCodes);
+  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCodes);
+  const vendasAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, branchCodes);
 
   const totalAtual = calcularTotais(vendasAtual);
   const totalAntParcial = calcularTotais(vendasAntParcial);

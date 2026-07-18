@@ -61,6 +61,17 @@ export function formatDateShort(dateStr: string): string {
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
+// Formatar mes curto (mes/ano) - usado quando o grafico agrega por mes
+export function formatMonthShort(dateStr: string): string {
+  const date = new Date(dateStr + 'T00:00:00');
+  return date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+}
+
+// Verifica se duas datas (yyyy-mm-dd) estao dentro do mesmo mes/ano
+export function isMesUnico(dataInicio: string, dataFim: string): boolean {
+  return dataInicio.slice(0, 7) === dataFim.slice(0, 7);
+}
+
 // Obter cor de variação
 export function getVariationColor(value: number): string {
   if (value > 0) return 'text-green-600';

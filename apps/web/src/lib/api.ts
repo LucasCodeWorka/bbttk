@@ -63,20 +63,35 @@ export const authApi = {
 };
 
 // Vendas
+// Monta a query string ?branches=1,3,4 a partir de uma lista de filiais (vazio/undefined = todas)
+function branchesQuery(branchCodes?: number[]): string {
+  return branchCodes && branchCodes.length > 0 ? `branches=${branchCodes.join(',')}` : '';
+}
+
+function joinQuery(...parts: string[]): string {
+  const filtered = parts.filter(Boolean);
+  return filtered.length > 0 ? `?${filtered.join('&')}` : '';
+}
+
 export const vendasApi = {
-  getPeriodo: (inicio: string, fim: string, branchCode?: number) =>
+  getPeriodo: (inicio: string, fim: string, branchCodes?: number[]) =>
     fetchApi<VendasResponse>(
-      `/api/vendas/periodo/${inicio}/${fim}${branchCode ? `/${branchCode}` : ''}`
+      `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
     ),
 
-  getDiarias: (inicio: string, fim: string, branchCode?: number) =>
+  getDiarias: (inicio: string, fim: string, branchCodes?: number[]) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/diarias/periodo/${inicio}/${fim}${branchCode ? `/${branchCode}` : ''}`
+      `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
     ),
 
-  getVendedores: (inicio: string, fim: string, branchCode?: number) =>
+  getMensais: (inicio: string, fim: string, branchCodes?: number[]) =>
+    fetchApi<VendasDiariasResponse>(
+      `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
+    ),
+
+  getVendedores: (inicio: string, fim: string, branchCodes?: number[]) =>
     fetchApi<VendedoresResponse>(
-      `/api/vendedores${branchCode ? `/${branchCode}` : ''}?start=${inicio}&end=${fim}`
+      `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes))}`
     ),
 
   getVendedoresLista: () =>
@@ -87,9 +102,9 @@ export const vendasApi = {
       `/api/vendedores-por-filial/${branchCode}/${ano}/${mes}`
     ),
 
-  getTopProdutos: (inicio: string, fim: string, branchCode?: number) =>
+  getTopProdutos: (inicio: string, fim: string, branchCodes?: number[]) =>
     fetchApi<TopProdutosResponse>(
-      `/api/top-produtos${branchCode ? `/${branchCode}` : ''}?start=${inicio}&end=${fim}`
+      `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes))}`
     ),
 
   getComparativoAno: (inicio: string, fim: string) =>
