@@ -46,6 +46,12 @@ export default function UsuariosPage() {
   const [usuarioSenha, setUsuarioSenha] = useState<User | null>(null);
   const [novaSenha, setNovaSenha] = useState('');
 
+  // Loading states das acoes
+  const [salvando, setSalvando] = useState(false);
+  const [redefinindo, setRedefinindo] = useState(false);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
   // Verificar acesso admin
   useEffect(() => {
     if (!isAdmin) {
@@ -118,6 +124,7 @@ export default function UsuariosPage() {
       return;
     }
 
+    setSalvando(true);
     try {
       if (editingUser) {
         // Atualizar
@@ -150,6 +157,8 @@ export default function UsuariosPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Erro ao salvar', 'error');
       console.error(error);
+    } finally {
+      setSalvando(false);
     }
   }
 
@@ -160,6 +169,7 @@ export default function UsuariosPage() {
     const acao = user.isActive ? 'bloquear' : 'desbloquear';
     if (!confirm(`Tem certeza que deseja ${acao} o usuario "${user.name}"?`)) return;
 
+    setTogglingId(user.id);
     try {
       await authApi.updateUser(token, user.id, { isActive: !user.isActive });
       showToast(user.isActive ? 'Usuario bloqueado!' : 'Usuario desbloqueado!', 'success');
@@ -167,6 +177,8 @@ export default function UsuariosPage() {
     } catch (error) {
       showToast('Erro ao atualizar usuario', 'error');
       console.error(error);
+    } finally {
+      setTogglingId(null);
     }
   }
 
@@ -186,6 +198,7 @@ export default function UsuariosPage() {
       return;
     }
 
+    setRedefinindo(true);
     try {
       await authApi.updateUser(token, usuarioSenha.id, { password: novaSenha });
       showToast(`Senha de ${usuarioSenha.name} redefinida!`, 'success');
@@ -195,6 +208,8 @@ export default function UsuariosPage() {
     } catch (error) {
       showToast('Erro ao redefinir senha', 'error');
       console.error(error);
+    } finally {
+      setRedefinindo(false);
     }
   }
 
@@ -202,6 +217,7 @@ export default function UsuariosPage() {
   async function handleDeletar(id: number) {
     if (!token || !confirm('Excluir este usuario?')) return;
 
+    setDeletingId(id);
     try {
       await authApi.deleteUser(token, id);
       showToast('Usuario excluido!', 'success');
@@ -209,6 +225,8 @@ export default function UsuariosPage() {
     } catch (error) {
       showToast('Erro ao excluir', 'error');
       console.error(error);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -335,6 +353,7 @@ export default function UsuariosPage() {
                         variant={user.isActive ? 'danger' : 'secondary'}
                         size="sm"
                         onClick={() => handleToggleAtivo(user)}
+                        isLoading={togglingId === user.id}
                       >
                         {user.isActive ? 'Bloquear' : 'Desbloquear'}
                       </Button>
@@ -342,6 +361,7 @@ export default function UsuariosPage() {
                         variant="danger"
                         size="sm"
                         onClick={() => handleDeletar(user.id)}
+                        isLoading={deletingId === user.id}
                       >
                         Excluir
                       </Button>
@@ -477,7 +497,7 @@ export default function UsuariosPage() {
           <Button variant="ghost" onClick={() => setShowModal(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleSalvar}>
+          <Button onClick={handleSalvar} isLoading={salvando}>
             {editingUser ? 'Atualizar' : 'Criar Usuario'}
           </Button>
         </div>
@@ -511,7 +531,7 @@ export default function UsuariosPage() {
           <Button variant="ghost" onClick={() => setShowSenhaModal(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleRedefinirSenha}>
+          <Button onClick={handleRedefinirSenha} isLoading={redefinindo}>
             Redefinir Senha
           </Button>
         </div>

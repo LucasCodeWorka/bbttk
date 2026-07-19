@@ -54,6 +54,12 @@ export default function MetasPage() {
   const [vendedorPercentuais, setVendedorPercentuais] = useState<Record<number, Record<number, number>>>({});
   const [lojasVendedoresAplicadas, setLojasVendedoresAplicadas] = useState<Set<number>>(new Set());
 
+  // Loading states das acoes
+  const [salvandoMeta, setSalvandoMeta] = useState(false);
+  const [deletingMetaId, setDeletingMetaId] = useState<number | null>(null);
+  const [distribuindo, setDistribuindo] = useState(false);
+  const [aplicandoVendedoresLoja, setAplicandoVendedoresLoja] = useState<number | null>(null);
+
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -98,6 +104,7 @@ export default function MetasPage() {
       return;
     }
 
+    setSalvandoMeta(true);
     try {
       await metasApi.saveMeta(token, {
         ano,
@@ -126,6 +133,8 @@ export default function MetasPage() {
     } catch (error) {
       showToast('Erro ao salvar meta', 'error');
       console.error(error);
+    } finally {
+      setSalvandoMeta(false);
     }
   }
 
@@ -133,6 +142,7 @@ export default function MetasPage() {
   async function handleDeleteMeta(id: number) {
     if (!token || !confirm('Excluir esta meta?')) return;
 
+    setDeletingMetaId(id);
     try {
       await metasApi.deleteMeta(token, id);
       showToast('Meta excluida!', 'success');
@@ -140,6 +150,8 @@ export default function MetasPage() {
     } catch (error) {
       showToast('Erro ao excluir', 'error');
       console.error(error);
+    } finally {
+      setDeletingMetaId(null);
     }
   }
 
@@ -184,6 +196,7 @@ export default function MetasPage() {
       percentage: p.percentage,
     }));
 
+    setDistribuindo(true);
     try {
       await metasApi.distribuir(token, {
         ano,
@@ -200,6 +213,8 @@ export default function MetasPage() {
     } catch (error) {
       showToast('Erro ao distribuir metas', 'error');
       console.error(error);
+    } finally {
+      setDistribuindo(false);
     }
   }
 
@@ -283,6 +298,7 @@ export default function MetasPage() {
       percentage,
     }));
 
+    setAplicandoVendedoresLoja(branchCode);
     try {
       await metasApi.distribuir(token, {
         ano,
@@ -298,6 +314,8 @@ export default function MetasPage() {
     } catch (error) {
       showToast('Erro ao distribuir vendedores', 'error');
       console.error(error);
+    } finally {
+      setAplicandoVendedoresLoja(null);
     }
   }
 
@@ -438,6 +456,7 @@ export default function MetasPage() {
                       variant="danger"
                       size="sm"
                       onClick={() => handleDeleteMeta(m.id)}
+                      isLoading={deletingMetaId === m.id}
                     >
                       Excluir
                     </Button>
@@ -501,7 +520,7 @@ export default function MetasPage() {
           <Button variant="ghost" onClick={() => setShowMetaModal(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleSaveMeta}>
+          <Button onClick={handleSaveMeta} isLoading={salvandoMeta}>
             Salvar
           </Button>
         </div>
@@ -649,6 +668,7 @@ export default function MetasPage() {
             variant="secondary"
             onClick={handleDistribuir}
             disabled={distPreview.length === 0}
+            isLoading={distribuindo}
           >
             Aplicar e Ir para Vendedores
           </Button>
@@ -677,7 +697,8 @@ export default function MetasPage() {
                 <button
                   type="button"
                   onClick={() => toggleLojaVendedores(loja.branchCode)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                  disabled={carregando}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors disabled:opacity-60 disabled:cursor-wait"
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{loja.name}</span>
@@ -686,6 +707,12 @@ export default function MetasPage() {
                       <span className="text-xs font-semibold text-white bg-green-600 px-2 py-0.5 rounded-full">
                         Distribuido
                       </span>
+                    )}
+                    {carregando && (
+                      <svg className="animate-spin h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
                     )}
                   </div>
                   <span className="text-gray-400">{expandida ? '-' : '+'}</span>
@@ -742,6 +769,7 @@ export default function MetasPage() {
                             variant="secondary"
                             onClick={() => aplicarVendedoresLoja(loja.branchCode)}
                             disabled={Math.abs(totalPct - 100) > 0.1}
+                            isLoading={aplicandoVendedoresLoja === loja.branchCode}
                           >
                             Aplicar Vendedores desta Loja
                           </Button>

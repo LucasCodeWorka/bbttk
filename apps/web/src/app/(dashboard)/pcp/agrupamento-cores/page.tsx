@@ -45,6 +45,9 @@ export default function AgrupamentoCoresPage() {
   const [impacto, setImpacto] = useState<ImpactoAgrupamentoItem[]>([]);
   const [removidosManualmente, setRemovidosManualmente] = useState<Set<string>>(new Set());
   const [carregandoImpacto, setCarregandoImpacto] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [excluindoGrupoId, setExcluindoGrupoId] = useState<number | null>(null);
+  const [removendoMembroId, setRemovendoMembroId] = useState<number | null>(null);
 
   // Edicao de grupo existente (renomear + adicionar novas cores)
   const [grupoEditando, setGrupoEditando] = useState<AgrupamentoGrupo | null>(null);
@@ -156,6 +159,7 @@ export default function AgrupamentoCoresPage() {
       return;
     }
 
+    setConfirmando(true);
     try {
       await agrupamentosApi.createGrupo(token, {
         tipo: TIPO,
@@ -173,6 +177,8 @@ export default function AgrupamentoCoresPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Erro ao criar agrupamento', 'error');
       console.error(error);
+    } finally {
+      setConfirmando(false);
     }
   }
 
@@ -187,6 +193,7 @@ export default function AgrupamentoCoresPage() {
   async function handleExcluirGrupo(id: number, nome: string) {
     if (!token || !confirm(`Excluir o agrupamento "${nome}"?`)) return;
 
+    setExcluindoGrupoId(id);
     try {
       await agrupamentosApi.deleteGrupo(token, id);
       showToast('Agrupamento excluido!', 'success');
@@ -194,12 +201,15 @@ export default function AgrupamentoCoresPage() {
     } catch (error) {
       showToast('Erro ao excluir agrupamento', 'error');
       console.error(error);
+    } finally {
+      setExcluindoGrupoId(null);
     }
   }
 
   async function handleRemoverMembro(id: number) {
     if (!token) return;
 
+    setRemovendoMembroId(id);
     try {
       await agrupamentosApi.deleteMembro(token, id);
       showToast('Membro removido do agrupamento', 'success');
@@ -207,6 +217,8 @@ export default function AgrupamentoCoresPage() {
     } catch (error) {
       showToast('Erro ao remover membro', 'error');
       console.error(error);
+    } finally {
+      setRemovendoMembroId(null);
     }
   }
 
@@ -439,7 +451,7 @@ export default function AgrupamentoCoresPage() {
               <Button variant="ghost" onClick={() => setPasso(1)}>
                 Voltar
               </Button>
-              <Button onClick={handleConfirmar} disabled={itensFinais.length === 0}>
+              <Button onClick={handleConfirmar} disabled={itensFinais.length === 0} isLoading={confirmando}>
                 Confirmar Agrupamento
               </Button>
             </div>
@@ -467,13 +479,24 @@ export default function AgrupamentoCoresPage() {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Ou envie um CSV com nomes/codigos de cor (uma por linha)
             </label>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleUploadCsv}
-              disabled={uploadingCsv}
-              className="text-sm"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleUploadCsv}
+                disabled={uploadingCsv}
+                className="text-sm"
+              />
+              {uploadingCsv && (
+                <span className="flex items-center gap-1 text-sm text-gray-500">
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Processando CSV...
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -501,7 +524,12 @@ export default function AgrupamentoCoresPage() {
                     <Button variant="outline" size="sm" onClick={() => abrirEdicao(grupo)}>
                       Editar
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}
+                      isLoading={excluindoGrupoId === grupo.id}
+                    >
                       Excluir Grupo
                     </Button>
                   </div>
@@ -513,10 +541,11 @@ export default function AgrupamentoCoresPage() {
                       <button
                         type="button"
                         onClick={() => handleRemoverMembro(m.id)}
-                        className="ml-1.5 hover:text-red-600"
+                        disabled={removendoMembroId === m.id}
+                        className="ml-1.5 hover:text-red-600 disabled:opacity-50 disabled:cursor-wait"
                         title="Remover essa combinacao do grupo"
                       >
-                        ×
+                        {removendoMembroId === m.id ? '…' : '×'}
                       </button>
                     </Badge>
                   ))}
@@ -562,10 +591,11 @@ export default function AgrupamentoCoresPage() {
                     <button
                       type="button"
                       onClick={() => handleRemoverMembroEdicao(m.id)}
-                      className="ml-1.5 hover:text-red-600"
+                      disabled={removendoMembroId === m.id}
+                      className="ml-1.5 hover:text-red-600 disabled:opacity-50 disabled:cursor-wait"
                       title="Remover essa combinacao do grupo"
                     >
-                      ×
+                      {removendoMembroId === m.id ? '…' : '×'}
                     </button>
                   </Badge>
                 ))}
