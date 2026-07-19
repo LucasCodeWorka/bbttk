@@ -13,11 +13,21 @@ export interface CreateGrupoInput {
 }
 
 export async function createGrupo(data: CreateGrupoInput) {
+  if (!data.nome || !data.nome.trim()) {
+    throw new Error('Informe o nome do agrupamento');
+  }
   if (data.membros.length === 0) {
     throw new Error('Informe ao menos um membro para o agrupamento');
   }
 
   return prisma.$transaction(async (tx) => {
+    const nomeExistente = await tx.agrupamentoGrupo.findUnique({
+      where: { tipo_nome: { tipo: data.tipo, nome: data.nome.trim() } },
+    });
+    if (nomeExistente) {
+      throw new Error(`Ja existe um agrupamento chamado "${data.nome.trim()}". Escolha outro nome.`);
+    }
+
     // Verifica conflitos: referencia+cor ja usada em outro grupo do mesmo tipo
     const matchKeys = data.membros.map(m => colorMatchKeyOf(m.colorCode, m.colorName));
 
@@ -40,7 +50,7 @@ export async function createGrupo(data: CreateGrupoInput) {
     const grupo = await tx.agrupamentoGrupo.create({
       data: {
         tipo: data.tipo,
-        nome: data.nome,
+        nome: data.nome.trim(),
         createdById: data.createdById,
       },
     });
@@ -64,7 +74,21 @@ export async function createGrupo(data: CreateGrupoInput) {
 }
 
 export async function updateGrupoNome(id: number, nome: string) {
-  return prisma.agrupamentoGrupo.update({ where: { id }, data: { nome } });
+  if (!nome || !nome.trim()) {
+    throw new Error('Informe o nome do agrupamento');
+  }
+  const nomeTrimmed = nome.trim();
+
+  const grupoAtual = await prisma.agrupamentoGrupo.findUniqueOrThrow({ where: { id } });
+
+  const nomeExistente = await prisma.agrupamentoGrupo.findUnique({
+    where: { tipo_nome: { tipo: grupoAtual.tipo, nome: nomeTrimmed } },
+  });
+  if (nomeExistente && nomeExistente.id !== id) {
+    throw new Error(`Ja existe um agrupamento chamado "${nomeTrimmed}". Escolha outro nome.`);
+  }
+
+  return prisma.agrupamentoGrupo.update({ where: { id }, data: { nome: nomeTrimmed } });
 }
 
 export async function addMembros(grupoId: number, membros: CreateGrupoInput['membros']) {
