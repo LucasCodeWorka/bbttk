@@ -334,11 +334,11 @@ export default function UsuariosPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="center">
-                    <div className="grid grid-cols-2 gap-2 w-44 mx-auto">
+                    <div className="flex flex-nowrap justify-center gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="w-full"
+                        className="whitespace-nowrap"
                         onClick={() => handleEditarUsuario(user)}
                       >
                         Editar
@@ -346,7 +346,7 @@ export default function UsuariosPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="w-full"
+                        className="whitespace-nowrap"
                         onClick={() => handleAbrirRedefinirSenha(user)}
                       >
                         Redefinir Senha
@@ -354,7 +354,7 @@ export default function UsuariosPage() {
                       <Button
                         variant={user.isActive ? 'danger' : 'secondary'}
                         size="sm"
-                        className="w-full"
+                        className="whitespace-nowrap"
                         onClick={() => handleToggleAtivo(user)}
                         isLoading={togglingId === user.id}
                       >
@@ -363,7 +363,7 @@ export default function UsuariosPage() {
                       <Button
                         variant="danger"
                         size="sm"
-                        className="w-full"
+                        className="whitespace-nowrap"
                         onClick={() => handleDeletar(user.id)}
                         isLoading={deletingId === user.id}
                       >
