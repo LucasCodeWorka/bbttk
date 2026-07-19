@@ -168,6 +168,20 @@ export const agrupamentosApi = {
       body: JSON.stringify(data),
     }),
 
+  renomearGrupo: (token: string, id: number, nome: string) =>
+    fetchApi<{ grupo: AgrupamentoGrupo }>(`/api/agrupamentos/${id}`, {
+      token,
+      method: 'PATCH',
+      body: JSON.stringify({ nome }),
+    }),
+
+  adicionarMembros: (token: string, id: number, membros: AgrupamentoMembroData[]) =>
+    fetchApi<{ grupo: AgrupamentoGrupo }>(`/api/agrupamentos/${id}/membros`, {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ membros }),
+    }),
+
   deleteGrupo: (token: string, id: number) =>
     fetchApi<{ success: boolean }>(`/api/agrupamentos/${id}`, { token, method: 'DELETE' }),
 

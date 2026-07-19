@@ -43,6 +43,38 @@ router.post('/agrupamentos', async (req: Request, res: Response) => {
   }
 });
 
+// Renomear grupo
+router.patch('/agrupamentos/:id', async (req: Request, res: Response) => {
+  try {
+    const { nome } = req.body;
+    if (!nome || !String(nome).trim()) {
+      res.status(400).json({ error: 'nome e obrigatorio' });
+      return;
+    }
+
+    const grupo = await agrupamentosService.updateGrupoNome(parseInt(req.params.id), String(nome).trim());
+    res.json({ grupo });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Adicionar novos membros a um grupo ja existente
+router.post('/agrupamentos/:id/membros', async (req: Request, res: Response) => {
+  try {
+    const { membros } = req.body;
+    if (!Array.isArray(membros) || membros.length === 0) {
+      res.status(400).json({ error: 'membros e obrigatorio' });
+      return;
+    }
+
+    const grupo = await agrupamentosService.addMembros(parseInt(req.params.id), membros);
+    res.json({ grupo });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // Excluir grupo
 router.delete('/agrupamentos/:id', async (req: Request, res: Response) => {
   try {

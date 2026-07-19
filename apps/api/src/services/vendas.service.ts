@@ -16,8 +16,10 @@ const SALE_OPERATION_FILTER = Prisma.sql`(t.operation_code IS NULL OR t.operatio
 const DEVOLUTION_SIGN = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -1 ELSE 1 END)`;
 // Só conta como "venda" (transação/cliente) quando não é devolução
 const IS_SALE = Prisma.sql`t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})`;
-// Filtro reutilizado: filial de venda (exclui Fábrica)
-const STORE_BRANCH_FILTER = Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`;
+// Filtro reutilizado: filial de venda (exclui filiais em EXCLUDED_BRANCH_CODES, se houver)
+const STORE_BRANCH_FILTER = EXCLUDED_BRANCH_LIST.length > 0
+  ? Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`
+  : Prisma.sql`TRUE`;
 
 interface VendasFilial {
   branch_code: number;

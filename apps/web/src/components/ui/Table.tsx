@@ -67,9 +67,10 @@ interface TableCellProps {
   title?: string;
   align?: 'left' | 'center' | 'right';
   isHeader?: boolean;
+  onClick?: () => void;
 }
 
-export function TableCell({ children, className, title, align = 'left', isHeader }: TableCellProps) {
+export function TableCell({ children, className, title, align = 'left', isHeader, onClick }: TableCellProps) {
   const alignments = {
     left: 'text-left',
     center: 'text-center',
@@ -81,10 +82,12 @@ export function TableCell({ children, className, title, align = 'left', isHeader
   return (
     <Tag
       title={title}
+      onClick={onClick}
       className={cn(
         'px-4 py-3',
         alignments[align],
         isHeader && 'font-semibold text-gray-600 uppercase text-xs tracking-wider',
+        onClick && 'cursor-pointer select-none hover:bg-gray-100',
         className
       )}
     >

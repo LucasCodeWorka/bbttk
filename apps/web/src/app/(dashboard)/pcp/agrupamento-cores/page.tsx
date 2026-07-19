@@ -46,6 +46,16 @@ export default function AgrupamentoCoresPage() {
   const [removidosManualmente, setRemovidosManualmente] = useState<Set<string>>(new Set());
   const [carregandoImpacto, setCarregandoImpacto] = useState(false);
 
+  // Edicao de grupo existente (renomear + adicionar novas cores)
+  const [grupoEditando, setGrupoEditando] = useState<AgrupamentoGrupo | null>(null);
+  const [nomeEdicao, setNomeEdicao] = useState('');
+  const [salvandoNome, setSalvandoNome] = useState(false);
+  const [coresNovasEdicao, setCoresNovasEdicao] = useState<string[]>([]);
+  const [showModalCoresEdicao, setShowModalCoresEdicao] = useState(false);
+  const [impactoEdicao, setImpactoEdicao] = useState<ImpactoAgrupamentoItem[]>([]);
+  const [carregandoImpactoEdicao, setCarregandoImpactoEdicao] = useState(false);
+  const [salvandoMembros, setSalvandoMembros] = useState(false);
+
   const carregarDados = useCallback(async () => {
     if (!token) return;
     setIsLoading(true);
@@ -197,6 +207,93 @@ export default function AgrupamentoCoresPage() {
     } catch (error) {
       showToast('Erro ao remover membro', 'error');
       console.error(error);
+    }
+  }
+
+  function abrirEdicao(grupo: AgrupamentoGrupo) {
+    setGrupoEditando(grupo);
+    setNomeEdicao(grupo.nome);
+    setCoresNovasEdicao([]);
+    setImpactoEdicao([]);
+  }
+
+  async function handleSalvarNome() {
+    if (!token || !grupoEditando) return;
+    if (!nomeEdicao.trim()) {
+      showToast('Informe o nome do grupo', 'error');
+      return;
+    }
+
+    setSalvandoNome(true);
+    try {
+      await agrupamentosApi.renomearGrupo(token, grupoEditando.id, nomeEdicao.trim());
+      showToast('Nome atualizado!', 'success');
+      setGrupoEditando((prev) => (prev ? { ...prev, nome: nomeEdicao.trim() } : prev));
+      carregarDados();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao renomear', 'error');
+      console.error(error);
+    } finally {
+      setSalvandoNome(false);
+    }
+  }
+
+  async function handleRemoverMembroEdicao(id: number) {
+    await handleRemoverMembro(id);
+    setGrupoEditando((prev) =>
+      prev ? { ...prev, membros: prev.membros.filter((m) => m.id !== id) } : prev
+    );
+  }
+
+  async function handleBuscarImpactoEdicao() {
+    if (!token || !grupoEditando || coresNovasEdicao.length === 0) return;
+
+    setCarregandoImpactoEdicao(true);
+    try {
+      const coresParaImpacto = coresNovasEdicao.map((key) => {
+        const cor = coresByKey.get(key);
+        return { color_code: cor?.color_code ?? null, color_name: cor?.color_name ?? key };
+      });
+
+      const res = await produtosApi.getImpactoAgrupamento(token, TIPO, coresParaImpacto, grupoEditando.id);
+      setImpactoEdicao(res.impacto);
+    } catch (error) {
+      showToast('Erro ao calcular impacto', 'error');
+      console.error(error);
+    } finally {
+      setCarregandoImpactoEdicao(false);
+    }
+  }
+
+  const itensFinaisEdicao = useMemo(
+    () => impactoEdicao.filter((item) => !item.ja_agrupado_em),
+    [impactoEdicao]
+  );
+
+  async function handleAdicionarMembros() {
+    if (!token || !grupoEditando || itensFinaisEdicao.length === 0) return;
+
+    setSalvandoMembros(true);
+    try {
+      await agrupamentosApi.adicionarMembros(
+        token,
+        grupoEditando.id,
+        itensFinaisEdicao.map((item) => ({
+          referenceCode: item.reference_code,
+          colorCode: item.color_code,
+          colorName: item.color_name,
+        }))
+      );
+      showToast('Cores adicionadas ao grupo!', 'success');
+      setCoresNovasEdicao([]);
+      setImpactoEdicao([]);
+      setGrupoEditando(null);
+      carregarDados();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao adicionar cores', 'error');
+      console.error(error);
+    } finally {
+      setSalvandoMembros(false);
     }
   }
 
@@ -400,9 +497,14 @@ export default function AgrupamentoCoresPage() {
               <div key={grupo.id} className="border border-gray-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-gray-900">{grupo.nome}</span>
-                  <Button variant="danger" size="sm" onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}>
-                    Excluir Grupo
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => abrirEdicao(grupo)}>
+                      Editar
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}>
+                      Excluir Grupo
+                    </Button>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {grupo.membros.map((m) => (
@@ -424,6 +526,161 @@ export default function AgrupamentoCoresPage() {
           </div>
         )}
       </Card>
+
+      {/* Modal de edicao de grupo (renomear + adicionar cores) */}
+      <Modal
+        isOpen={!!grupoEditando}
+        onClose={() => setGrupoEditando(null)}
+        title="Editar Agrupamento"
+        size="lg"
+      >
+        {grupoEditando && (
+          <div className="space-y-5">
+            <div className="flex items-end gap-2">
+              <Input
+                label="Nome do grupo"
+                value={nomeEdicao}
+                onChange={(e) => setNomeEdicao(e.target.value)}
+                className="flex-1"
+              />
+              <Button size="sm" onClick={handleSalvarNome} isLoading={salvandoNome}>
+                Salvar Nome
+              </Button>
+            </div>
+
+            <div className="pt-3 border-t">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cores atuais no grupo
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {grupoEditando.membros.length === 0 && (
+                  <span className="text-sm text-gray-400">Nenhuma cor no grupo</span>
+                )}
+                {grupoEditando.membros.map((m) => (
+                  <Badge key={m.id} variant="default" className="pr-1">
+                    {m.referenceCode} - {m.colorName || m.colorCode}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoverMembroEdicao(m.id)}
+                      className="ml-1.5 hover:text-red-600"
+                      title="Remover essa combinacao do grupo"
+                    >
+                      ×
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Adicionar novas cores ({coresNovasEdicao.length} selecionada
+                {coresNovasEdicao.length === 1 ? '' : 's'})
+              </label>
+              <div className="flex gap-2 flex-wrap mb-2">
+                {coresNovasEdicao.map((key) => {
+                  const cor = coresByKey.get(key);
+                  return (
+                    <Badge key={key} variant="info">
+                      {cor?.color_name || key}
+                    </Badge>
+                  );
+                })}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setShowModalCoresEdicao(true)}>
+                + Selecionar Cores
+              </Button>
+            </div>
+
+            {impactoEdicao.length > 0 && (
+              <div className="pt-3 border-t">
+                <p className="text-sm text-gray-500 mb-2">
+                  {itensFinaisEdicao.length} combinacao(oes) referencia+cor serao adicionadas.
+                  Combinacoes ja em outro grupo aparecem bloqueadas.
+                </p>
+                <div className="max-h-64 overflow-y-auto">
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell isHeader>Referencia</TableCell>
+                        <TableCell isHeader>Cor</TableCell>
+                        <TableCell isHeader align="right">SKUs</TableCell>
+                        <TableCell isHeader align="center">Status</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {impactoEdicao.map((item) => {
+                        const bloqueado = !!item.ja_agrupado_em;
+                        return (
+                          <TableRow key={itemKey(item)} className={bloqueado ? 'opacity-50' : undefined}>
+                            <TableCell className="font-medium">
+                              {item.reference_code} {item.reference_name ? `- ${item.reference_name}` : ''}
+                            </TableCell>
+                            <TableCell>{item.color_name || item.color_code}</TableCell>
+                            <TableCell align="right">{item.qtd_skus}</TableCell>
+                            <TableCell align="center">
+                              {bloqueado ? (
+                                <Badge variant="danger">Ja em &quot;{item.ja_agrupado_em}&quot;</Badge>
+                              ) : (
+                                <Badge variant="success">Novo</Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button variant="ghost" onClick={() => setGrupoEditando(null)}>
+                Fechar
+              </Button>
+              {impactoEdicao.length > 0 && (
+                <Button
+                  onClick={handleAdicionarMembros}
+                  isLoading={salvandoMembros}
+                  disabled={itensFinaisEdicao.length === 0}
+                >
+                  Adicionar ao Grupo
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal de busca de cores para adicionar num grupo existente */}
+      <Modal
+        isOpen={showModalCoresEdicao}
+        onClose={() => setShowModalCoresEdicao(false)}
+        title="Selecionar Cores para Adicionar"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <MultiSelectSearch
+            options={opcoesCores}
+            selected={coresNovasEdicao}
+            onChange={setCoresNovasEdicao}
+            placeholder="Buscar cor por nome..."
+            emptyLabel={isLoading ? 'Carregando cores...' : 'Nenhuma cor encontrada'}
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+          <Button
+            onClick={async () => {
+              setShowModalCoresEdicao(false);
+              await handleBuscarImpactoEdicao();
+            }}
+            isLoading={carregandoImpactoEdicao}
+          >
+            Concluido
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

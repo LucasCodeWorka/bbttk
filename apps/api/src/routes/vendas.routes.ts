@@ -374,6 +374,8 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const varTotalPecas = vendasService.calcularVariacao(totalAtual.pecas, totalAnterior.pecas);
     const varTotalTrans = vendasService.calcularVariacao(totalAtual.transacoes, totalAnterior.transacoes);
 
+    filiaisComparativo.sort((a, b) => a.branch_code - b.branch_code);
+
     res.json({
       periodo_atual: {
         inicio: startAtual.toISOString().split('T')[0],

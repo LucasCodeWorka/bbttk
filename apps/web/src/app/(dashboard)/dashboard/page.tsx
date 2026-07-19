@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
@@ -10,9 +10,56 @@ import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge, VariationBadge } from '@/components/ui/Badge';
-import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse } from '@/lib/api';
+import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
+import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
+
+type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null };
+
+// Valor numerico de cada coluna ordenavel, usado tanto pro clique no cabecalho quanto pro export
+const SORT_GETTERS: Record<string, (f: LinhaComparativo) => number> = {
+  faturamento: (f) => f.atual.faturamento,
+  pct_tt_faturamento: (f) => f.atual.pct_tt_faturamento,
+  fat_ant: (f) => f.ano_anterior.faturamento,
+  var_faturamento: (f) => f.variacao.faturamento,
+  pecas: (f) => f.atual.pecas,
+  pct_tt_pecas: (f) => f.atual.pct_tt_pecas,
+  pecas_ant: (f) => f.ano_anterior.pecas,
+  var_pecas: (f) => f.variacao.pecas,
+  pm: (f) => f.atual.pm,
+  pm_ant: (f) => f.ano_anterior.pm,
+  var_pm: (f) => f.variacao.pm,
+  tm: (f) => f.atual.tm,
+  tm_ant: (f) => f.ano_anterior.tm,
+  var_tm: (f) => f.variacao.tm,
+  tm_cliente: (f) => f.atual.tm_cliente,
+  tm_cliente_ant: (f) => f.ano_anterior.tm_cliente,
+  var_tm_cliente: (f) => f.variacao.tm_cliente,
+  pa: (f) => f.atual.pa,
+  pa_ant: (f) => f.ano_anterior.pa,
+  var_pa: (f) => f.variacao.pa,
+  pac: (f) => f.atual.pac,
+  pac_ant: (f) => f.ano_anterior.pac,
+  var_pac: (f) => f.variacao.pac,
+  clientes: (f) => f.atual.clientes,
+  clientes_ant: (f) => f.ano_anterior.clientes,
+  var_clientes: (f) => f.variacao.clientes,
+  atendimento: (f) => f.atual.transacoes,
+  atendimento_ant: (f) => f.ano_anterior.transacoes,
+  var_atendimento: (f) => f.variacao.transacoes,
+  devolucoes_valor: (f) => f.devolucoes.valor,
+  devolucoes_qtde: (f) => f.devolucoes.qtde,
+  devolucoes_pct: (f) => f.devolucoes.pct,
+  pct_cn: (f) => f.clientes_novos.pct,
+  clientes_novos: (f) => f.clientes_novos.qtde,
+  faturamento_cn: (f) => f.clientes_novos.faturamento,
+  meta: (f) => f.meta.valor,
+  pct_meta: (f) => f.meta.pct,
+  meta_dia: (f) => f.meta.meta_dia,
+  projecao: (f) => f.proj?.projecao ?? -Infinity,
+  vs_ano_ant: (f) => f.proj?.variacao_vs_ano_anterior ?? -Infinity,
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -20,6 +67,8 @@ export default function DashboardPage() {
   const [dataInicio, setDataInicio] = useState(getMonthStart());
   const [dataFim, setDataFim] = useState(getToday());
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Dados
   const [vendas, setVendas] = useState<VendasResponse | null>(null);
@@ -83,6 +132,102 @@ export default function DashboardPage() {
 
   // Criar mapa de projeções
   const projecaoMap = new Map(projecao?.filiais.map(p => [p.branch_code, p]));
+
+  // Linhas da tabela Comparativo, ja com projecao/bateMeta anexados e ordenadas
+  // pela coluna clicada (default: numero da filial, crescente)
+  const linhas: LinhaComparativo[] = useMemo(() => {
+    const base = (comparativo?.filiais || []).map((f) => {
+      const proj = projecaoMap.get(f.branch_code);
+      const bateMeta = f.meta.valor > 0 && proj ? proj.projecao >= f.meta.valor : null;
+      return { ...f, proj, bateMeta };
+    });
+
+    if (sortKey === 'branch_name' || !sortKey) {
+      base.sort((a, b) =>
+        sortKey === 'branch_name'
+          ? a.branch_name.localeCompare(b.branch_name) * (sortDir === 'asc' ? 1 : -1)
+          : a.branch_code - b.branch_code
+      );
+      return base;
+    }
+
+    const getter = SORT_GETTERS[sortKey];
+    if (getter) {
+      base.sort((a, b) => (getter(a) - getter(b)) * (sortDir === 'asc' ? 1 : -1));
+    }
+    return base;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comparativo, projecao, sortKey, sortDir]);
+
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  function exportarComparativo() {
+    exportToCsv(
+      `comparativo-filiais-${dataInicio}-a-${dataFim}`,
+      [
+        { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
+        { header: 'Faturamento', value: (f: LinhaComparativo) => f.atual.faturamento },
+        { header: '%TT Faturamento', value: (f: LinhaComparativo) => f.atual.pct_tt_faturamento },
+        { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => f.ano_anterior.faturamento },
+        { header: 'Var % Faturamento', value: (f: LinhaComparativo) => f.variacao.faturamento },
+        { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
+        { header: '%TT Pecas', value: (f: LinhaComparativo) => f.atual.pct_tt_pecas },
+        { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas },
+        { header: 'Var % Pecas', value: (f: LinhaComparativo) => f.variacao.pecas },
+        { header: 'PM', value: (f: LinhaComparativo) => f.atual.pm },
+        { header: 'PM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pm },
+        { header: 'Var % PM', value: (f: LinhaComparativo) => f.variacao.pm },
+        { header: 'TM', value: (f: LinhaComparativo) => f.atual.tm },
+        { header: 'TM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm },
+        { header: 'Var % TM', value: (f: LinhaComparativo) => f.variacao.tm },
+        { header: 'TM Cliente', value: (f: LinhaComparativo) => f.atual.tm_cliente },
+        { header: 'TM Cliente Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm_cliente },
+        { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.variacao.tm_cliente },
+        { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
+        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa },
+        { header: 'Var % PA', value: (f: LinhaComparativo) => f.variacao.pa },
+        { header: 'PAC', value: (f: LinhaComparativo) => f.atual.pac },
+        { header: 'PAC Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pac },
+        { header: 'Var % PAC', value: (f: LinhaComparativo) => f.variacao.pac },
+        { header: 'Clientes', value: (f: LinhaComparativo) => f.atual.clientes },
+        { header: 'Clientes Ant.', value: (f: LinhaComparativo) => f.ano_anterior.clientes },
+        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.variacao.clientes },
+        { header: 'Atendimento', value: (f: LinhaComparativo) => f.atual.transacoes },
+        { header: 'Atend. Ant.', value: (f: LinhaComparativo) => f.ano_anterior.transacoes },
+        { header: 'Var % Atendimento', value: (f: LinhaComparativo) => f.variacao.transacoes },
+        { header: 'Devolucoes', value: (f: LinhaComparativo) => f.devolucoes.valor },
+        { header: 'Qtde Dev', value: (f: LinhaComparativo) => f.devolucoes.qtde },
+        { header: '% Dev', value: (f: LinhaComparativo) => f.devolucoes.pct },
+        { header: '% CN', value: (f: LinhaComparativo) => f.clientes_novos.pct },
+        { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
+        { header: 'Faturamento CN', value: (f: LinhaComparativo) => f.clientes_novos.faturamento },
+        { header: 'Meta', value: (f: LinhaComparativo) => f.meta.valor },
+        { header: '% Meta', value: (f: LinhaComparativo) => f.meta.pct },
+        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.meta.meta_dia },
+        { header: 'Projecao', value: (f: LinhaComparativo) => f.proj?.projecao ?? '' },
+        { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj?.variacao_vs_ano_anterior ?? '' },
+        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
+      ],
+      linhas
+    );
+  }
+
+  function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+    const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);
+    return (
+      <TableCell isHeader align={align} className="whitespace-nowrap" onClick={() => handleSort(sortKeyName)}>
+        {label}
+        {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+      </TableCell>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -170,58 +315,61 @@ export default function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle>Comparativo por Filial</CardTitle>
+          <Button variant="secondary" size="sm" onClick={exportarComparativo}>
+            Exportar Excel
+          </Button>
         </CardHeader>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell isHeader className="whitespace-nowrap sticky left-0 bg-gray-50">Filial</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Faturamento</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">%TT</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Fat. Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Pecas</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">%TT</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Pecas Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PM</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PM Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">TM</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">TM Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">TM Cliente</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">TM Cliente Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PA</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PA Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PAC</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">PAC Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Atendimento</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Atend. Ant.</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Var %</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Devolucoes</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Qtde Dev</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">% Dev</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">% CN</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Clientes Novos</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Faturamento CN</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Meta</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">% Meta</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Meta Dia</TableCell>
-              <TableCell isHeader align="right" className="whitespace-nowrap">Projecao</TableCell>
-              <TableCell isHeader align="center" className="whitespace-nowrap">Vs Ano Ant.</TableCell>
+              <ThSort label="Filial" sortKeyName="branch_name" align="left" />
+              <ThSort label="Faturamento" sortKeyName="faturamento" />
+              <ThSort label="%TT" sortKeyName="pct_tt_faturamento" align="center" />
+              <ThSort label="Fat. Ant." sortKeyName="fat_ant" />
+              <ThSort label="Var %" sortKeyName="var_faturamento" align="center" />
+              <ThSort label="Pecas" sortKeyName="pecas" />
+              <ThSort label="%TT" sortKeyName="pct_tt_pecas" align="center" />
+              <ThSort label="Pecas Ant." sortKeyName="pecas_ant" />
+              <ThSort label="Var %" sortKeyName="var_pecas" align="center" />
+              <ThSort label="PM" sortKeyName="pm" />
+              <ThSort label="PM Ant." sortKeyName="pm_ant" />
+              <ThSort label="Var %" sortKeyName="var_pm" align="center" />
+              <ThSort label="TM" sortKeyName="tm" />
+              <ThSort label="TM Ant." sortKeyName="tm_ant" />
+              <ThSort label="Var %" sortKeyName="var_tm" align="center" />
+              <ThSort label="TM Cliente" sortKeyName="tm_cliente" />
+              <ThSort label="TM Cliente Ant." sortKeyName="tm_cliente_ant" />
+              <ThSort label="Var %" sortKeyName="var_tm_cliente" align="center" />
+              <ThSort label="PA" sortKeyName="pa" />
+              <ThSort label="PA Ant." sortKeyName="pa_ant" />
+              <ThSort label="Var %" sortKeyName="var_pa" align="center" />
+              <ThSort label="PAC" sortKeyName="pac" />
+              <ThSort label="PAC Ant." sortKeyName="pac_ant" />
+              <ThSort label="Var %" sortKeyName="var_pac" align="center" />
+              <ThSort label="Clientes" sortKeyName="clientes" />
+              <ThSort label="Clientes Ant." sortKeyName="clientes_ant" />
+              <ThSort label="Var %" sortKeyName="var_clientes" align="center" />
+              <ThSort label="Atendimento" sortKeyName="atendimento" />
+              <ThSort label="Atend. Ant." sortKeyName="atendimento_ant" />
+              <ThSort label="Var %" sortKeyName="var_atendimento" align="center" />
+              <ThSort label="Devolucoes" sortKeyName="devolucoes_valor" />
+              <ThSort label="Qtde Dev" sortKeyName="devolucoes_qtde" />
+              <ThSort label="% Dev" sortKeyName="devolucoes_pct" align="center" />
+              <ThSort label="% CN" sortKeyName="pct_cn" align="center" />
+              <ThSort label="Clientes Novos" sortKeyName="clientes_novos" />
+              <ThSort label="Faturamento CN" sortKeyName="faturamento_cn" />
+              <ThSort label="Meta" sortKeyName="meta" />
+              <ThSort label="% Meta" sortKeyName="pct_meta" align="center" />
+              <ThSort label="Meta Dia" sortKeyName="meta_dia" />
+              <ThSort label="Projecao" sortKeyName="projecao" />
+              <ThSort label="Vs Ano Ant." sortKeyName="vs_ano_ant" align="center" />
               <TableCell isHeader align="center" className="whitespace-nowrap">Bate Meta</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {comparativo?.filiais.map((f) => {
-              const proj = projecaoMap.get(f.branch_code);
-              const bateMeta = f.meta.valor > 0 && proj ? proj.projecao >= f.meta.valor : null;
+            {linhas.map((f) => {
+              const proj = f.proj;
+              const bateMeta = f.bateMeta;
               return (
                 <TableRow
                   key={f.branch_code}

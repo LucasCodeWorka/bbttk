@@ -1,14 +1,15 @@
-// Filiais da Bebetenkite
+// Filiais da Bebetenkite (nomes sincronizados com a tabela `branches` do ETL)
 export const FILIAIS: Record<number, string> = {
   1: 'IGUATEMI',
+  2: 'FABRICA',
   3: 'BENFICA',
   4: 'DEL PASEO',
   5: 'PATIO DOM LUIS',
   6: 'SOBRAL SHOPPING',
-  7: 'RIOMAR FORTALEZA',
-  8: 'NORTH SHOPPING JOQUEI',
-  9: 'RIOMAR KENNEDY',
-  11: 'VIA SUL',
+  7: 'PARANGABA',
+  8: 'RIOMAR',
+  9: 'IGUATEMI EXP.',
+  11: 'RIOMAR PK',
   12: 'MESSEJANA',
   13: 'EUSEBIO',
   17: 'NORTH SHOPPING',
