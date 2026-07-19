@@ -164,8 +164,10 @@ ETL usa, com paginação `Page`/`PageSize` real, campo `hasNext`).
 
 ### Bug real já encontrado e corrigido: dados incompletos por causa do ETL "só pra frente"
 
-Batendo o Dashboard contra o relatório nativo do TOTVS (FISFL024) pra Iguatemi, achamos
-**três bugs empilhados** (não confundir um com o outro se aparecer de novo):
+Batendo o Dashboard contra o relatório nativo do TOTVS (FISFL024) pra Iguatemi
+(01-17/07/2026), achamos **quatro bugs empilhados** e reconciliamos R$74.437,47 (errado)
+até R$60.397,67 — **exatamente igual ao TOTVS, centavo por centavo, peça por peça**. Não
+confundir um bug com o outro se aparecer de novo:
 
 1. **`customer_code >= 110000000` = conta interna do TOTVS** (transferência entre
    filiais, ajuste de estoque, amostra, perda), nunca um cliente real — confirmado via
@@ -174,18 +176,26 @@ Batendo o Dashboard contra o relatório nativo do TOTVS (FISFL024) pra Iguatemi,
    verdade: **~R$22,8 milhões inflados em todo o histórico, todas as filiais**. Corrigido
    com `REAL_CUSTOMER_FILTER` em `apps/api/src/services/vendas.service.ts` (dentro de
    `SALE_OPERATION_FILTER` e em `getDevolucoesPorFilial`).
-2. **Dias inteiros faltando**: o ETL Python (script separado, fora deste repo — cola
+2. **Filtro de status errado**: usava `t.status != 6` (exclui só cancelada) em vez de
+   `t.status = 4` (exige "Atendida" - venda de fato concluída). O enum completo do TOTVS
+   (`StatusTransactionType` no swagger) tem 10 valores - 1=Em andamento, 2=Liberado p/
+   faturamento, 3=Parcialmente atendida, 4=Atendida, 5=Encerrada, 6=Cancelada,
+   7=Pré-faturada, 8=Bloqueada p/ faturamento, 9=Recusada, 10=Agrupada. No banco inteiro
+   já apareceram status 1 (2265 transações) e 10 (204 transações) sendo contados como
+   venda por engano. Corrigido: todo `AND t.status != 6` virou `AND t.status = 4` em
+   `vendas.service.ts` (8 ocorrências).
+3. **Dias inteiros faltando**: o ETL Python (script separado, fora deste repo — cola
    trechos no chat quando precisar mexer nele) grava em `etl_log` com `status='SUCCESS'`
    mesmo quando a API do TOTVS devolve 0 transações por um erro transitório — e como a
    lógica de retomada é `actual_start = last_date + 1` (nunca revisita um dia já
    marcado `SUCCESS`), esse dia fica faltando **pra sempre**. Achamos um caso real:
    Iguatemi 11/07/2026 com 31 transações no TOTVS e 0 no nosso banco.
-3. **Itens faltando dentro de transações que já existem**: a transação foi sincronizada,
+4. **Itens faltando dentro de transações que já existem**: a transação foi sincronizada,
    mas nem todos os itens dela — sinal de que TOTVS recebeu lançamentos/correções
    (ex: devolução) depois que o ETL já tinha capturado aquele dia. Achamos em Iguatemi
-   12–17/07/2026 (278 itens faltando).
+   12–17/07/2026.
 
-**Os bugs 2 e 3 são estruturais do script e vão continuar acontecendo pra qualquer dia
+**Os bugs 3 e 4 são estruturais do script e vão continuar acontecendo pra qualquer dia
 recente, em qualquer filial**, até o ETL mudar de estratégia. Fix recomendado pro script
 Python: em vez de só `actual_start = last_date + 1`, sempre re-sincronizar uma janela
 deslizante dos últimos ~14-30 dias a cada execução (o upsert já é `ON CONFLICT DO
@@ -194,10 +204,12 @@ neste repo pra editar direto — se o usuário colar o conteúdo, aplicar esse f
 
 **Backfill manual pontual** (sem esperar o fix do script): dá pra chamar
 `general/v2/transactions/search` direto (mesmo padrão de auth de `totvs.service.ts`) pra
-um branch/dia específico e fazer upsert em `transacoes`/`transacao_itens` (mesmas colunas
-do ETL Python, `ON CONFLICT (branch_code, transaction_code) DO UPDATE` /
-`ON CONFLICT (branch_code, transaction_code, item_index) DO UPDATE`) — foi assim que
-corrigimos Iguatemi 11-17/07/2026 na hora, sem esperar o script rodar de novo.
+um branch/dia específico e regravar em `transacoes`/`transacao_itens`. **Cuidado**: ao
+regravar os itens de uma transação, **sempre `DELETE FROM transacao_itens WHERE
+branch_code=... AND transaction_code=...` antes de reinserir** - um upsert por
+`item_index` sozinho deixa linhas órfãs pra trás quando a transação tem MENOS itens
+agora do que numa sincronização anterior (isso aconteceu no nosso primeiro backfill e
+inflou o número de novo até a gente perceber e corrigir).
 
 ## Contas e acesso
 

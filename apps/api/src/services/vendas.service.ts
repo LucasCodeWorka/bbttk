@@ -109,7 +109,7 @@ export async function getVendasPeriodo(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
@@ -163,7 +163,7 @@ export async function getVendasDiarias(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
@@ -204,7 +204,7 @@ export async function getVendasMensais(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
@@ -243,7 +243,7 @@ export async function getVendasVendedor(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ti.seller_code != 1
       AND ti.seller_code IS NOT NULL
       AND ${SALE_OPERATION_FILTER}
@@ -294,7 +294,7 @@ export async function getTopProdutos(
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ti.seller_code != 1
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -333,7 +333,7 @@ export async function getDevolucoesPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
       AND ${STORE_BRANCH_FILTER}
       AND ${REAL_CUSTOMER_FILTER}
@@ -365,7 +365,7 @@ export async function getClientesNovosPorFilial(
       SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
       FROM transacoes t
       WHERE t.customer_code IS NOT NULL
-        AND t.status != 6
+        AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         AND ${IS_SALE}
         AND ${STORE_BRANCH_FILTER}
@@ -385,7 +385,7 @@ export async function getClientesNovosPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status != 6
+      AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
     GROUP BY t.branch_code
