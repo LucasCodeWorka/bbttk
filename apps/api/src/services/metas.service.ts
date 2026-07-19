@@ -15,9 +15,15 @@ export async function getMetaNiveis() {
     nivel_ordem: number;
     nivel_nome: string;
     nivel_cor: string;
-  }>>`SELECT nivel_ordem, nivel_nome, nivel_cor FROM meta_niveis ORDER BY nivel_ordem`;
+    comissao_percentual: Decimal;
+  }>>`SELECT nivel_ordem, nivel_nome, nivel_cor, comissao_percentual FROM meta_niveis ORDER BY nivel_ordem`;
 
-  return niveis;
+  return niveis.map(n => ({
+    nivel_ordem: n.nivel_ordem,
+    nivel_nome: n.nivel_nome,
+    nivel_cor: n.nivel_cor,
+    comissao_percentual: decimalToNumber(n.comissao_percentual),
+  }));
 }
 
 // Atualizar níveis de meta
@@ -25,11 +31,13 @@ export async function updateMetaNiveis(niveis: Array<{
   nivel_ordem: number;
   nivel_nome: string;
   nivel_cor: string;
+  comissao_percentual?: number;
 }>) {
   for (const nivel of niveis) {
     await prisma.$executeRaw`
       UPDATE meta_niveis
-      SET nivel_nome = ${nivel.nivel_nome}, nivel_cor = ${nivel.nivel_cor}, updated_at = NOW()
+      SET nivel_nome = ${nivel.nivel_nome}, nivel_cor = ${nivel.nivel_cor},
+          comissao_percentual = ${nivel.comissao_percentual ?? 0}, updated_at = NOW()
       WHERE nivel_ordem = ${nivel.nivel_ordem}
     `;
   }

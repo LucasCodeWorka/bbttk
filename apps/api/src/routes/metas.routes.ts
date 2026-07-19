@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import * as metasService from '../services/metas.service.js';
+import * as comissoesService from '../services/comissoes.service.js';
+import { getVendedoresApi } from '../services/totvs.service.js';
 import { authMiddleware } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -113,6 +115,37 @@ router.delete('/metas/distribuicoes/:id', authMiddleware, async (req: Request, r
     const id = parseInt(req.params.id);
     await metasService.deleteDistribution(id);
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Relatorio de comissao por vendedor (Realizado vs Meta, niveis atingidos, comissao calculada)
+router.get('/metas/comissoes', async (req: Request, res: Response) => {
+  try {
+    const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
+    const mes = parseInt(req.query.mes as string) || new Date().getMonth() + 1;
+    const branchesQuery = req.query.branches as string | undefined;
+    const branchCodes = branchesQuery
+      ? branchesQuery.split(',').map((c) => parseInt(c.trim())).filter((c) => !isNaN(c))
+      : undefined;
+
+    const relatorio = await comissoesService.getRelatorioComissao(ano, mes, branchCodes);
+    const nomes = await getVendedoresApi();
+
+    const comNomes = {
+      ...relatorio,
+      vendedores: relatorio.vendedores.map((v) => ({
+        ...v,
+        seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
+      })),
+      top3: relatorio.top3.map((v) => ({
+        ...v,
+        seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
+      })),
+    };
+
+    res.json(comNomes);
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

@@ -14,13 +14,13 @@ model User {
   name              String             @db.VarChar(100)
   role              String             @db.VarChar(20)
   branchCodes       Int[]              @map("branch_codes")
-  moduleAccess      String[]           @default([]) @map("module_access")
   sellerCode        Int?               @map("seller_code")
   isActive          Boolean?           @default(true) @map("is_active")
   createdAt         DateTime?          @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime?          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
-  metaDistributions MetaDistribution[]
+  moduleAccess      String[]           @default([]) @map("module_access")
   agrupamentoGrupos AgrupamentoGrupo[]
+  metaDistributions MetaDistribution[]
 
   @@map("users")
 }
@@ -79,12 +79,13 @@ model Meta {
 }
 
 model MetaNivel {
-  id         Int       @id @default(autoincrement())
-  nivelOrdem Int       @unique @map("nivel_ordem")
-  nivelNome  String    @map("nivel_nome") @db.VarChar(50)
-  nivelCor   String?   @default("#888888") @map("nivel_cor") @db.VarChar(20)
-  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id                 Int       @id @default(autoincrement())
+  nivelOrdem         Int       @unique @map("nivel_ordem")
+  nivelNome          String    @map("nivel_nome") @db.VarChar(50)
+  nivelCor           String?   @default("#888888") @map("nivel_cor") @db.VarChar(20)
+  comissaoPercentual Decimal   @default(0) @map("comissao_percentual") @db.Decimal(5, 2)
+  createdAt          DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("meta_niveis")
 }
@@ -237,15 +238,14 @@ model transacoes {
   @@index([status], map: "idx_transacoes_status")
 }
 
-// Configurador generico de agrupamento (primeira aplicacao: agrupar cores de produto)
 model AgrupamentoGrupo {
-  id          Int      @id @default(autoincrement())
-  tipo        String   @db.VarChar(50)
-  nome        String   @db.VarChar(100)
-  createdById Int?     @map("created_by")
-  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id          Int                 @id @default(autoincrement())
+  tipo        String              @db.VarChar(50)
+  nome        String              @db.VarChar(100)
+  createdById Int?                @map("created_by")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   membros     AgrupamentoMembro[]
 
   @@unique([tipo, nome])
@@ -255,14 +255,28 @@ model AgrupamentoGrupo {
 model AgrupamentoMembro {
   id            Int              @id @default(autoincrement())
   grupoId       Int              @map("grupo_id")
-  grupo         AgrupamentoGrupo @relation(fields: [grupoId], references: [id], onDelete: Cascade)
   tipo          String           @db.VarChar(50)
   referenceCode String           @map("reference_code") @db.VarChar(100)
   colorCode     String?          @map("color_code") @db.VarChar(10)
   colorName     String?          @map("color_name") @db.VarChar(100)
   colorMatchKey String           @map("color_match_key") @db.VarChar(100)
   createdAt     DateTime         @default(now()) @map("created_at")
+  grupo         AgrupamentoGrupo @relation(fields: [grupoId], references: [id], onDelete: Cascade)
 
   @@unique([tipo, referenceCode, colorMatchKey])
   @@map("agrupamento_membros")
+}
+
+model dim_classification_type {
+  source_key               String    @id @db.VarChar(100)
+  classification_type_code Int?
+  classification_type_name String?   @db.VarChar(255)
+  description              String?
+  is_active                Boolean?
+  raw_data                 Json
+  created_at               DateTime? @default(now()) @db.Timestamp(6)
+  updated_at               DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([classification_type_code], map: "idx_dim_classification_type_code")
+  @@index([classification_type_name], map: "idx_dim_classification_type_name")
 }

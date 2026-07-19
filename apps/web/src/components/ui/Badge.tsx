@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { CSSProperties, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 interface BadgeProps {
@@ -8,9 +8,10 @@ interface BadgeProps {
   variant?: 'default' | 'success' | 'warning' | 'danger' | 'info';
   size?: 'sm' | 'md';
   className?: string;
+  style?: CSSProperties;
 }
 
-export function Badge({ children, variant = 'default', size = 'sm', className }: BadgeProps) {
+export function Badge({ children, variant = 'default', size = 'sm', className, style }: BadgeProps) {
   const variants = {
     default: 'bg-gray-100 text-gray-700',
     success: 'bg-green-100 text-green-700',
@@ -26,6 +27,7 @@ export function Badge({ children, variant = 'default', size = 'sm', className }:
 
   return (
     <span
+      style={style}
       className={cn(
         'inline-flex items-center font-medium rounded-full',
         variants[variant],

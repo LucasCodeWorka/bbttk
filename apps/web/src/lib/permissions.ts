@@ -3,6 +3,7 @@
 export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/dashboard', module: 'comercial' },
   { prefix: '/metas', module: 'comercial' },
+  { prefix: '/comissoes', module: 'comercial' },
   { prefix: '/pcp', module: 'pcp' },
 ];
 

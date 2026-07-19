@@ -62,15 +62,16 @@ export function TableRow({ children, className, onClick, isHighlighted }: TableR
 }
 
 interface TableCellProps {
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
   title?: string;
   align?: 'left' | 'center' | 'right';
   isHeader?: boolean;
   onClick?: () => void;
+  colSpan?: number;
 }
 
-export function TableCell({ children, className, title, align = 'left', isHeader, onClick }: TableCellProps) {
+export function TableCell({ children, className, title, align = 'left', isHeader, onClick, colSpan }: TableCellProps) {
   const alignments = {
     left: 'text-left',
     center: 'text-center',
@@ -83,6 +84,7 @@ export function TableCell({ children, className, title, align = 'left', isHeader
     <Tag
       title={title}
       onClick={onClick}
+      colSpan={colSpan}
       className={cn(
         'px-4 py-3',
         alignments[align],

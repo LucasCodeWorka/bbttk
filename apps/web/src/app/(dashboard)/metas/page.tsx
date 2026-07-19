@@ -60,6 +60,36 @@ export default function MetasPage() {
   const [distribuindo, setDistribuindo] = useState(false);
   const [aplicandoVendedoresLoja, setAplicandoVendedoresLoja] = useState<number | null>(null);
 
+  // Configurador de percentual de comissao por nivel
+  const [niveisForm, setNiveisForm] = useState<MetaNivel[]>([]);
+  const [salvandoNiveis, setSalvandoNiveis] = useState(false);
+
+  useEffect(() => {
+    setNiveisForm(niveis);
+  }, [niveis]);
+
+  function atualizarComissaoNivel(nivelOrdem: number, valor: string) {
+    setNiveisForm(prev =>
+      prev.map(n => (n.nivel_ordem === nivelOrdem ? { ...n, comissao_percentual: parseFloat(valor) || 0 } : n))
+    );
+  }
+
+  async function handleSalvarNiveis() {
+    if (!token) return;
+
+    setSalvandoNiveis(true);
+    try {
+      await metasApi.updateNiveis(token, niveisForm);
+      showToast('Percentuais de comissao salvos!', 'success');
+      carregarDados();
+    } catch (error) {
+      showToast('Erro ao salvar percentuais', 'error');
+      console.error(error);
+    } finally {
+      setSalvandoNiveis(false);
+    }
+  }
+
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -390,18 +420,36 @@ export default function MetasPage() {
       {/* Config Níveis */}
       <Card>
         <CardHeader>
-          <CardTitle>Configuracao dos Niveis</CardTitle>
+          <CardTitle>Configuracao dos Niveis e Comissao</CardTitle>
         </CardHeader>
+        <p className="text-sm text-gray-500 -mt-2 mb-4">
+          Percentual de comissao pago sobre o faturamento do vendedor quando ele atinge cada nivel.
+          Usado no relatorio de Comissoes.
+        </p>
         <div className="flex flex-wrap gap-4">
-          {niveis.map(n => (
+          {niveisForm.map(n => (
             <div key={n.nivel_ordem} className="flex items-center gap-2">
               <span
-                className="w-4 h-4 rounded-full"
+                className="w-4 h-4 rounded-full shrink-0"
                 style={{ backgroundColor: n.nivel_cor }}
               />
-              <span className="text-sm font-medium">{n.nivel_nome}</span>
+              <span className="text-sm font-medium w-20">{n.nivel_nome}</span>
+              <Input
+                type="number"
+                step="0.1"
+                min="0"
+                value={n.comissao_percentual}
+                onChange={(e) => atualizarComissaoNivel(n.nivel_ordem, e.target.value)}
+                className="w-20"
+              />
+              <span className="text-sm text-gray-500">%</span>
             </div>
           ))}
+        </div>
+        <div className="flex justify-end mt-4 pt-4 border-t">
+          <Button onClick={handleSalvarNiveis} isLoading={salvandoNiveis} size="sm">
+            Salvar Percentuais
+          </Button>
         </div>
       </Card>
 

@@ -233,6 +233,11 @@ export const metasApi = {
     fetchApi<{ distributions: MetaDistribution[] }>(
       `/api/metas/distribuicoes?ano=${ano}&mes=${mes}`
     ),
+
+  getComissoes: (ano: number, mes: number, branchCodes?: number[]) =>
+    fetchApi<ComissoesResponse>(
+      `/api/metas/comissoes${joinQuery(`ano=${ano}`, `mes=${mes}`, branchesQuery(branchCodes))}`
+    ),
 };
 
 // Types
@@ -503,6 +508,39 @@ export interface MetaNivel {
   nivel_ordem: number;
   nivel_nome: string;
   nivel_cor: string;
+  comissao_percentual: number;
+}
+
+export interface VendedorComissao {
+  seller_code: number;
+  seller_name: string;
+  faturamento: number;
+  nivel_1: number;
+  nivel_2: number;
+  nivel_3: number;
+  nivel_4: number;
+  nivel_5: number;
+  nivel_atingido: number;
+  resultado_pct: number;
+  comissao_pct: number;
+  comissao_valor: number;
+}
+
+export interface CanalComissao {
+  canal: string;
+  nome: string;
+  faturamento: number;
+  meta: number;
+  pct_meta: number;
+}
+
+export interface ComissoesResponse {
+  periodo: { ano: number; mes: number };
+  resumo: { realizado: number; meta: number; resultado_pct: number };
+  canal: CanalComissao[];
+  niveis: MetaNivel[];
+  vendedores: VendedorComissao[];
+  top3: VendedorComissao[];
 }
 
 export interface Meta {

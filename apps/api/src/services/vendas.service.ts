@@ -9,9 +9,14 @@ const EXCLUDED_OPERATIONS_LIST = [...EXCLUDED_OPERATIONS];
 const DEVOLUTION_OPERATIONS_LIST = [...DEVOLUTION_OPERATIONS];
 const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
 
-// Filtro reutilizado: transação não cancelada, operação de negócio válida.
+// Clientes com customer_code >= 110000000 são contas internas do TOTVS (transferência entre
+// filiais, ajuste de estoque, amostra, perda, etc.) - nunca um cliente real. Sem esse filtro,
+// esses movimentos entram como faturamento de verdade (bug real: ~59 mil transações / R$21,6mi
+// inflados no historico, descoberto batendo o Dashboard contra o relatorio nativo do TOTVS).
+const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
+// Filtro reutilizado: transação não cancelada, operação de negócio válida, cliente real.
 // Inclui devoluções (elas entram com sinal negativo via DEVOLUTION_SIGN, não são excluídas).
-const SALE_OPERATION_FILTER = Prisma.sql`(t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)}))`;
+const SALE_OPERATION_FILTER = Prisma.sql`((t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)})) AND ${REAL_CUSTOMER_FILTER})`;
 // Sinal: -1 para devolução (TOTVS operationMode='3'/operationsType='E'), +1 para venda
 const DEVOLUTION_SIGN = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -1 ELSE 1 END)`;
 // Só conta como "venda" (transação/cliente) quando não é devolução
@@ -331,6 +336,7 @@ export async function getDevolucoesPorFilial(
       AND t.status != 6
       AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
       AND ${STORE_BRANCH_FILTER}
+      AND ${REAL_CUSTOMER_FILTER}
     GROUP BY t.branch_code
   `;
 
