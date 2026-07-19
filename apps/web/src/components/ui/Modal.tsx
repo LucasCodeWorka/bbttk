@@ -27,10 +27,10 @@ export function Modal({ isOpen, onClose, title, children, className, size = 'md'
   if (!isOpen) return null;
 
   const sizes = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
+    sm: 'max-w-md',
+    md: 'max-w-2xl',
+    lg: 'max-w-3xl',
+    xl: 'max-w-5xl',
   };
 
   return (
@@ -44,7 +44,7 @@ export function Modal({ isOpen, onClose, title, children, className, size = 'md'
       {/* Modal */}
       <div
         className={cn(
-          'relative bg-white rounded-xl shadow-xl w-full animate-fadeIn',
+          'relative bg-white rounded-xl shadow-xl w-full max-h-[90vh] overflow-y-auto animate-fadeIn',
           sizes[size],
           className
         )}
@@ -52,7 +52,7 @@ export function Modal({ isOpen, onClose, title, children, className, size = 'md'
       >
         {/* Header */}
         {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-6 py-4 border-b border-gray-100">
             <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
             <button
               onClick={onClose}
