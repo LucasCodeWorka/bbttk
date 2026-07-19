@@ -156,7 +156,48 @@ esse é o primeiro suspeito (contatar suporte TOTVS, não é bug nosso). O catá
 cores do TOTVS (`/product/v2/colors/search`) já tem um campo `groupName` próprio de
 classificação — **não é o mesmo conceito** do nosso "Agrupamento de Cores" (que é uma
 ferramenta de agrupamento livre, definida pelo usuário, sem depender de mudar cadastro
-no TOTVS).
+no TOTVS). Swagger da API: `{TOTVS_API_URL}/general/v2/swagger/v1/swagger.json` (útil
+pra descobrir endpoints/campos sem depender de documentação externa — foi assim que
+achamos `/general/v2/operations` pra classificar `operation_code` via `isFinancial`/
+`invoiceData.operationMode`/`operationsType`, e `general/v2/transactions/search` que o
+ETL usa, com paginação `Page`/`PageSize` real, campo `hasNext`).
+
+### Bug real já encontrado e corrigido: dados incompletos por causa do ETL "só pra frente"
+
+Batendo o Dashboard contra o relatório nativo do TOTVS (FISFL024) pra Iguatemi, achamos
+**três bugs empilhados** (não confundir um com o outro se aparecer de novo):
+
+1. **`customer_code >= 110000000` = conta interna do TOTVS** (transferência entre
+   filiais, ajuste de estoque, amostra, perda), nunca um cliente real — confirmado via
+   `general/v2/operations`: os `operation_code`s que só aparecem com esses códigos têm
+   `isFinancial: false`. Sem filtrar isso, esses movimentos entravam como faturamento de
+   verdade: **~R$22,8 milhões inflados em todo o histórico, todas as filiais**. Corrigido
+   com `REAL_CUSTOMER_FILTER` em `apps/api/src/services/vendas.service.ts` (dentro de
+   `SALE_OPERATION_FILTER` e em `getDevolucoesPorFilial`).
+2. **Dias inteiros faltando**: o ETL Python (script separado, fora deste repo — cola
+   trechos no chat quando precisar mexer nele) grava em `etl_log` com `status='SUCCESS'`
+   mesmo quando a API do TOTVS devolve 0 transações por um erro transitório — e como a
+   lógica de retomada é `actual_start = last_date + 1` (nunca revisita um dia já
+   marcado `SUCCESS`), esse dia fica faltando **pra sempre**. Achamos um caso real:
+   Iguatemi 11/07/2026 com 31 transações no TOTVS e 0 no nosso banco.
+3. **Itens faltando dentro de transações que já existem**: a transação foi sincronizada,
+   mas nem todos os itens dela — sinal de que TOTVS recebeu lançamentos/correções
+   (ex: devolução) depois que o ETL já tinha capturado aquele dia. Achamos em Iguatemi
+   12–17/07/2026 (278 itens faltando).
+
+**Os bugs 2 e 3 são estruturais do script e vão continuar acontecendo pra qualquer dia
+recente, em qualquer filial**, até o ETL mudar de estratégia. Fix recomendado pro script
+Python: em vez de só `actual_start = last_date + 1`, sempre re-sincronizar uma janela
+deslizante dos últimos ~14-30 dias a cada execução (o upsert já é `ON CONFLICT DO
+UPDATE`, então re-rodar dias já sincronizados é seguro e barato). Não temos esse script
+neste repo pra editar direto — se o usuário colar o conteúdo, aplicar esse fix nele.
+
+**Backfill manual pontual** (sem esperar o fix do script): dá pra chamar
+`general/v2/transactions/search` direto (mesmo padrão de auth de `totvs.service.ts`) pra
+um branch/dia específico e fazer upsert em `transacoes`/`transacao_itens` (mesmas colunas
+do ETL Python, `ON CONFLICT (branch_code, transaction_code) DO UPDATE` /
+`ON CONFLICT (branch_code, transaction_code, item_index) DO UPDATE`) — foi assim que
+corrigimos Iguatemi 11-17/07/2026 na hora, sem esperar o script rodar de novo.
 
 ## Contas e acesso
 
