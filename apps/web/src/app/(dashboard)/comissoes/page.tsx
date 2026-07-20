@@ -1,14 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge } from '@/components/ui/Badge';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
-import { metasApi, ComissoesResponse } from '@/lib/api';
+import { metasApi, ComissoesResponse, VendedorComissao } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
+import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function ComissoesPage() {
@@ -18,6 +19,8 @@ export default function ComissoesPage() {
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [dados, setDados] = useState<ComissoesResponse | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
@@ -51,6 +54,71 @@ export default function ComissoesPage() {
 
   const niveis = dados?.niveis || [];
 
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  function getSortValue(v: VendedorComissao, key: string): number | string {
+    if (key === 'seller_name') return v.seller_name;
+    if (key.startsWith('nivel_')) return (v[key as keyof VendedorComissao] as number) ?? 0;
+    return (v[key as keyof VendedorComissao] as number) ?? 0;
+  }
+
+  const vendedoresOrdenados = useMemo(() => {
+    const base = dados?.vendedores || [];
+    if (!sortKey) return base;
+    const arr = [...base];
+    arr.sort((a, b) => {
+      const va = getSortValue(a, sortKey);
+      const vb = getSortValue(b, sortKey);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        return String(va).localeCompare(String(vb)) * (sortDir === 'asc' ? 1 : -1);
+      }
+      return (va - vb) * (sortDir === 'asc' ? 1 : -1);
+    });
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dados, sortKey, sortDir]);
+
+  function ThSort({ label, sortKeyName, align = 'right' }: { label: React.ReactNode; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+    const active = sortKey === sortKeyName;
+    return (
+      <TableCell isHeader align={align} className="whitespace-nowrap" onClick={() => handleSort(sortKeyName)}>
+        {label}
+        {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+      </TableCell>
+    );
+  }
+
+  function exportarExcel() {
+    if (!dados) return;
+    exportToCsv(
+      `comissoes-${ano}-${String(mes).padStart(2, '0')}`,
+      [
+        { header: 'Vendedor', value: (v: VendedorComissao) => v.seller_name },
+        { header: 'Faturamento', value: (v: VendedorComissao) => v.faturamento },
+        ...niveis.map((n) => ({
+          header: n.nivel_nome,
+          value: (v: VendedorComissao) => (v[`nivel_${n.nivel_ordem}` as keyof VendedorComissao] as number) ?? 0,
+        })),
+        { header: 'Nivel Atingido', value: (v: VendedorComissao) => niveis.find((n) => n.nivel_ordem === v.nivel_atingido)?.nivel_nome ?? '-' },
+        { header: 'Resultado %', value: (v: VendedorComissao) => v.resultado_pct },
+        { header: '% Comissao', value: (v: VendedorComissao) => v.comissao_pct },
+        { header: 'Comissao', value: (v: VendedorComissao) => v.comissao_valor },
+      ],
+      vendedoresOrdenados
+    );
+  }
+
+  function exportarPdf() {
+    window.print();
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -62,7 +130,7 @@ export default function ComissoesPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="print:hidden flex flex-wrap items-end gap-3">
           <Select
             value={ano}
             onChange={(e) => setAno(parseInt(e.target.value))}
@@ -151,6 +219,14 @@ export default function ComissoesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Analise Geral (Realizado vs Meta por Vendedor)</CardTitle>
+          <div className="print:hidden flex gap-2">
+            <Button variant="secondary" size="sm" onClick={exportarExcel}>
+              Exportar Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportarPdf}>
+              Exportar PDF
+            </Button>
+          </div>
         </CardHeader>
         {isLoading ? (
           <div className="py-10 text-center text-gray-500">Carregando...</div>
@@ -161,24 +237,30 @@ export default function ComissoesPage() {
             <TableHead>
               <TableRow>
                 <TableCell isHeader>#</TableCell>
-                <TableCell isHeader>Vendedor</TableCell>
-                <TableCell isHeader align="right">Faturamento</TableCell>
+                <ThSort label="Vendedor" sortKeyName="seller_name" align="left" />
+                <ThSort label="Faturamento" sortKeyName="faturamento" />
                 {niveis.map((n) => (
-                  <TableCell key={n.nivel_ordem} isHeader align="right" className="whitespace-nowrap">
-                    <span
-                      className="inline-block w-2.5 h-2.5 rounded-full mr-1"
-                      style={{ backgroundColor: n.nivel_cor }}
-                    />
-                    {n.nivel_nome}
-                  </TableCell>
+                  <ThSort
+                    key={n.nivel_ordem}
+                    sortKeyName={`nivel_${n.nivel_ordem}`}
+                    label={
+                      <>
+                        <span
+                          className="inline-block w-2.5 h-2.5 rounded-full mr-1"
+                          style={{ backgroundColor: n.nivel_cor }}
+                        />
+                        {n.nivel_nome}
+                      </>
+                    }
+                  />
                 ))}
-                <TableCell isHeader align="center">Resultado</TableCell>
-                <TableCell isHeader align="center">% Comissao</TableCell>
-                <TableCell isHeader align="right">Comissao</TableCell>
+                <ThSort label="Resultado" sortKeyName="resultado_pct" align="center" />
+                <ThSort label="% Comissao" sortKeyName="comissao_pct" align="center" />
+                <ThSort label="Comissao" sortKeyName="comissao_valor" />
               </TableRow>
             </TableHead>
             <TableBody>
-              {dados.vendedores.map((v, i) => {
+              {vendedoresOrdenados.map((v, i) => {
                 const nivelInfo = niveis.find((n) => n.nivel_ordem === v.nivel_atingido);
                 return (
                   <TableRow key={v.seller_code}>
