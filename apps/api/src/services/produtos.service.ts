@@ -102,6 +102,53 @@ export async function getImpactoAgrupamento(
   }));
 }
 
+// Dimensoes de classificacao de produto disponiveis como filtro no Dashboard,
+// mapeadas pra coluna correspondente em `produto_analitico` (tabela sincronizada
+// pelo ETL a partir das classificacoes cadastradas no ERP).
+const CLASSIFICACOES_FILTRO: Array<{ chave: string; coluna: string; label: string }> = [
+  { chave: 'categoria', coluna: 'class_categoria', label: 'Categoria' },
+  { chave: 'genero', coluna: 'class_genero', label: 'Genero' },
+  { chave: 'grupo', coluna: 'class_grupo', label: 'Grupo/Marca' },
+  { chave: 'linha', coluna: 'class_linha', label: 'Linha' },
+  { chave: 'colecao', coluna: 'class_colecao', label: 'Colecao' },
+  { chave: 'tecido', coluna: 'class_tecido', label: 'Tecido' },
+];
+
+export interface ClassificacaoOpcao {
+  valor: string;
+  qtd_skus: number;
+}
+
+export interface ClassificacaoDimensao {
+  chave: string;
+  label: string;
+  opcoes: ClassificacaoOpcao[];
+}
+
+// Valores distintos de cada dimensao de classificacao, com contagem de SKUs -
+// usado pra montar os dropdowns de filtro do Dashboard.
+export async function getClassificacoes(): Promise<ClassificacaoDimensao[]> {
+  const dimensoes: ClassificacaoDimensao[] = [];
+
+  for (const dim of CLASSIFICACOES_FILTRO) {
+    const rows = await prisma.$queryRawUnsafe<Array<{ valor: string; qtd: bigint }>>(`
+      SELECT TRIM(${dim.coluna}) as valor, COUNT(*) as qtd
+      FROM produto_analitico
+      WHERE ${dim.coluna} IS NOT NULL AND TRIM(${dim.coluna}) NOT IN ('', '.')
+      GROUP BY TRIM(${dim.coluna})
+      ORDER BY TRIM(${dim.coluna})
+    `);
+
+    dimensoes.push({
+      chave: dim.chave,
+      label: dim.label,
+      opcoes: rows.map((r) => ({ valor: r.valor, qtd_skus: Number(r.qtd) })),
+    });
+  }
+
+  return dimensoes;
+}
+
 // Casa nomes de cor vindos de um CSV (case-insensitive) contra as cores distintas cadastradas
 export function matchColorsFromCsv(colorNamesFromCsv: string[], cores: CorProduto[]): CorProduto[] {
   const normalized = colorNamesFromCsv.map(c => c.trim().toUpperCase()).filter(Boolean);

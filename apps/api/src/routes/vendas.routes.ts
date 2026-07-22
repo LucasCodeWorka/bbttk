@@ -1,17 +1,43 @@
 import { Router, Request, Response } from 'express';
 import * as vendasService from '../services/vendas.service.js';
+import { ProdutoFiltro } from '../services/vendas.service.js';
+import * as produtosService from '../services/produtos.service.js';
 import { getVendedoresApi } from '../services/totvs.service.js';
 
 const router = Router();
+
+// Resolve o filtro de classificacao de produto a partir da query string, ex:
+// ?categoria=CAMISA,BLUSA&genero=FEMININO - undefined quando nada foi passado.
+function resolveProdutoFiltro(req: Request): ProdutoFiltro | undefined {
+  function parseLista(chave: string): string[] | undefined {
+    const valor = req.query[chave] as string | undefined;
+    if (!valor) return undefined;
+    const itens = valor.split(',').map((v) => v.trim()).filter(Boolean);
+    return itens.length > 0 ? itens : undefined;
+  }
+
+  const filtro: ProdutoFiltro = {
+    categoria: parseLista('categoria'),
+    genero: parseLista('genero'),
+    grupo: parseLista('grupo'),
+    linha: parseLista('linha'),
+    colecao: parseLista('colecao'),
+    tecido: parseLista('tecido'),
+  };
+
+  const temAlgo = Object.values(filtro).some((v) => v && v.length > 0);
+  return temAlgo ? filtro : undefined;
+}
 
 // Vendas de hoje
 router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const filiais = await vendasService.getVendasPeriodo(today, today, branchCodes);
+    const filiais = await vendasService.getVendasPeriodo(today, today, branchCodes, produtoFiltro);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -29,10 +55,11 @@ router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
 router.get('/vendas/mes/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
     const today = new Date();
     const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    const filiais = await vendasService.getVendasPeriodo(startMonth, today, branchCodes);
+    const filiais = await vendasService.getVendasPeriodo(startMonth, today, branchCodes, produtoFiltro);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -54,11 +81,12 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
   try {
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes);
+    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -77,11 +105,12 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
   try {
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCodes);
+    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCodes, produtoFiltro);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -97,11 +126,12 @@ router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Reque
   try {
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasMensais(startDate, endDate, branchCodes);
+    const dados = await vendasService.getVendasMensais(startDate, endDate, branchCodes, produtoFiltro);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -142,9 +172,10 @@ function resolvePeriodo(req: Request): { startDate: Date; endDate: Date } {
 router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes);
+    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes, 10, produtoFiltro);
 
     res.json({
       periodo: {
@@ -162,9 +193,10 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
 router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes);
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
 
     // Buscar nomes dos vendedores da API TOTVS
     const nomes = await getVendedoresApi();
@@ -239,6 +271,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
 // Comparativo ano
 router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response) => {
   try {
+    const produtoFiltro = resolveProdutoFiltro(req);
     const today = new Date();
     let startAtual: Date;
     let endAtual: Date;
@@ -268,10 +301,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       clientesNovosMap,
       metasMap,
     ] = await Promise.all([
-      vendasService.getVendasPeriodo(startAtual, endAtual),
-      vendasService.getVendasPeriodo(startAnterior, endAnterior),
-      vendasService.getDevolucoesPorFilial(startAtual, endAtual),
-      vendasService.getClientesNovosPorFilial(startAtual, endAtual),
+      vendasService.getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro),
+      vendasService.getVendasPeriodo(startAnterior, endAnterior, undefined, produtoFiltro),
+      vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro),
+      vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getMetasPorFilial(ano, mes),
     ]);
 
@@ -405,7 +438,8 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
 router.get('/projecao-mes/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
-    const projecao = await vendasService.getProjecaoMes(branchCode);
+    const produtoFiltro = resolveProdutoFiltro(req);
+    const projecao = await vendasService.getProjecaoMes(branchCode, produtoFiltro);
     res.json(projecao);
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -413,10 +447,22 @@ router.get('/projecao-mes/:branchCode?', async (req: Request, res: Response) => 
 });
 
 // Projeção por filiais
-router.get('/projecao-filiais', async (_req: Request, res: Response) => {
+router.get('/projecao-filiais', async (req: Request, res: Response) => {
   try {
-    const projecao = await vendasService.getProjecaoFiliais();
+    const produtoFiltro = resolveProdutoFiltro(req);
+    const projecao = await vendasService.getProjecaoFiliais(produtoFiltro);
     res.json(projecao);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Opcoes de classificacao de produto (categoria, genero, grupo, linha, colecao,
+// tecido) pra montar os filtros do Dashboard Comercial
+router.get('/produtos/classificacoes', async (_req: Request, res: Response) => {
+  try {
+    const dimensoes = await produtosService.getClassificacoes();
+    res.json({ dimensoes });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

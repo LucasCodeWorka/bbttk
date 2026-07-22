@@ -68,30 +68,48 @@ function branchesQuery(branchCodes?: number[]): string {
   return branchCodes && branchCodes.length > 0 ? `branches=${branchCodes.join(',')}` : '';
 }
 
+// Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
+export interface ProdutoFiltro {
+  categoria?: string[];
+  genero?: string[];
+  grupo?: string[];
+  linha?: string[];
+  colecao?: string[];
+  tecido?: string[];
+}
+
+function produtoFiltroQuery(filtro?: ProdutoFiltro): string {
+  if (!filtro) return '';
+  return Object.entries(filtro)
+    .filter(([, valores]) => valores && valores.length > 0)
+    .map(([chave, valores]) => `${chave}=${(valores as string[]).map(encodeURIComponent).join(',')}`)
+    .join('&');
+}
+
 function joinQuery(...parts: string[]): string {
   const filtered = parts.filter(Boolean);
   return filtered.length > 0 ? `?${filtered.join('&')}` : '';
 }
 
 export const vendasApi = {
-  getPeriodo: (inicio: string, fim: string, branchCodes?: number[]) =>
+  getPeriodo: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendasResponse>(
-      `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
+      `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getDiarias: (inicio: string, fim: string, branchCodes?: number[]) =>
+  getDiarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
+      `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getMensais: (inicio: string, fim: string, branchCodes?: number[]) =>
+  getMensais: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes))}`
+      `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getVendedores: (inicio: string, fim: string, branchCodes?: number[]) =>
+  getVendedores: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendedoresResponse>(
-      `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes))}`
+      `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
   getVendedoresLista: () =>
@@ -102,21 +120,26 @@ export const vendasApi = {
       `/api/vendedores-por-filial/${branchCode}/${ano}/${mes}`
     ),
 
-  getTopProdutos: (inicio: string, fim: string, branchCodes?: number[]) =>
+  getTopProdutos: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<TopProdutosResponse>(
-      `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes))}`
+      `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getComparativoAno: (inicio: string, fim: string) =>
-    fetchApi<ComparativoAnoResponse>(`/api/comparativo-ano/${inicio}/${fim}`),
+  getComparativoAno: (inicio: string, fim: string, produtoFiltro?: ProdutoFiltro) =>
+    fetchApi<ComparativoAnoResponse>(
+      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(produtoFiltroQuery(produtoFiltro))}`
+    ),
 
-  getProjecaoMes: (branchCode?: number) =>
+  getProjecaoMes: (branchCode?: number, produtoFiltro?: ProdutoFiltro) =>
     fetchApi<ProjecaoMesResponse>(
-      `/api/projecao-mes${branchCode ? `/${branchCode}` : ''}`
+      `/api/projecao-mes${branchCode ? `/${branchCode}` : ''}${joinQuery(produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getProjecaoFiliais: () =>
-    fetchApi<ProjecaoFiliaisResponse>('/api/projecao-filiais'),
+  getProjecaoFiliais: (produtoFiltro?: ProdutoFiltro) =>
+    fetchApi<ProjecaoFiliaisResponse>(`/api/projecao-filiais${joinQuery(produtoFiltroQuery(produtoFiltro))}`),
+
+  getClassificacoes: () =>
+    fetchApi<{ dimensoes: ClassificacaoDimensao[] }>('/api/produtos/classificacoes'),
 };
 
 // Entregas
@@ -460,6 +483,17 @@ export interface Entrega {
   date: string;
   modulo: string;
   body: string;
+}
+
+export interface ClassificacaoOpcao {
+  valor: string;
+  qtd_skus: number;
+}
+
+export interface ClassificacaoDimensao {
+  chave: string;
+  label: string;
+  opcoes: ClassificacaoOpcao[];
 }
 
 export interface CorProduto {

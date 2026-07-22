@@ -81,13 +81,57 @@ function buildBranchFilter(branchCodes?: number[]) {
   return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
 }
 
+// Filtro por classificacao de produto (categoria, genero, grupo/marca, linha,
+// colecao, tecido) - vem da tabela `produto_analitico`, sincronizada pelo ETL
+// com as classificacoes cadastradas no ERP. Cada dimensao aceita varios valores
+// (OR entre valores da mesma dimensao, AND entre dimensoes diferentes).
+export interface ProdutoFiltro {
+  categoria?: string[];
+  genero?: string[];
+  grupo?: string[];
+  linha?: string[];
+  colecao?: string[];
+  tecido?: string[];
+}
+
+const CLASSIFICACAO_COLUNAS: Record<keyof ProdutoFiltro, string> = {
+  categoria: 'class_categoria',
+  genero: 'class_genero',
+  grupo: 'class_grupo',
+  linha: 'class_linha',
+  colecao: 'class_colecao',
+  tecido: 'class_tecido',
+};
+
+function temFiltroProduto(filtro?: ProdutoFiltro): boolean {
+  if (!filtro) return false;
+  return Object.values(filtro).some((v) => v && v.length > 0);
+}
+
+// JOIN sempre em LEFT - sem filtro ativo, nao muda nada nas linhas retornadas.
+const PRODUTO_ANALITICO_JOIN = Prisma.sql`LEFT JOIN produto_analitico pa ON pa.product_code = ti.product_code`;
+
+function buildProdutoFilter(filtro?: ProdutoFiltro): Prisma.Sql {
+  if (!temFiltroProduto(filtro)) return Prisma.empty;
+  const condicoes: Prisma.Sql[] = [];
+  for (const chave of Object.keys(CLASSIFICACAO_COLUNAS) as (keyof ProdutoFiltro)[]) {
+    const valores = filtro![chave];
+    if (valores && valores.length > 0) {
+      condicoes.push(Prisma.sql`TRIM(pa.${Prisma.raw(CLASSIFICACAO_COLUNAS[chave])}) IN (${Prisma.join(valores)})`);
+    }
+  }
+  return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
+}
+
 // Vendas por período (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasPeriodo(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
 ): Promise<VendasFilial[]> {
   const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
 
   const results = await prisma.$queryRaw<Array<{
     branch_code: number;
@@ -108,11 +152,13 @@ export async function getVendasPeriodo(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
+      ${produtoFilter}
     GROUP BY t.branch_code, t.branch_name
     ORDER BY faturamento DESC
   `;
@@ -143,9 +189,11 @@ export async function getVendasPeriodo(
 export async function getVendasDiarias(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
 
   const results = await prisma.$queryRaw<Array<{
     data: Date;
@@ -162,11 +210,13 @@ export async function getVendasDiarias(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
+      ${produtoFilter}
     GROUP BY t.transaction_date
     ORDER BY t.transaction_date
   `;
@@ -184,9 +234,11 @@ export async function getVendasDiarias(
 export async function getVendasMensais(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
 
   const results = await prisma.$queryRaw<Array<{
     mes: Date;
@@ -203,11 +255,13 @@ export async function getVendasMensais(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
+      ${produtoFilter}
     GROUP BY DATE_TRUNC('month', t.transaction_date)
     ORDER BY mes
   `;
@@ -224,9 +278,11 @@ export async function getVendasMensais(
 export async function getVendasVendedor(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
 ): Promise<VendasVendedor[]> {
   const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
 
   const results = await prisma.$queryRaw<Array<{
     seller_code: number;
@@ -242,6 +298,7 @@ export async function getVendasVendedor(
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ti.seller_code != 1
@@ -249,6 +306,7 @@ export async function getVendasVendedor(
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
+      ${produtoFilter}
     GROUP BY ti.seller_code
     ORDER BY faturamento DESC
   `;
@@ -274,9 +332,11 @@ export async function getTopProdutos(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  limit: number = 10
+  limit: number = 10,
+  produtoFiltro?: ProdutoFiltro
 ): Promise<Produto[]> {
   const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
 
   const results = await prisma.$queryRaw<Array<{
     referencia: string;
@@ -293,6 +353,7 @@ export async function getTopProdutos(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ti.seller_code != 1
@@ -300,6 +361,7 @@ export async function getTopProdutos(
       AND ${STORE_BRANCH_FILTER}
       AND (p.is_finished_product = true OR p.product_code IS NULL)
       ${branchFilter}
+      ${produtoFilter}
     GROUP BY COALESCE(p.reference_code, ti.product_code::text),
              COALESCE(p.reference_name, p.product_name, 'Produto ' || ti.product_code)
     ORDER BY valor DESC
@@ -317,8 +379,11 @@ export async function getTopProdutos(
 // Devoluções por filial (operações com operationsType='E' e operationMode='3' no TOTVS)
 export async function getDevolucoesPorFilial(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
 ): Promise<Map<number, { valor: number; qtde: number }>> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
   const results = await prisma.$queryRaw<Array<{
     branch_code: number;
     qtde_dev: bigint;
@@ -332,11 +397,13 @@ export async function getDevolucoesPorFilial(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
       AND ${STORE_BRANCH_FILTER}
       AND ${REAL_CUSTOMER_FILTER}
+      ${produtoFilter}
     GROUP BY t.branch_code
   `;
 
@@ -354,8 +421,11 @@ export async function getDevolucoesPorFilial(
 // cai dentro do período. Faturamento CN = receita desses clientes no período, na filial onde compraram.
 export async function getClientesNovosPorFilial(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
 ): Promise<Map<number, { qtde: number; faturamento: number }>> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
   const results = await prisma.$queryRaw<Array<{
     branch_code: number;
     clientes_novos: bigint;
@@ -384,10 +454,12 @@ export async function getClientesNovosPorFilial(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
+      ${produtoFilter}
     GROUP BY t.branch_code
   `;
 
@@ -451,7 +523,7 @@ export function calcularVariacao(atual: number, anterior: number) {
 }
 
 // Projeção do mês (caminhada)
-export async function getProjecaoMes(branchCode?: number) {
+export async function getProjecaoMes(branchCode?: number, produtoFiltro?: ProdutoFiltro) {
   const today = new Date();
   const diaAtual = today.getDate();
 
@@ -466,9 +538,9 @@ export async function getProjecaoMes(branchCode?: number) {
 
   // Buscar dados
   const branchCodes = branchCode ? [branchCode] : undefined;
-  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCodes);
-  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCodes);
-  const vendasAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, branchCodes);
+  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro);
+  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCodes, produtoFiltro);
+  const vendasAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, branchCodes, produtoFiltro);
 
   const totalAtual = calcularTotais(vendasAtual);
   const totalAntParcial = calcularTotais(vendasAntParcial);
@@ -524,7 +596,7 @@ export async function getProjecaoMes(branchCode?: number) {
 }
 
 // Projeção por filiais
-export async function getProjecaoFiliais() {
+export async function getProjecaoFiliais(produtoFiltro?: ProdutoFiltro) {
   const today = new Date();
   const diaAtual = today.getDate();
 
@@ -541,9 +613,9 @@ export async function getProjecaoFiliais() {
   const diasRestantes = Math.max(ultimoDia.getDate() - diaAtual, 0);
 
   // Buscar dados de todas as filiais
-  const filiaisAtual = await getVendasPeriodo(startAtual, endAtual);
-  const filiaisAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial);
-  const filiaisAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto);
+  const filiaisAtual = await getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro);
+  const filiaisAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, undefined, produtoFiltro);
+  const filiaisAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, undefined, produtoFiltro);
 
   // Criar dicionários para lookup
   const antParcialDict = new Map(filiaisAntParcial.map(f => [f.branch_code, f]));

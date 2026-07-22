@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { KPICard } from '@/components/dashboard/KPICard';
@@ -10,7 +11,7 @@ import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge, VariationBadge } from '@/components/ui/Badge';
-import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial } from '@/lib/api';
+import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
@@ -70,6 +71,10 @@ export default function DashboardPage() {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
+  const [classificacoes, setClassificacoes] = useState<ClassificacaoDimensao[]>([]);
+  const [produtoFiltro, setProdutoFiltro] = useState<ProdutoFiltro>({});
+
   // Dados
   const [vendas, setVendas] = useState<VendasResponse | null>(null);
   const [vendasDiarias, setVendasDiarias] = useState<VendasDiariasResponse | null>(null);
@@ -87,14 +92,14 @@ export default function DashboardPage() {
       const granularidade = isMesUnico(dataInicio, dataFim) ? 'diario' : 'mensal';
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
-        vendasApi.getPeriodo(dataInicio, dataFim, branchCodes),
+        vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro),
         granularidade === 'diario'
-          ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes)
-          : vendasApi.getMensais(dataInicio, dataFim, branchCodes),
-        vendasApi.getComparativoAno(dataInicio, dataFim),
-        vendasApi.getVendedores(dataInicio, dataFim, branchCodes),
-        vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes),
-        vendasApi.getProjecaoFiliais(),
+          ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
+          : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
+        vendasApi.getComparativoAno(dataInicio, dataFim, produtoFiltro),
+        vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
+        vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
+        vendasApi.getProjecaoFiliais(produtoFiltro),
       ]);
 
       setVendas(vendasRes);
@@ -108,11 +113,22 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataInicio, dataFim, filiaisSelecionadas]);
+  }, [dataInicio, dataFim, filiaisSelecionadas, produtoFiltro]);
 
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  // Carrega as opcoes de classificacao de produto uma unica vez
+  useEffect(() => {
+    vendasApi.getClassificacoes()
+      .then((res) => setClassificacoes(res.dimensoes))
+      .catch((error) => console.error('Erro ao carregar classificacoes:', error));
+  }, []);
+
+  function atualizarProdutoFiltro(chave: keyof ProdutoFiltro, valores: string[]) {
+    setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
+  }
 
   // Filtrar filiais do usuário
   const filiaisDisponiveis = Object.entries(FILIAIS)
@@ -263,6 +279,22 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Filtros de Produto (classificacao) */}
+      {classificacoes.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3">
+          {classificacoes.map((dim) => (
+            <ClassificacaoMultiSelect
+              key={dim.chave}
+              label={dim.label}
+              options={dim.opcoes.map((o) => ({ value: o.valor, label: o.valor }))}
+              selected={produtoFiltro[dim.chave as keyof ProdutoFiltro] || []}
+              onChange={(valores) => atualizarProdutoFiltro(dim.chave as keyof ProdutoFiltro, valores)}
+              className="w-44"
+            />
+          ))}
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
