@@ -29,9 +29,14 @@ export function FilialMultiSelect({ options, selected, onChange, label, classNam
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const todasSelecionadas = selected.length === 0 || selected.length === options.length;
+  // Vazio = nenhum filtro aplicado (mostra tudo), mas sem marcar as caixinhas -
+  // so "todasExplicitas" (todas marcadas de verdade) conta como "todas" pro
+  // toggle/checkbox, senao "Selecionar Todas" nao teria efeito visivel quando
+  // nada estava marcado e não daria pra desmarcar uma especifica depois.
+  const todasExplicitas = options.length > 0 && selected.length === options.length;
+  const semFiltro = selected.length === 0;
 
-  const displayText = todasSelecionadas
+  const displayText = semFiltro || todasExplicitas
     ? 'Todas as Filiais'
     : selected.length === 1
       ? options.find((o) => o.value === selected[0])?.label || '1 selecionada'
@@ -46,7 +51,7 @@ export function FilialMultiSelect({ options, selected, onChange, label, classNam
   }
 
   function toggleTodas() {
-    onChange(todasSelecionadas ? [] : options.map((o) => o.value));
+    onChange(todasExplicitas ? [] : options.map((o) => o.value));
   }
 
   return (
@@ -80,10 +85,10 @@ export function FilialMultiSelect({ options, selected, onChange, label, classNam
             >
               <span
                 className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                  todasSelecionadas ? 'bg-[var(--bbtk-red)] border-[var(--bbtk-red)]' : 'border-gray-300'
+                  todasExplicitas ? 'bg-[var(--bbtk-red)] border-[var(--bbtk-red)]' : 'border-gray-300'
                 }`}
               >
-                {todasSelecionadas && (
+                {todasExplicitas && (
                   <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                   </svg>
