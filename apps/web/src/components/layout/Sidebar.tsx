@@ -87,6 +87,15 @@ const navEntries: NavEntry[] = [
       { label: 'Agrupamento de Cores', href: '/pcp/agrupamento-cores', icon: iconAgrupamentoCores },
     ],
   },
+  {
+    type: 'module',
+    key: 'pcp_servico',
+    label: 'PCP',
+    icon: iconPcp,
+    items: [
+      { label: 'Estoque Sem Giro', href: '/pcp-novo', icon: iconAgrupamentoCores },
+    ],
+  },
   { type: 'link', label: 'Usuarios', href: '/usuarios', icon: iconUsuarios, adminOnly: true },
 ];
 
@@ -299,3 +308,4 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps) {
     </aside>
   );
 }
+

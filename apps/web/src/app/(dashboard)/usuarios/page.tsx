@@ -16,7 +16,8 @@ import { FILIAIS } from '@/lib/utils';
 
 const MODULOS_DISPONIVEIS = [
   { key: 'comercial', label: 'Comercial' },
-  { key: 'pcp', label: 'PCP' },
+  { key: 'pcp', label: 'PCP atual' },
+  { key: 'pcp_servico', label: 'PCP' },
 ];
 
 export default function UsuariosPage() {
@@ -543,3 +544,4 @@ export default function UsuariosPage() {
     </div>
   );
 }
+

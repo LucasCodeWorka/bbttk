@@ -7,13 +7,15 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:pcp-api\"",
     "dev:web": "npm run dev -w apps/web",
     "dev:api": "npm run dev -w apps/api",
-    "build": "npm run build -w apps/web && npm run build -w apps/api",
-    "start": "concurrently \"npm run start:api\" \"npm run start:web\"",
+    "dev:pcp-api": "npm run dev -w apps/pcp-api",
+    "build": "npm run build -w apps/web && npm run build -w apps/api && npm run build -w apps/pcp-api",
+    "start": "concurrently \"npm run start:api\" \"npm run start:web\" \"npm run start:pcp-api\"",
     "start:web": "npm run start -w apps/web",
-    "start:api": "npm run start -w apps/api"
+    "start:api": "npm run start -w apps/api",
+    "start:pcp-api": "npm run start -w apps/pcp-api"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

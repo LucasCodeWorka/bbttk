@@ -28,6 +28,25 @@ services:
       - key: CORS_ORIGIN
         sync: false
 
+  # PCP API (Node.js + Express + Prisma)
+  - type: web
+    name: bebetenkite-pcp-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npx prisma generate --schema=apps/api/prisma/schema.prisma && npm run build -w apps/pcp-api
+    startCommand: npm run start -w apps/pcp-api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+
   # Web (Next.js)
   - type: web
     name: bebetenkite-web
@@ -41,3 +60,6 @@ services:
         value: 20.11.1
       - key: NEXT_PUBLIC_API_URL
         sync: false
+      - key: NEXT_PUBLIC_PCP_API_URL
+        sync: false
+

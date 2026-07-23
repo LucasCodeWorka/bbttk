@@ -4,6 +4,7 @@ export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/dashboard', module: 'comercial' },
   { prefix: '/metas', module: 'comercial' },
   { prefix: '/comissoes', module: 'comercial' },
+  { prefix: '/pcp-novo', module: 'pcp_servico' },
   { prefix: '/pcp', module: 'pcp' },
 ];
 
@@ -18,3 +19,4 @@ export const ADMIN_ONLY_PREFIXES = ['/usuarios'];
 export function isAdminOnlyPath(pathname: string): boolean {
   return ADMIN_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
+

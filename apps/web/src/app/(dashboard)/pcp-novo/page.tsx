@@ -1,0 +1,400 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
+import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
+import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  EstoqueSemGiroResponse,
+  PcpClassificacaoDimensao,
+  PcpLojaFiltro,
+  pcpApi,
+} from '@/lib/pcpApi';
+import { cn, formatMoney, formatNumber } from '@/lib/utils';
+
+const DIAS_OPTIONS = [
+  { value: 30, label: '30 dias sem girar' },
+  { value: 60, label: '60 dias sem girar' },
+  { value: 90, label: '90 dias sem girar' },
+  { value: 91, label: 'Acima de 90 dias' },
+];
+
+const COBERTURA_OPTIONS = [
+  { value: '', label: 'Todas' },
+  { value: '6-12', label: 'Entre 6 e 12 meses' },
+  { value: '12-24', label: 'Entre 12 e 24 meses' },
+  { value: '24+', label: 'Acima de 24 meses' },
+];
+
+function shortLojaName(name: string, branchCode: number) {
+  const clean = name.replace(' SHOPPING', '').replace('PATIO ', 'P. ');
+  return clean.length <= 10 ? clean : `L${String(branchCode).padStart(2, '0')}`;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export default function PcpNovoPage() {
+  const { token, user } = useAuth();
+  const [isLoading, setIsLoading] = useState(true);
+  const [diasSelecionado, setDiasSelecionado] = useState(91);
+  const [cobertura, setCobertura] = useState('');
+  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
+  const [lojasFiltro, setLojasFiltro] = useState<PcpLojaFiltro[]>([]);
+  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
+  const [data, setData] = useState<EstoqueSemGiroResponse | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregarDados = useCallback(async () => {
+    if (!token) return;
+
+    setIsLoading(true);
+    setErro(null);
+    try {
+      const response = await pcpApi.getEstoqueSemGiro(token, {
+        dias: diasSelecionado,
+        cobertura: cobertura ? cobertura as '6-12' | '12-24' | '24+' : undefined,
+        branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+        categoria: produtoFiltro.categoria,
+        linha: produtoFiltro.linha,
+        genero: produtoFiltro.genero,
+        limit: 10,
+      });
+      setData(response);
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : 'Erro ao carregar estoque sem giro');
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [cobertura, diasSelecionado, filiaisSelecionadas, produtoFiltro, token]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    pcpApi.getFiltrosEstoqueSemGiro(token)
+      .then((response) => {
+        setClassificacoes(response.classificacoes);
+        setLojasFiltro(response.lojas);
+      })
+      .catch((error) => {
+        console.error('Erro ao carregar filtros PCP:', error);
+      });
+  }, [token]);
+
+  useEffect(() => {
+    carregarDados();
+  }, [carregarDados]);
+
+  const filialOptions = useMemo(() => {
+    const lojas = lojasFiltro;
+    return lojas
+      .filter((loja) => {
+        if (user?.role === 'admin') return true;
+        return user?.branchCodes.includes(loja.branch_code);
+      })
+      .map((loja) => ({ value: loja.branch_code, label: loja.branch_name }));
+  }, [lojasFiltro, user]);
+
+  const lojasTabela = data?.lojas.slice(0, 6) || [];
+  const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
+  const totalColunasTabela = 5 + Math.max(lojasTabela.length, 1);
+
+  const top10Totais = useMemo(() => {
+    if (!data) return null;
+
+    const lojas = new Map<number, number>();
+    const totais = data.top_skus.reduce(
+      (acc, item) => {
+        acc.quantidade += item.quantidade;
+        acc.valor += item.valor;
+        item.lojas.forEach((loja) => {
+          lojas.set(loja.branch_code, (lojas.get(loja.branch_code) || 0) + loja.quantidade);
+        });
+        return acc;
+      },
+      { quantidade: 0, valor: 0 }
+    );
+
+    return { ...totais, lojas };
+  }, [data]);
+
+  const adicionais = data && top10Totais
+    ? {
+        sku_count: Math.max(data.total.sku_count - data.top_skus.length, 0),
+        quantidade: Math.max(data.total.quantidade - top10Totais.quantidade, 0),
+        valor: Math.max(data.total.valor - top10Totais.valor, 0),
+      }
+    : null;
+
+  const lojaDestaque = data?.resumo_lojas.reduce((maior, loja) =>
+    loja.quantidade > maior.quantidade ? loja : maior,
+    data.resumo_lojas[0]
+  )?.branch_code;
+
+  function atualizarProdutoFiltro(chave: string, valores: string[]) {
+    setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Estoque - Sem Giro</p>
+          <h1 className="text-2xl font-bold text-gray-900">Estoque parado por SKU e loja</h1>
+          <p className="text-gray-500 text-sm mt-1">Visao por codigo filho e referencia</p>
+        </div>
+
+        <div className="text-sm text-gray-500 md:text-right">
+          <p>Atualizado em</p>
+          <p className="font-semibold text-gray-900">{formatDateTime(data?.atualizado_em || null)}</p>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Filtrar periodo sem girar</CardTitle>
+        </CardHeader>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {DIAS_OPTIONS.map((option) => {
+            const active = diasSelecionado === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setDiasSelecionado(option.value)}
+                className={cn(
+                  'h-12 rounded-lg border text-sm font-semibold transition-all',
+                  active
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white text-gray-700 border-gray-300 hover:border-[var(--bbtk-red)]'
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {(data?.resumo || DIAS_OPTIONS.map((option) => ({
+          dias: option.value,
+          label: option.value > 90 ? '> 90 dias' : `${option.value} dias`,
+          sku_count: 0,
+          quantidade: 0,
+          valor: 0,
+          pct_total: 0,
+        }))).map((item) => {
+          const active = item.dias === diasSelecionado;
+          return (
+            <Card
+              key={item.dias}
+              className={cn('cursor-pointer transition-all', active && 'border-red-300 bg-red-50')}
+              hover
+            >
+              <button type="button" className="w-full text-left" onClick={() => setDiasSelecionado(item.dias)}>
+                <p className={cn('text-sm text-gray-500', active && 'font-semibold text-red-700')}>
+                  {item.label}{active ? ' - selecionado' : ''}
+                </p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">
+                  {isLoading ? '-' : `${formatNumber(item.sku_count)} SKUs`}
+                </p>
+                <p className="text-sm text-gray-600 mt-1">
+                  {formatNumber(item.quantidade)} pc - {formatMoney(item.valor)}
+                </p>
+                <p className="text-sm text-gray-600">{item.pct_total.toFixed(1)}% do total</p>
+              </button>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        {classificacoes.map((dim) => (
+          <ClassificacaoMultiSelect
+            key={dim.chave}
+            label={dim.label}
+            options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
+            selected={produtoFiltro[dim.chave] || []}
+            onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
+            className="w-44"
+          />
+        ))}
+        <FilialMultiSelect
+          selected={filiaisSelecionadas}
+          onChange={setFiliaisSelecionadas}
+          options={filialOptions}
+          label="Loja"
+          className="w-52"
+        />
+        <Select
+          label="Cobertura"
+          value={cobertura}
+          onChange={(event) => setCobertura(event.target.value)}
+          options={COBERTURA_OPTIONS}
+          className="w-52"
+        />
+        <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+      </div>
+
+      {erro && (
+        <Card className="border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">{erro}</p>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>
+              Top 10 SKUs sem girar ha mais de {diasSelecionado > 90 ? '90' : diasSelecionado} dias
+            </CardTitle>
+            {resumoSelecionado && (
+              <p className="text-xs text-gray-400 mt-1">
+                {formatNumber(resumoSelecionado.quantidade)} pecas em estoque no filtro atual
+              </p>
+            )}
+          </div>
+        </CardHeader>
+
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell isHeader>SKU</TableCell>
+              <TableCell isHeader>Descricao completa</TableCell>
+              <TableCell isHeader align="right">Dias</TableCell>
+              <TableCell isHeader align="right">Qtd</TableCell>
+              <TableCell isHeader align="right">Valor</TableCell>
+              <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800">
+                Distribuicao por loja (pc)
+              </TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell isHeader className="bg-gray-50" />
+              <TableCell isHeader className="bg-gray-50" />
+              <TableCell isHeader className="bg-gray-50" />
+              <TableCell isHeader className="bg-gray-50" />
+              <TableCell isHeader className="bg-gray-50" />
+              {lojasTabela.length === 0 ? (
+                <TableCell isHeader align="center" className="bg-blue-50 text-blue-800">-</TableCell>
+              ) : lojasTabela.map((loja) => (
+                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 whitespace-nowrap">
+                  {shortLojaName(loja.branch_name, loja.branch_code)}
+                </TableCell>
+              ))}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={totalColunasTabela} align="center" className="py-10 text-gray-500">
+                  Carregando...
+                </TableCell>
+              </TableRow>
+            ) : data?.top_skus.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={totalColunasTabela} align="center" className="py-10 text-gray-500">
+                  Nenhum SKU encontrado para os filtros selecionados
+                </TableCell>
+              </TableRow>
+            ) : data?.top_skus.map((item) => {
+              const lojaMap = new Map(item.lojas.map((loja) => [loja.branch_code, loja.quantidade]));
+              return (
+                <TableRow key={item.sku}>
+                  <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">{item.sku}</TableCell>
+                  <TableCell className="min-w-72">
+                    <p className="font-medium text-gray-900">{item.descricao}</p>
+                    <p className="text-xs text-gray-500">
+                      Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
+                    </p>
+                  </TableCell>
+                  <TableCell align="right" className="font-semibold text-red-600">{formatNumber(item.dias_sem_giro)}</TableCell>
+                  <TableCell align="right">{formatNumber(item.quantidade)}</TableCell>
+                  <TableCell align="right" className="font-semibold whitespace-nowrap">{formatMoney(item.valor)}</TableCell>
+                  {lojasTabela.length === 0 ? (
+                    <TableCell align="center">-</TableCell>
+                  ) : lojasTabela.map((loja) => (
+                    <TableCell key={`${item.sku}-${loja.branch_code}`} align="center">
+                      {formatNumber(lojaMap.get(loja.branch_code) || 0)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })}
+            {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
+              <>
+                <TableRow isHighlighted>
+                  <TableCell colSpan={2} align="right" className="font-bold">Top 10:</TableCell>
+                  <TableCell align="right" className="font-bold">-</TableCell>
+                  <TableCell align="right" className="font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
+                  <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(top10Totais.valor)}</TableCell>
+                  {lojasTabela.length === 0 ? (
+                    <TableCell align="center">-</TableCell>
+                  ) : lojasTabela.map((loja) => (
+                    <TableCell key={`top10-${loja.branch_code}`} align="center" className="font-bold">
+                      {formatNumber(top10Totais.lojas.get(loja.branch_code) || 0)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                {adicionais && adicionais.sku_count > 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2} align="right" className="text-gray-500">
+                      + {formatNumber(adicionais.sku_count)} SKUs adicionais:
+                    </TableCell>
+                    <TableCell align="right" className="text-gray-500">-</TableCell>
+                    <TableCell align="right" className="text-gray-600">{formatNumber(adicionais.quantidade)}</TableCell>
+                    <TableCell align="right" className="text-gray-600 whitespace-nowrap">{formatMoney(adicionais.valor)}</TableCell>
+                    <TableCell align="center" colSpan={Math.max(lojasTabela.length, 1)} className="text-gray-500">
+                      distribuicao similar
+                    </TableCell>
+                  </TableRow>
+                )}
+              </>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {data && data.resumo_lojas?.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-600 mb-3">
+            Resumo por loja - onde esta o estoque parado &gt;{diasSelecionado > 90 ? 90 : diasSelecionado} dias
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            {data.resumo_lojas.slice(0, 8).map((loja) => {
+              const destaque = loja.branch_code === lojaDestaque;
+              return (
+                <Card key={loja.branch_code} className={cn(destaque && 'border-red-200 bg-red-50')}>
+                  <p className={cn('text-sm text-gray-500', destaque && 'font-semibold text-red-800')}>
+                    {loja.branch_name}
+                  </p>
+                  <p className={cn('text-2xl font-bold text-gray-900 mt-1', destaque && 'text-red-700')}>
+                    {formatNumber(loja.quantidade)} pc
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    {formatMoney(loja.valor)} - {loja.pct_quantidade.toFixed(1)}%
+                  </p>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
