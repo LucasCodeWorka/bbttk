@@ -57,6 +57,17 @@ interface VendasVendedor {
   tm: number;
 }
 
+interface VendasVendedorFilial {
+  seller_code: number;
+  seller_name?: string;
+  branch_code: number;
+  transacoes: number;
+  pecas: number;
+  faturamento: number;
+  pa: number;
+  tm: number;
+}
+
 interface Produto {
   referencia: string;
   nome: string;
@@ -318,6 +329,60 @@ export async function getVendasVendedor(
 
     return {
       seller_code: row.seller_code,
+      transacoes,
+      pecas: Math.round(pecas),
+      faturamento: round(faturamento),
+      pa: transacoes > 0 ? round(pecas / transacoes) : 0,
+      tm: transacoes > 0 ? round(faturamento / transacoes) : 0,
+    };
+  });
+}
+
+// Vendas por vendedor, quebrado por filial (matriz vendedor x loja) - usado pela tela de
+// Comissoes pra deixar explicito de qual(is) loja(s) cada vendedor e, ja que um vendedor
+// pode vender em mais de uma filial no mesmo mes.
+export async function getVendasVendedorPorFilial(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<VendasVendedorFilial[]> {
+  const branchFilter = buildBranchFilter(branchCodes);
+
+  const results = await prisma.$queryRaw<Array<{
+    seller_code: number;
+    branch_code: number;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+  }>>`
+    SELECT
+      ti.seller_code,
+      ti.branch_code,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
+      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as pecas,
+      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as faturamento
+    FROM transacao_itens ti
+    JOIN transacoes t ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND ti.seller_code != 1
+      AND ti.seller_code IS NOT NULL
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+    GROUP BY ti.seller_code, ti.branch_code
+    ORDER BY ti.seller_code, faturamento DESC
+  `;
+
+  return results.map(row => {
+    const transacoes = Number(row.transacoes);
+    const pecas = decimalToNumber(row.pecas);
+    const faturamento = decimalToNumber(row.faturamento);
+
+    return {
+      seller_code: row.seller_code,
+      branch_code: row.branch_code,
       transacoes,
       pecas: Math.round(pecas),
       faturamento: round(faturamento),

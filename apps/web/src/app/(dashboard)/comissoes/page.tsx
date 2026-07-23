@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge } from '@/components/ui/Badge';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { metasApi, ComissoesResponse, VendedorComissao } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
@@ -53,6 +54,12 @@ export default function ComissoesPage() {
   const mesOptions = MESES.slice(1).map((m, i) => ({ value: i + 1, label: m }));
 
   const niveis = dados?.niveis || [];
+
+  const filiaisMatriz = useMemo(() => {
+    const codes = new Set<number>();
+    (dados?.vendedores || []).forEach((v) => v.filiais.forEach((c) => codes.add(c)));
+    return Array.from(codes).sort((a, b) => (FILIAIS[a] || '').localeCompare(FILIAIS[b] || ''));
+  }, [dados]);
 
   function handleSort(key: string) {
     if (sortKey === key) {
@@ -101,6 +108,7 @@ export default function ComissoesPage() {
       `comissoes-${ano}-${String(mes).padStart(2, '0')}`,
       [
         { header: 'Vendedor', value: (v: VendedorComissao) => v.seller_name },
+        { header: 'Loja(s)', value: (v: VendedorComissao) => v.filiais.map((c) => FILIAIS[c] || c).join(', ') },
         { header: 'Faturamento', value: (v: VendedorComissao) => v.faturamento },
         ...niveis.map((n) => ({
           header: n.nivel_nome,
@@ -159,7 +167,7 @@ export default function ComissoesPage() {
       </div>
 
       {/* Realizado vs Meta + Canal + Top3 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <LoadingOverlay active={isLoading} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="border-l-4 border-l-[var(--bbtk-red)]">
           <CardTitle>Realizado vs Meta</CardTitle>
           <div className="mt-2">
@@ -213,7 +221,7 @@ export default function ComissoesPage() {
             )}
           </div>
         </Card>
-      </div>
+      </LoadingOverlay>
 
       {/* Tabela de vendedores */}
       <Card>
@@ -228,16 +236,16 @@ export default function ComissoesPage() {
             </Button>
           </div>
         </CardHeader>
-        {isLoading ? (
-          <div className="py-10 text-center text-gray-500">Carregando...</div>
-        ) : !dados || dados.vendedores.length === 0 ? (
+        {!isLoading && (!dados || dados.vendedores.length === 0) ? (
           <div className="py-10 text-center text-gray-500">Nenhum vendedor com vendas nesse periodo</div>
         ) : (
+          <LoadingOverlay active={isLoading}>
           <Table>
             <TableHead>
               <TableRow>
                 <TableCell isHeader>#</TableCell>
                 <ThSort label="Vendedor" sortKeyName="seller_name" align="left" />
+                <TableCell isHeader align="left">Loja(s)</TableCell>
                 <ThSort label="Faturamento" sortKeyName="faturamento" />
                 {niveis.map((n) => (
                   <ThSort
@@ -266,6 +274,18 @@ export default function ComissoesPage() {
                   <TableRow key={v.seller_code}>
                     <TableCell>{i + 1}</TableCell>
                     <TableCell className="font-medium whitespace-nowrap">{v.seller_name}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <div className="flex flex-wrap gap-1">
+                        {v.filiais.map((code) => (
+                          <span
+                            key={code}
+                            className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded"
+                          >
+                            {FILIAIS[code] || `Filial ${code}`}
+                          </span>
+                        ))}
+                      </div>
+                    </TableCell>
                     <TableCell align="right" className="whitespace-nowrap">{formatMoney(v.faturamento)}</TableCell>
                     {niveis.map((n) => {
                       const alvo = v[`nivel_${n.nivel_ordem}` as keyof typeof v] as number;
@@ -301,12 +321,12 @@ export default function ComissoesPage() {
                 );
               })}
             </TableBody>
-            {dados.vendedores.length > 0 && (
+            {(dados?.vendedores.length ?? 0) > 0 && (
               <tfoot>
                 <TableRow isHighlighted>
-                  <TableCell className="font-bold" colSpan={2}>TOTAL</TableCell>
+                  <TableCell className="font-bold" colSpan={3}>TOTAL</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados.vendedores.reduce((s, v) => s + v.faturamento, 0))}
+                    {formatMoney(dados?.vendedores.reduce((s, v) => s + v.faturamento, 0) || 0)}
                   </TableCell>
                   {niveis.map((n) => (
                     <TableCell key={n.nivel_ordem} />
@@ -314,12 +334,73 @@ export default function ComissoesPage() {
                   <TableCell align="center">-</TableCell>
                   <TableCell align="center">-</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados.vendedores.reduce((s, v) => s + v.comissao_valor, 0))}
+                    {formatMoney(dados?.vendedores.reduce((s, v) => s + v.comissao_valor, 0) || 0)}
                   </TableCell>
                 </TableRow>
               </tfoot>
             )}
           </Table>
+          </LoadingOverlay>
+        )}
+      </Card>
+
+      {/* Matriz Vendedor x Loja */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Matriz Vendedor x Loja</CardTitle>
+        </CardHeader>
+        <p className="text-sm text-gray-500 -mt-2 mb-2">
+          Faturamento de cada vendedor por loja no periodo - deixa claro em qual(is) loja(s)
+          cada vendedor vendeu e qual comissao se aplica em cada uma.
+        </p>
+        {!isLoading && (!dados || dados.vendedores.length === 0 || filiaisMatriz.length === 0) ? (
+          <div className="py-10 text-center text-gray-500">Nenhum dado para montar a matriz</div>
+        ) : (
+          <LoadingOverlay active={isLoading} className="overflow-x-auto">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell isHeader align="left">Vendedor</TableCell>
+                  {filiaisMatriz.map((code) => (
+                    <TableCell key={code} isHeader align="right" className="whitespace-nowrap">
+                      {FILIAIS[code] || `Filial ${code}`}
+                    </TableCell>
+                  ))}
+                  <TableCell isHeader align="right">Total</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {vendedoresOrdenados.map((v) => {
+                  const celulaPorFilial = new Map(v.celulas.map((c) => [c.branch_code, c]));
+                  return (
+                    <TableRow key={v.seller_code}>
+                      <TableCell className="font-medium whitespace-nowrap">{v.seller_name}</TableCell>
+                      {filiaisMatriz.map((code) => {
+                        const celula = celulaPorFilial.get(code);
+                        return (
+                          <TableCell key={code} align="right" className="whitespace-nowrap">
+                            {celula ? (
+                              <div>
+                                {formatMoney(celula.faturamento)}
+                                <div className="text-xs text-gray-400">
+                                  {celula.comissao_pct.toFixed(1)}% = {formatMoney(celula.comissao_valor)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell align="right" className="font-semibold whitespace-nowrap">
+                        {formatMoney(v.faturamento)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </LoadingOverlay>
         )}
       </Card>
     </div>

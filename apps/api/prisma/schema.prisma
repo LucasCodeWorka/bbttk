@@ -68,6 +68,11 @@ model Meta {
   nivel3     Decimal?  @default(0) @map("nivel_3") @db.Decimal(15, 2)
   nivel4     Decimal?  @default(0) @map("nivel_4") @db.Decimal(15, 2)
   nivel5     Decimal?  @default(0) @map("nivel_5") @db.Decimal(15, 2)
+  comissaoNivel1 Decimal? @map("comissao_nivel_1") @db.Decimal(5, 2)
+  comissaoNivel2 Decimal? @map("comissao_nivel_2") @db.Decimal(5, 2)
+  comissaoNivel3 Decimal? @map("comissao_nivel_3") @db.Decimal(5, 2)
+  comissaoNivel4 Decimal? @map("comissao_nivel_4") @db.Decimal(5, 2)
+  comissaoNivel5 Decimal? @map("comissao_nivel_5") @db.Decimal(5, 2)
   createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
@@ -83,9 +88,9 @@ model MetaNivel {
   nivelOrdem         Int       @unique @map("nivel_ordem")
   nivelNome          String    @map("nivel_nome") @db.VarChar(50)
   nivelCor           String?   @default("#888888") @map("nivel_cor") @db.VarChar(20)
-  comissaoPercentual Decimal   @default(0) @map("comissao_percentual") @db.Decimal(5, 2)
   createdAt          DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt          DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  comissaoPercentual Decimal   @default(0) @map("comissao_percentual") @db.Decimal(5, 2)
 
   @@map("meta_niveis")
 }
@@ -149,34 +154,35 @@ model prd_saldo {
 }
 
 model produtos {
-  product_sku          String      @id @db.VarChar(50)
-  product_name         String?     @db.VarChar(255)
-  color_code           String?     @db.VarChar(10)
-  color_name           String?     @db.VarChar(100)
-  size                 String?     @db.VarChar(20)
-  ncm                  String?     @db.VarChar(20)
-  cst                  String?     @db.VarChar(10)
-  cest                 String?     @db.VarChar(20)
-  is_active            Boolean?
-  is_finished_product  Boolean?
-  is_raw_material      Boolean?
-  is_bulk_material     Boolean?
-  is_own_production    Boolean?
-  measured_unit        String?     @db.VarChar(10)
-  minimum_stock_amount Decimal?    @db.Decimal(10, 2)
-  maximum_stock_amount Decimal?    @db.Decimal(10, 2)
-  ideal_stock_amount   Decimal?    @db.Decimal(10, 2)
-  reference_code       String?     @db.VarChar(100)
-  reference_id         Int?
-  reference_name       String?     @db.VarChar(255)
-  last_reference_code  String?     @db.VarChar(50)
-  grid_code            Int?
-  description          String?
-  is_blocked           Boolean?
-  created_at           DateTime?   @default(now()) @db.Timestamp(6)
-  updated_at           DateTime?   @default(now()) @db.Timestamp(6)
-  product_code         Int?
-  prd_saldo            prd_saldo[]
+  product_sku           String                  @id @db.VarChar(50)
+  product_name          String?                 @db.VarChar(255)
+  color_code            String?                 @db.VarChar(10)
+  color_name            String?                 @db.VarChar(100)
+  size                  String?                 @db.VarChar(20)
+  ncm                   String?                 @db.VarChar(20)
+  cst                   String?                 @db.VarChar(10)
+  cest                  String?                 @db.VarChar(20)
+  is_active             Boolean?
+  is_finished_product   Boolean?
+  is_raw_material       Boolean?
+  is_bulk_material      Boolean?
+  is_own_production     Boolean?
+  measured_unit         String?                 @db.VarChar(10)
+  minimum_stock_amount  Decimal?                @db.Decimal(10, 2)
+  maximum_stock_amount  Decimal?                @db.Decimal(10, 2)
+  ideal_stock_amount    Decimal?                @db.Decimal(10, 2)
+  reference_code        String?                 @db.VarChar(100)
+  reference_id          Int?
+  reference_name        String?                 @db.VarChar(255)
+  last_reference_code   String?                 @db.VarChar(50)
+  grid_code             Int?
+  description           String?
+  is_blocked            Boolean?
+  created_at            DateTime?               @default(now()) @db.Timestamp(6)
+  updated_at            DateTime?               @default(now()) @db.Timestamp(6)
+  product_code          Int?
+  prd_saldo             prd_saldo[]
+  produto_classificacao produto_classificacao[]
 
   @@index([color_code], map: "idx_color_code")
   @@index([grid_code], map: "idx_grid_code")
@@ -279,4 +285,171 @@ model dim_classification_type {
 
   @@index([classification_type_code], map: "idx_dim_classification_type_code")
   @@index([classification_type_name], map: "idx_dim_classification_type_name")
+}
+
+model dim_classification {
+  source_key                   String    @id @db.VarChar(150)
+  classification_type_code     Int?
+  classification_type_name     String?   @db.VarChar(255)
+  classification_type_name_aux String?   @db.VarChar(255)
+  classification_code          String?   @db.VarChar(100)
+  classification_name          String?   @db.VarChar(255)
+  classification_name_aux      String?   @db.VarChar(255)
+  max_change_filter_date       DateTime? @db.Timestamp(6)
+  raw_data                     Json
+  created_at                   DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                   DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([classification_code], map: "idx_dim_classification_code")
+  @@index([classification_name], map: "idx_dim_classification_name")
+}
+
+model dim_cliente {
+  idcliente                Int       @id
+  tipo_pessoa              String    @db.Char(1)
+  cpf_cnpj                 String?   @db.VarChar(20)
+  nome                     String?   @db.VarChar(255)
+  nome_fantasia            String?   @db.VarChar(255)
+  cod_loja_cadastro        Int?
+  inativo                  Boolean?
+  status_cliente           String?   @db.VarChar(50)
+  cliente                  Boolean?
+  fornecedor               Boolean?
+  representante            Boolean?
+  guia_compra              Boolean?
+  transportadora           Boolean?
+  funcionario              Boolean?
+  data_cadastro            DateTime? @db.Timestamp(6)
+  data_ultima_alteracao    DateTime? @db.Timestamp(6)
+  data_nascimento          DateTime? @db.Timestamp(6)
+  data_fundacao            DateTime? @db.Timestamp(6)
+  renda_mensal             Decimal?  @db.Decimal(14, 2)
+  faturamento_mensal       Decimal?  @db.Decimal(14, 2)
+  email_principal          String?   @db.VarChar(255)
+  telefone_principal       String?   @db.VarChar(50)
+  cep                      String?   @db.VarChar(20)
+  cidade                   String?   @db.VarChar(100)
+  uf                       String?   @db.VarChar(2)
+  bairro                   String?   @db.VarChar(100)
+  endereco                 String?   @db.VarChar(255)
+  numero_endereco          Int?
+  data_primeira_compra     DateTime? @db.Timestamp(6)
+  valor_primeira_compra    Decimal?  @db.Decimal(14, 2)
+  cod_loja_primeira_compra Int?
+  data_ultima_compra       DateTime? @db.Timestamp(6)
+  valor_ultima_compra      Decimal?  @db.Decimal(14, 2)
+  cod_loja_ultima_compra   Int?
+  qtd_compras              Decimal?  @db.Decimal(14, 2)
+  valor_total_compras      Decimal?  @db.Decimal(14, 2)
+  dados_api                Json
+  criado_em                DateTime? @default(now()) @db.Timestamp(6)
+  atualizado_em            DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([cliente], map: "idx_dim_cliente_cliente")
+  @@index([cpf_cnpj], map: "idx_dim_cliente_cpf_cnpj")
+  @@index([data_ultima_alteracao], map: "idx_dim_cliente_data_alteracao")
+  @@index([nome], map: "idx_dim_cliente_nome")
+  @@index([data_primeira_compra], map: "idx_dim_cliente_primeira_compra")
+  @@index([tipo_pessoa], map: "idx_dim_cliente_tipo")
+  @@index([data_ultima_compra], map: "idx_dim_cliente_ultima_compra")
+}
+
+model produto_analitico {
+  product_sku                 String    @id @db.VarChar(50)
+  product_name                String?   @db.VarChar(255)
+  color_code                  String?   @db.VarChar(10)
+  color_name                  String?   @db.VarChar(100)
+  size                        String?   @db.VarChar(20)
+  ncm                         String?   @db.VarChar(20)
+  cst                         String?   @db.VarChar(10)
+  cest                        String?   @db.VarChar(20)
+  is_active                   Boolean?
+  is_finished_product         Boolean?
+  is_raw_material             Boolean?
+  is_bulk_material            Boolean?
+  is_own_production           Boolean?
+  measured_unit               String?   @db.VarChar(10)
+  minimum_stock_amount        Decimal?  @db.Decimal(10, 2)
+  maximum_stock_amount        Decimal?  @db.Decimal(10, 2)
+  ideal_stock_amount          Decimal?  @db.Decimal(10, 2)
+  reference_code              String?   @db.VarChar(100)
+  reference_id                Int?
+  reference_name              String?   @db.VarChar(255)
+  last_reference_code         String?   @db.VarChar(50)
+  grid_code                   Int?
+  description                 String?
+  is_blocked                  Boolean?
+  created_at                  DateTime? @db.Timestamp(6)
+  updated_at                  DateTime? @db.Timestamp(6)
+  product_code                Int?
+  refreshed_at                DateTime? @default(now()) @db.Timestamp(6)
+  class_tipo                  String?
+  class_categoria             String?
+  class_grupo                 String?
+  class_linha                 String?
+  class_colecao               String?
+  class_genero                String?
+  class_modelo                String?
+  class_tecido                String?
+  class_lancamento            String?
+  class_status                String?
+  class_tipo_de_materia_prima String?
+  class_categoria_mp          String?
+  class_grupo_mc              String?
+  class_tecido_02             String?
+  class_motor_promocional     String?
+  class_campanha              String?
+}
+
+model produto_analitico_classificacao_colunas {
+  classification_type_code Int       @id
+  classification_type_name String    @db.VarChar(255)
+  column_name              String    @db.VarChar(100)
+  updated_at               DateTime? @default(now()) @db.Timestamp(6)
+}
+
+model produto_classificacao {
+  product_sku                  String    @db.VarChar(50)
+  product_code                 Int?
+  classification_source_key    String    @db.VarChar(150)
+  classification_type_code     Int?
+  classification_type_name     String?   @db.VarChar(255)
+  classification_type_name_aux String?   @db.VarChar(255)
+  classification_code          String?   @db.VarChar(100)
+  classification_name          String?   @db.VarChar(255)
+  classification_name_aux      String?   @db.VarChar(255)
+  raw_data                     Json
+  created_at                   DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                   DateTime? @default(now()) @db.Timestamp(6)
+  produtos                     produtos  @relation(fields: [product_sku], references: [product_sku], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([product_sku, classification_source_key])
+  @@index([product_code], map: "idx_produto_classificacao_product_code")
+  @@index([classification_source_key], map: "idx_produto_classificacao_source_key")
+  @@index([classification_type_code], map: "idx_produto_classificacao_type_code")
+}
+
+model stg_saldo_virtual_csv {
+  source_file           String    @db.VarChar(255)
+  row_number            Int
+  branch_code           Int?
+  stock_code            Int?
+  product_code          Int?
+  seqgrupo              Int?
+  stock                 Decimal?  @db.Decimal(14, 3)
+  product_description   String?
+  saldo_date            DateTime? @db.Date
+  cutoff_date           DateTime  @db.Date
+  is_before_cutoff      Boolean
+  is_product_found      Boolean   @default(false)
+  is_branch_found       Boolean   @default(false)
+  rejection_reason      String?
+  imported_to_prd_saldo Boolean   @default(false)
+  loaded_at             DateTime  @default(now()) @db.Timestamp(6)
+
+  @@id([source_file, row_number])
+  @@index([branch_code], map: "idx_stg_saldo_virtual_csv_branch")
+  @@index([saldo_date], map: "idx_stg_saldo_virtual_csv_date")
+  @@index([product_code], map: "idx_stg_saldo_virtual_csv_product")
+  @@index([rejection_reason], map: "idx_stg_saldo_virtual_csv_rejection")
 }

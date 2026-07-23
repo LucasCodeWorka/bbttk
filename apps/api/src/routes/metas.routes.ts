@@ -44,7 +44,10 @@ router.get('/metas', async (req: Request, res: Response) => {
 // Salvar meta
 router.post('/metas', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5 } = req.body;
+    const {
+      ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
+      comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5,
+    } = req.body;
 
     await metasService.saveMeta({
       ano,
@@ -56,6 +59,11 @@ router.post('/metas', authMiddleware, async (req: Request, res: Response) => {
       nivel_3: nivel_3 || 0,
       nivel_4: nivel_4 || 0,
       nivel_5: nivel_5 || 0,
+      comissao_nivel_1: comissao_nivel_1 === '' || comissao_nivel_1 === undefined ? null : comissao_nivel_1,
+      comissao_nivel_2: comissao_nivel_2 === '' || comissao_nivel_2 === undefined ? null : comissao_nivel_2,
+      comissao_nivel_3: comissao_nivel_3 === '' || comissao_nivel_3 === undefined ? null : comissao_nivel_3,
+      comissao_nivel_4: comissao_nivel_4 === '' || comissao_nivel_4 === undefined ? null : comissao_nivel_4,
+      comissao_nivel_5: comissao_nivel_5 === '' || comissao_nivel_5 === undefined ? null : comissao_nivel_5,
     });
 
     res.json({ success: true });

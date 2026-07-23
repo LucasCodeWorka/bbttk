@@ -59,6 +59,11 @@ export async function getMetas(ano: number, mes: number, branchCode?: number) {
       nivel_3: Decimal | null;
       nivel_4: Decimal | null;
       nivel_5: Decimal | null;
+      comissao_nivel_1: Decimal | null;
+      comissao_nivel_2: Decimal | null;
+      comissao_nivel_3: Decimal | null;
+      comissao_nivel_4: Decimal | null;
+      comissao_nivel_5: Decimal | null;
     }>>`
       SELECT * FROM metas
       WHERE ano = ${ano} AND mes = ${mes} AND branch_code = ${branchCode}
@@ -76,6 +81,11 @@ export async function getMetas(ano: number, mes: number, branchCode?: number) {
       nivel_3: Decimal | null;
       nivel_4: Decimal | null;
       nivel_5: Decimal | null;
+      comissao_nivel_1: Decimal | null;
+      comissao_nivel_2: Decimal | null;
+      comissao_nivel_3: Decimal | null;
+      comissao_nivel_4: Decimal | null;
+      comissao_nivel_5: Decimal | null;
     }>>`
       SELECT * FROM metas
       WHERE ano = ${ano} AND mes = ${mes}
@@ -94,6 +104,11 @@ export async function getMetas(ano: number, mes: number, branchCode?: number) {
     nivel_3: decimalToNumber(m.nivel_3),
     nivel_4: decimalToNumber(m.nivel_4),
     nivel_5: decimalToNumber(m.nivel_5),
+    comissao_nivel_1: m.comissao_nivel_1 === null ? null : decimalToNumber(m.comissao_nivel_1),
+    comissao_nivel_2: m.comissao_nivel_2 === null ? null : decimalToNumber(m.comissao_nivel_2),
+    comissao_nivel_3: m.comissao_nivel_3 === null ? null : decimalToNumber(m.comissao_nivel_3),
+    comissao_nivel_4: m.comissao_nivel_4 === null ? null : decimalToNumber(m.comissao_nivel_4),
+    comissao_nivel_5: m.comissao_nivel_5 === null ? null : decimalToNumber(m.comissao_nivel_5),
   }));
 }
 
@@ -108,17 +123,35 @@ export async function saveMeta(data: {
   nivel_3: number;
   nivel_4: number;
   nivel_5: number;
+  comissao_nivel_1?: number | null;
+  comissao_nivel_2?: number | null;
+  comissao_nivel_3?: number | null;
+  comissao_nivel_4?: number | null;
+  comissao_nivel_5?: number | null;
 }) {
+  const c1 = data.comissao_nivel_1 ?? null;
+  const c2 = data.comissao_nivel_2 ?? null;
+  const c3 = data.comissao_nivel_3 ?? null;
+  const c4 = data.comissao_nivel_4 ?? null;
+  const c5 = data.comissao_nivel_5 ?? null;
+
   await prisma.$executeRaw`
-    INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5)
+    INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
+      comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
     VALUES (${data.ano}, ${data.mes}, ${data.branch_code}, ${data.seller_code},
-            ${data.nivel_1}, ${data.nivel_2}, ${data.nivel_3}, ${data.nivel_4}, ${data.nivel_5})
+            ${data.nivel_1}, ${data.nivel_2}, ${data.nivel_3}, ${data.nivel_4}, ${data.nivel_5},
+            ${c1}, ${c2}, ${c3}, ${c4}, ${c5})
     ON CONFLICT (ano, mes, branch_code, seller_code) DO UPDATE SET
       nivel_1 = EXCLUDED.nivel_1,
       nivel_2 = EXCLUDED.nivel_2,
       nivel_3 = EXCLUDED.nivel_3,
       nivel_4 = EXCLUDED.nivel_4,
       nivel_5 = EXCLUDED.nivel_5,
+      comissao_nivel_1 = EXCLUDED.comissao_nivel_1,
+      comissao_nivel_2 = EXCLUDED.comissao_nivel_2,
+      comissao_nivel_3 = EXCLUDED.comissao_nivel_3,
+      comissao_nivel_4 = EXCLUDED.comissao_nivel_4,
+      comissao_nivel_5 = EXCLUDED.comissao_nivel_5,
       updated_at = NOW()
   `;
 }

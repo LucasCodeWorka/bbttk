@@ -11,6 +11,7 @@ import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge, VariationBadge } from '@/components/ui/Badge';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
@@ -332,14 +333,18 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Vendas Diarias</CardTitle>
           </CardHeader>
-          <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
+          <LoadingOverlay active={isLoading}>
+            <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
+          </LoadingOverlay>
         </Card>
 
         <Card>
           <CardHeader>
             <CardTitle>Vendas por Filial</CardTitle>
           </CardHeader>
-          <BarChart data={dadosBarras} horizontal />
+          <LoadingOverlay active={isLoading}>
+            <BarChart data={dadosBarras} horizontal />
+          </LoadingOverlay>
         </Card>
       </div>
 
@@ -351,6 +356,7 @@ export default function DashboardPage() {
             Exportar Excel
           </Button>
         </CardHeader>
+        <LoadingOverlay active={isLoading}>
         <Table>
           <TableHead>
             <TableRow>
@@ -527,6 +533,7 @@ export default function DashboardPage() {
             )}
           </TableBody>
         </Table>
+        </LoadingOverlay>
       </Card>
 
       {/* Vendedores e Produtos */}
@@ -536,7 +543,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Ranking Vendedores</CardTitle>
           </CardHeader>
-          <div className="max-h-96 overflow-y-auto">
+          <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
               <TableHead>
                 <TableRow>
@@ -569,7 +576,7 @@ export default function DashboardPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </LoadingOverlay>
         </Card>
 
         {/* Top Produtos */}
@@ -577,7 +584,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Top Produtos</CardTitle>
           </CardHeader>
-          <div className="max-h-96 overflow-y-auto">
+          <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
               <TableHead>
                 <TableRow>
@@ -610,7 +617,7 @@ export default function DashboardPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </LoadingOverlay>
         </Card>
       </div>
     </div>

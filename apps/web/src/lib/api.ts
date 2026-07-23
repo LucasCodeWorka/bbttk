@@ -545,9 +545,9 @@ export interface MetaNivel {
   comissao_percentual: number;
 }
 
-export interface VendedorComissao {
-  seller_code: number;
-  seller_name: string;
+export interface ComissaoCelula {
+  branch_code: number;
+  branch_name: string;
   faturamento: number;
   nivel_1: number;
   nivel_2: number;
@@ -558,6 +558,23 @@ export interface VendedorComissao {
   resultado_pct: number;
   comissao_pct: number;
   comissao_valor: number;
+}
+
+export interface VendedorComissao {
+  seller_code: number;
+  seller_name: string;
+  filiais: number[];
+  faturamento: number;
+  nivel_1: number;
+  nivel_2: number;
+  nivel_3: number;
+  nivel_4: number;
+  nivel_5: number;
+  nivel_atingido: number;
+  resultado_pct: number;
+  comissao_pct: number;
+  comissao_valor: number;
+  celulas: ComissaoCelula[];
 }
 
 export interface CanalComissao {
@@ -588,6 +605,11 @@ export interface Meta {
   nivel_3: number;
   nivel_4: number;
   nivel_5: number;
+  comissao_nivel_1: number | null;
+  comissao_nivel_2: number | null;
+  comissao_nivel_3: number | null;
+  comissao_nivel_4: number | null;
+  comissao_nivel_5: number | null;
 }
 
 export interface MetaData {
@@ -600,6 +622,11 @@ export interface MetaData {
   nivel_3: number;
   nivel_4: number;
   nivel_5: number;
+  comissao_nivel_1?: number | null;
+  comissao_nivel_2?: number | null;
+  comissao_nivel_3?: number | null;
+  comissao_nivel_4?: number | null;
+  comissao_nivel_5?: number | null;
 }
 
 export interface DistribuicaoItem {
