@@ -17,9 +17,9 @@ import {
 import { cn, formatMoney, formatNumber } from '@/lib/utils';
 
 const DIAS_OPTIONS = [
-  { value: 30, label: '30 dias sem girar' },
-  { value: 60, label: '60 dias sem girar' },
-  { value: 90, label: '90 dias sem girar' },
+  { value: 30, label: 'Ate 30 dias sem girar' },
+  { value: 60, label: '31 a 60 dias sem girar' },
+  { value: 90, label: '61 a 90 dias sem girar' },
   { value: 91, label: 'Acima de 90 dias' },
 ];
 
@@ -44,6 +44,18 @@ function formatDateTime(value: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function faixaDiasLabel(dias: number) {
+  if (dias <= 30) return 'Ate 30 dias';
+  if (dias <= 60) return '31 a 60 dias';
+  if (dias <= 90) return '61 a 90 dias';
+  return 'Acima de 90 dias';
+}
+
+function formatDiasSemGiro(dias: number, ultimaVenda: string | null) {
+  if (!ultimaVenda || dias >= 9999) return 'Nunca vendeu';
+  return `${formatNumber(dias)} dias`;
 }
 
 export default function PcpNovoPage() {
@@ -262,7 +274,7 @@ export default function PcpNovoPage() {
         <CardHeader>
           <div>
             <CardTitle>
-              Top 10 SKUs sem girar ha mais de {diasSelecionado > 90 ? '90' : diasSelecionado} dias
+              Top 10 SKUs sem girar - {faixaDiasLabel(diasSelecionado)}
             </CardTitle>
             {resumoSelecionado && (
               <p className="text-xs text-gray-400 mt-1">
@@ -277,7 +289,7 @@ export default function PcpNovoPage() {
             <TableRow>
               <TableCell isHeader>SKU</TableCell>
               <TableCell isHeader>Descricao completa</TableCell>
-              <TableCell isHeader align="right">Dias</TableCell>
+              <TableCell isHeader align="right">Dias sem giro</TableCell>
               <TableCell isHeader align="right">Qtd</TableCell>
               <TableCell isHeader align="right">Valor</TableCell>
               <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800">
@@ -323,7 +335,7 @@ export default function PcpNovoPage() {
                       Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
                     </p>
                   </TableCell>
-                  <TableCell align="right" className="font-semibold text-red-600">{formatNumber(item.dias_sem_giro)}</TableCell>
+                  <TableCell align="right" className="font-semibold text-red-600 whitespace-nowrap">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda)}</TableCell>
                   <TableCell align="right">{formatNumber(item.quantidade)}</TableCell>
                   <TableCell align="right" className="font-semibold whitespace-nowrap">{formatMoney(item.valor)}</TableCell>
                   {lojasTabela.length === 0 ? (
@@ -373,7 +385,7 @@ export default function PcpNovoPage() {
       {data && data.resumo_lojas?.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-gray-600 mb-3">
-            Resumo por loja - onde esta o estoque parado &gt;{diasSelecionado > 90 ? 90 : diasSelecionado} dias
+            Resumo por loja - estoque parado em {faixaDiasLabel(diasSelecionado).toLowerCase()}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             {data.resumo_lojas.slice(0, 8).map((loja) => {

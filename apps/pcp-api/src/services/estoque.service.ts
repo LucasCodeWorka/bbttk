@@ -134,8 +134,27 @@ function buildCoberturaFilter(cobertura?: CoberturaFiltro): Prisma.Sql {
   return Prisma.sql`AND (a.cobertura_meses >= 24 OR a.cobertura_meses IS NULL)`;
 }
 
+function buildDiasFilter(dias: number): Prisma.Sql {
+  if (dias <= 30) {
+    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) <= 30`;
+  }
+
+  if (dias <= 60) {
+    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 30 AND COALESCE(a.dias_sem_giro, 9999) <= 60`;
+  }
+
+  if (dias <= 90) {
+    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 60 AND COALESCE(a.dias_sem_giro, 9999) <= 90`;
+  }
+
+  return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 90`;
+}
+
 function labelDias(dias: number): string {
-  return dias > 90 ? '> 90 dias' : `${dias} dias`;
+  if (dias <= 30) return 'Ate 30 dias';
+  if (dias <= 60) return '31 a 60 dias';
+  if (dias <= 90) return '61 a 90 dias';
+  return '> 90 dias';
 }
 
 function rowBranchName(branchCode: number, branchName?: string | null): string {
@@ -146,6 +165,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
   const branchFilter = buildBranchFilter(params.branchCodes);
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
   const coberturaFilter = buildCoberturaFilter(params.cobertura);
+  const diasFilter = buildDiasFilter(params.dias);
 
   return prisma.$queryRaw<AnaliticoRow[]>`
     SELECT
@@ -164,7 +184,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a
     WHERE COALESCE(a.quantidade_estoque, 0) > 0
-      AND COALESCE(a.dias_sem_giro, 9999) >= ${params.dias}
+      ${diasFilter}
       ${branchFilter}
       ${produtoFilter}
       ${coberturaFilter}
@@ -196,7 +216,7 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
   const totalSkuSet = new Set(rows.map((row) => row.product_sku));
   const totalQuantidade = rows.reduce((sum, row) => sum + decimalToNumber(row.quantidade), 0);
   const totalValor = rows.reduce((sum, row) => sum + decimalToNumber(row.valor), 0);
-  const baseTotal = resumoRows[0]?.sku_count || 0;
+  const baseTotal = resumoRows.reduce((sum, row) => sum + row.sku_count, 0);
 
   const resumo = resumoRows.map((row) => ({
     ...row,
