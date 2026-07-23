@@ -271,6 +271,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
 // Comparativo ano
 router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response) => {
   try {
+    const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
     const today = new Date();
     let startAtual: Date;
@@ -301,8 +302,8 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       clientesNovosMap,
       metasMap,
     ] = await Promise.all([
-      vendasService.getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro),
-      vendasService.getVendasPeriodo(startAnterior, endAnterior, undefined, produtoFiltro),
+      vendasService.getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro),
+      vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro),
       vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getMetasPorFilial(ano, mes),

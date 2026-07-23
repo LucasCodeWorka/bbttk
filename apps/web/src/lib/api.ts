@@ -125,9 +125,9 @@ export const vendasApi = {
       `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getComparativoAno: (inicio: string, fim: string, produtoFiltro?: ProdutoFiltro) =>
+  getComparativoAno: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<ComparativoAnoResponse>(
-      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(produtoFiltroQuery(produtoFiltro))}`
+      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
   getProjecaoMes: (branchCode?: number, produtoFiltro?: ProdutoFiltro) =>

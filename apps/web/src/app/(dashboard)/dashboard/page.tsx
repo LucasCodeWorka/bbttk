@@ -97,7 +97,7 @@ export default function DashboardPage() {
         granularidade === 'diario'
           ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
           : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getComparativoAno(dataInicio, dataFim, produtoFiltro),
+        vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getProjecaoFiliais(produtoFiltro),
