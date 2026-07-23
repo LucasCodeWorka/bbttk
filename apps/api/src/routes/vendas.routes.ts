@@ -1,11 +1,20 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
-import { getVendedoresApi, syncClassificacaoOperacoes } from '../services/totvs.service.js';
+import { getVendedoresApi, syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+// Antes de qualquer calculo de faturamento, garante que nao apareceu operation_code
+// novo sem classificacao (o TOTVS ja criou operacao nova sem avisar varias vezes) -
+// so bate no banco de verdade a cada 10 min (cache em memoria), entao nao pesa em
+// toda requisicao. Se achar codigo novo, sincroniza sozinho antes de responder.
+router.use(async (_req: Request, _res: Response, next: NextFunction) => {
+  await garantirClassificacaoAtualizada();
+  next();
+});
 
 // Resolve o filtro de classificacao de produto a partir da query string, ex:
 // ?categoria=CAMISA,BLUSA&genero=FEMININO - undefined quando nada foi passado.

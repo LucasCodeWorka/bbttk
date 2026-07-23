@@ -179,3 +179,35 @@ export async function syncClassificacaoOperacoes(operationCodes: number[]): Prom
 
   return atualizados;
 }
+
+// Checa se apareceu algum operation_code novo (sem classificacao ainda) e sincroniza
+// sozinho - chamado no inicio das queries de faturamento mais usadas, pra pegar
+// operacao nova do TOTVS sem precisar de acao manual. So bate no banco uma vez a cada
+// 10 min (o resto do tempo so olha o relogio em memoria) e so chama a API do TOTVS
+// quando realmente acha codigo novo, que deve ser raro.
+let ultimaChecagemClassificacao: Date | null = null;
+const INTERVALO_CHECAGEM_MS = 10 * 60 * 1000;
+
+export async function garantirClassificacaoAtualizada(): Promise<void> {
+  const agora = new Date();
+  if (ultimaChecagemClassificacao && agora.getTime() - ultimaChecagemClassificacao.getTime() < INTERVALO_CHECAGEM_MS) {
+    return;
+  }
+  ultimaChecagemClassificacao = agora;
+
+  try {
+    const novos = await prisma.$queryRaw<Array<{ operation_code: number }>>`
+      SELECT DISTINCT t.operation_code
+      FROM transacoes t
+      LEFT JOIN classificacao_operacoes co ON co.operation_code = t.operation_code
+      WHERE t.operation_code IS NOT NULL AND co.operation_code IS NULL
+    `;
+    if (novos.length > 0) {
+      console.log(`[classificacao_operacoes] ${novos.length} operation_code(s) novo(s) encontrado(s), sincronizando com o TOTVS...`);
+      await syncClassificacaoOperacoes(novos.map((n) => n.operation_code));
+    }
+  } catch (error) {
+    // Nao deixa a checagem quebrar a tela por causa disso - so loga e segue
+    console.error('Erro ao checar classificacao de operacoes novas:', error);
+  }
+}
