@@ -1,18 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { DEVOLUTION_OPERATIONS, EXCLUDED_OPERATIONS, FILIAIS } from '../config/constants.js';
-
-const EXCLUDED_OPERATIONS_LIST = [...EXCLUDED_OPERATIONS];
-const DEVOLUTION_OPERATIONS_LIST = [...DEVOLUTION_OPERATIONS];
-
-const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
-const VALID_SALE_FILTER = Prisma.sql`
-  t.status = 4
-  AND (t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)}))
-  AND (t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}))
-  AND ${REAL_CUSTOMER_FILTER}
-`;
+import { FILIAIS } from '../config/constants.js';
 
 export interface ProdutoFiltro {
   categoria?: string[];
@@ -79,6 +68,22 @@ export interface EstoqueSemGiroResponse {
   top_skus: EstoqueSemGiroSku[];
 }
 
+interface AnaliticoRow {
+  product_sku: string;
+  product_code: number | null;
+  reference_code: string | null;
+  descricao: string | null;
+  colecao: string | null;
+  branch_code: number;
+  branch_name: string | null;
+  ultima_venda: Date | null;
+  dias_sem_giro: number;
+  quantidade: Decimal;
+  valor: Decimal;
+  cobertura_meses: Decimal | null;
+  atualizado_em: Date | null;
+}
+
 function decimalToNumber(value: Decimal | number | null): number {
   if (value === null) return 0;
   if (typeof value === 'number') return value;
@@ -90,14 +95,14 @@ function round(value: number, decimals: number = 2): number {
 }
 
 const CLASSIFICACAO_COLUNAS: Record<keyof ProdutoFiltro, string> = {
-  categoria: 'class_categoria',
-  genero: 'class_genero',
-  linha: 'class_linha',
+  categoria: 'categoria',
+  genero: 'genero',
+  linha: 'linha',
 };
 
 function buildBranchFilter(branchCodes?: number[]) {
   if (!branchCodes || branchCodes.length === 0) return Prisma.empty;
-  return Prisma.sql`AND s.branch_code IN (${Prisma.join(branchCodes)})`;
+  return Prisma.sql`AND a.branch_code IN (${Prisma.join(branchCodes)})`;
 }
 
 function buildProdutoFilter(filtro?: ProdutoFiltro): Prisma.Sql {
@@ -107,7 +112,7 @@ function buildProdutoFilter(filtro?: ProdutoFiltro): Prisma.Sql {
   for (const chave of Object.keys(CLASSIFICACAO_COLUNAS) as (keyof ProdutoFiltro)[]) {
     const valores = filtro[chave];
     if (valores && valores.length > 0) {
-      condicoes.push(Prisma.sql`TRIM(pa.${Prisma.raw(CLASSIFICACAO_COLUNAS[chave])}) IN (${Prisma.join(valores)})`);
+      condicoes.push(Prisma.sql`TRIM(a.${Prisma.raw(CLASSIFICACAO_COLUNAS[chave])}) IN (${Prisma.join(valores)})`);
     }
   }
 
@@ -119,14 +124,14 @@ function buildCoberturaFilter(cobertura?: CoberturaFiltro): Prisma.Sql {
   if (!cobertura) return Prisma.empty;
 
   if (cobertura === '6-12') {
-    return Prisma.sql`AND cobertura_meses >= 6 AND cobertura_meses < 12`;
+    return Prisma.sql`AND a.cobertura_meses >= 6 AND a.cobertura_meses < 12`;
   }
 
   if (cobertura === '12-24') {
-    return Prisma.sql`AND cobertura_meses >= 12 AND cobertura_meses < 24`;
+    return Prisma.sql`AND a.cobertura_meses >= 12 AND a.cobertura_meses < 24`;
   }
 
-  return Prisma.sql`AND (cobertura_meses >= 24 OR cobertura_meses IS NULL)`;
+  return Prisma.sql`AND (a.cobertura_meses >= 24 OR a.cobertura_meses IS NULL)`;
 }
 
 function labelDias(dias: number): string {
@@ -137,119 +142,31 @@ function rowBranchName(branchCode: number, branchName?: string | null): string {
   return branchName || FILIAIS[branchCode] || `Filial ${branchCode}`;
 }
 
-async function getBaseRows(params: EstoqueSemGiroParams) {
+async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]> {
   const branchFilter = buildBranchFilter(params.branchCodes);
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
   const coberturaFilter = buildCoberturaFilter(params.cobertura);
 
-  return prisma.$queryRaw<Array<{
-    product_sku: string;
-    product_code: number;
-    reference_code: string | null;
-    descricao: string | null;
-    colecao: string | null;
-    branch_code: number;
-    branch_name: string | null;
-    ultima_venda: Date | null;
-    dias_sem_giro: number;
-    quantidade: Decimal;
-    valor: Decimal;
-    cobertura_meses: Decimal | null;
-    atualizado_em: Date | null;
-  }>>`
-    WITH latest_stock AS (
-      SELECT DISTINCT ON (ps.product_sku, ps.branch_code, ps.stock_code)
-        ps.product_sku,
-        ps.product_code,
-        ps.branch_code,
-        ps.stock_code,
-        ps.stock,
-        ps.captured_at
-      FROM prd_saldo ps
-      WHERE COALESCE(ps.stock, 0) > 0
-      ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
-    ),
-    stock_by_sku_branch AS (
-      SELECT
-        product_sku,
-        product_code,
-        branch_code,
-        SUM(stock) as quantidade,
-        MAX(captured_at) as atualizado_em
-      FROM latest_stock
-      GROUP BY product_sku, product_code, branch_code
-    ),
-    vendas_validas AS (
-      SELECT
-        ti.product_code,
-        t.branch_code,
-        t.transaction_date,
-        COALESCE(ti.quantity, 0) as quantity,
-        COALESCE(ti.net_value, 0) as net_value
-      FROM transacao_itens ti
-      JOIN transacoes t ON t.branch_code = ti.branch_code
-        AND t.transaction_code = ti.transaction_code
-      WHERE ${VALID_SALE_FILTER}
-        AND ti.seller_code != 1
-        AND COALESCE(ti.quantity, 0) > 0
-    ),
-    ultima_venda AS (
-      SELECT
-        product_code,
-        branch_code,
-        MAX(transaction_date) as ultima_venda
-      FROM vendas_validas
-      GROUP BY product_code, branch_code
-    ),
-    preco_medio AS (
-      SELECT
-        product_code,
-        SUM(net_value) / NULLIF(SUM(quantity), 0) as preco_unitario
-      FROM vendas_validas
-      WHERE transaction_date >= CURRENT_DATE - INTERVAL '365 days'
-      GROUP BY product_code
-    ),
-    venda_media AS (
-      SELECT
-        product_code,
-        branch_code,
-        SUM(quantity) / 6 as media_mensal
-      FROM vendas_validas
-      WHERE transaction_date >= CURRENT_DATE - INTERVAL '180 days'
-      GROUP BY product_code, branch_code
-    ),
-    base AS (
-      SELECT
-        s.product_sku,
-        s.product_code,
-        p.reference_code,
-        COALESCE(p.reference_name, p.product_name, s.product_sku) as descricao,
-        NULLIF(TRIM(pa.class_colecao), '') as colecao,
-        s.branch_code,
-        b.branch_name,
-        uv.ultima_venda,
-        COALESCE((CURRENT_DATE - uv.ultima_venda), 9999)::int as dias_sem_giro,
-        s.quantidade,
-        COALESCE(s.quantidade * pm.preco_unitario, 0) as valor,
-        CASE
-          WHEN vm.media_mensal > 0 THEN s.quantidade / vm.media_mensal
-          ELSE NULL
-        END as cobertura_meses,
-        s.atualizado_em
-      FROM stock_by_sku_branch s
-      JOIN produtos p ON p.product_sku = s.product_sku
-      LEFT JOIN branches b ON b.branch_code = s.branch_code
-      LEFT JOIN produto_analitico pa ON pa.product_code = s.product_code
-      LEFT JOIN ultima_venda uv ON uv.product_code = s.product_code AND uv.branch_code = s.branch_code
-      LEFT JOIN preco_medio pm ON pm.product_code = s.product_code
-      LEFT JOIN venda_media vm ON vm.product_code = s.product_code AND vm.branch_code = s.branch_code
-      WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
-        ${branchFilter}
-        ${produtoFilter}
-    )
-    SELECT *
-    FROM base
-    WHERE dias_sem_giro >= ${params.dias}
+  return prisma.$queryRaw<AnaliticoRow[]>`
+    SELECT
+      a.product_sku,
+      a.product_code,
+      a.reference_code,
+      COALESCE(a.descricao, a.reference_name, a.product_name, a.product_sku) as descricao,
+      NULLIF(TRIM(a.colecao), '') as colecao,
+      a.branch_code,
+      a.branch_name,
+      a.ultima_venda,
+      COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
+      COALESCE(a.quantidade_estoque, 0) as quantidade,
+      COALESCE(a.valor_estoque, 0) as valor,
+      a.cobertura_meses,
+      COALESCE(a.calculated_at, a.captured_at) as atualizado_em
+    FROM pcp_estoque_sem_giro_analitico a
+    WHERE COALESCE(a.quantidade_estoque, 0) > 0
+      AND COALESCE(a.dias_sem_giro, 9999) >= ${params.dias}
+      ${branchFilter}
+      ${produtoFilter}
       ${coberturaFilter}
     ORDER BY dias_sem_giro DESC, valor DESC
   `;
@@ -399,16 +316,16 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
 
 export async function getFiltrosEstoqueSemGiro() {
   const dimensoes = [
-    { chave: 'categoria', coluna: 'class_categoria', label: 'Categoria' },
-    { chave: 'linha', coluna: 'class_linha', label: 'Linha' },
-    { chave: 'genero', coluna: 'class_genero', label: 'Genero' },
+    { chave: 'categoria', coluna: 'categoria', label: 'Categoria' },
+    { chave: 'linha', coluna: 'linha', label: 'Linha' },
+    { chave: 'genero', coluna: 'genero', label: 'Genero' },
   ];
 
   const classificacoes = [];
   for (const dim of dimensoes) {
     const rows = await prisma.$queryRawUnsafe<Array<{ valor: string; qtd: bigint }>>(`
-      SELECT TRIM(${dim.coluna}) as valor, COUNT(*) as qtd
-      FROM produto_analitico
+      SELECT TRIM(${dim.coluna}) as valor, COUNT(DISTINCT product_sku) as qtd
+      FROM pcp_estoque_sem_giro_analitico
       WHERE ${dim.coluna} IS NOT NULL AND TRIM(${dim.coluna}) NOT IN ('', '.')
       GROUP BY TRIM(${dim.coluna})
       ORDER BY TRIM(${dim.coluna})
@@ -421,10 +338,13 @@ export async function getFiltrosEstoqueSemGiro() {
     });
   }
 
-  const lojas = await prisma.branches.findMany({
-    select: { branch_code: true, branch_name: true },
-    orderBy: { branch_code: 'asc' },
-  });
+  const lojas = await prisma.$queryRaw<Array<{ branch_code: number; branch_name: string | null }>>`
+    SELECT branch_code, MAX(branch_name) as branch_name
+    FROM pcp_estoque_sem_giro_analitico
+    WHERE branch_code IS NOT NULL
+    GROUP BY branch_code
+    ORDER BY branch_code
+  `;
 
   return {
     classificacoes,
