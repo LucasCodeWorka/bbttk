@@ -15,10 +15,16 @@ const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
 // inflados no historico, descoberto batendo o Dashboard contra o relatorio nativo do TOTVS).
 const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
 // Filtro reutilizado: transação não cancelada, operação de negócio válida, cliente real.
-// Inclui devoluções (elas entram com sinal negativo via DEVOLUTION_SIGN, não são excluídas).
+// Inclui devoluções (elas entram com sinal negativo via FATURAMENTO_COM_SINAL/PECAS_COM_SINAL, não são excluídas).
 const SALE_OPERATION_FILTER = Prisma.sql`((t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)})) AND ${REAL_CUSTOMER_FILTER})`;
-// Sinal: -1 para devolução (TOTVS operationMode='3'/operationsType='E'), +1 para venda
-const DEVOLUTION_SIGN = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -1 ELSE 1 END)`;
+// O ETL grava net_value/quantity de devolução com o sinal que o TOTVS mandou - às vezes
+// positivo, às vezes já negativo, inconsistente (confirmado em todo o historico, todas as
+// filiais). Um "* -1" simples inverteria de volta pra positivo quando já vinha negativo,
+// cancelando a devolução em vez de subtrair (bug real: ~R$11,27mi inflados no historico
+// inteiro). ABS() normaliza pro valor absoluto antes de aplicar o sinal negativo, entao
+// funciona certo independente de como o dado chegou do ETL.
+const FATURAMENTO_COM_SINAL = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
+const PECAS_COM_SINAL = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
 // Só conta como "venda" (transação/cliente) quando não é devolução
 const IS_SALE = Prisma.sql`t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})`;
 // Filtro reutilizado: filial de venda (exclui filiais em EXCLUDED_BRANCH_CODES, se houver)
@@ -156,8 +162,8 @@ export async function getVendasPeriodo(
       t.branch_code,
       t.branch_name,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento,
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.customer_code END) as clientes
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
@@ -215,8 +221,8 @@ export async function getVendasDiarias(
     SELECT
       t.transaction_date as data,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -260,8 +266,8 @@ export async function getVendasMensais(
     SELECT
       DATE_TRUNC('month', t.transaction_date) as mes,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -304,8 +310,8 @@ export async function getVendasVendedor(
     SELECT
       ti.seller_code,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
-      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as pecas,
-      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as faturamento
+      SUM(${PECAS_COM_SINAL}) as pecas,
+      SUM(${FATURAMENTO_COM_SINAL}) as faturamento
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -359,8 +365,8 @@ export async function getVendasVendedorPorFilial(
       ti.seller_code,
       ti.branch_code,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
-      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as pecas,
-      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as faturamento
+      SUM(${PECAS_COM_SINAL}) as pecas,
+      SUM(${FATURAMENTO_COM_SINAL}) as faturamento
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -412,8 +418,8 @@ export async function getTopProdutos(
     SELECT
       COALESCE(p.reference_code, ti.product_code::text) as referencia,
       COALESCE(p.reference_name, p.product_name, 'Produto ' || ti.product_code) as nome,
-      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as quantidade,
-      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as valor
+      SUM(${PECAS_COM_SINAL}) as quantidade,
+      SUM(${FATURAMENTO_COM_SINAL}) as valor
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -457,7 +463,7 @@ export async function getDevolucoesPorFilial(
     SELECT
       t.branch_code,
       COUNT(DISTINCT t.transaction_code) as qtde_dev,
-      COALESCE(SUM(ti.net_value), 0) as valor_dev
+      COALESCE(SUM(ABS(ti.net_value)), 0) as valor_dev
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -513,7 +519,7 @@ export async function getClientesNovosPorFilial(
     SELECT
       t.branch_code,
       COUNT(DISTINCT t.customer_code) as clientes_novos,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento_cn
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento_cn
     FROM transacoes t
     JOIN novos n ON n.customer_code = t.customer_code
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
