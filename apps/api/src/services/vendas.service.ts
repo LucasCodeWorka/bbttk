@@ -1,32 +1,47 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
-import { FILIAIS, EXCLUDED_OPERATIONS, EXCLUDED_BRANCH_CODES, DEVOLUTION_OPERATIONS } from '../config/constants.js';
+import { FILIAIS, EXCLUDED_BRANCH_CODES } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as metasService from './metas.service.js';
 
-// Operações de negócio (não venda, não devolução) sempre excluídas do cálculo
-const EXCLUDED_OPERATIONS_LIST = [...EXCLUDED_OPERATIONS];
-const DEVOLUTION_OPERATIONS_LIST = [...DEVOLUTION_OPERATIONS];
 const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
+
+// Classificacao de operacao vem do cache local (classificacao_operacoes, sincronizado
+// direto de general/v2/operations na API do TOTVS) em vez de lista de operation_code
+// fixa na mao. O TOTVS ja criou operacao nova (compra, consignacao, remessa, brinde)
+// varias vezes sem avisar, e cada vez que isso acontece ela cai silenciosamente como
+// "venda" ate alguem desconfiar de um numero errado - ja causou faturamento inflado
+// mais de uma vez. O que caracteriza uma venda de verdade NUNCA e o operation_code em
+// si (o TOTVS pode criar/aposentar codigo a qualquer momento) - e sempre a combinacao
+// invoiceData.operationsType='S' + operationMode='4'. Devolucao e sempre 'E'+'3'.
+// Operacao sem classificacao no cache (nunca sincronizada) fica de fora por padrao -
+// mais seguro errar excluindo um codigo novo do que inflar faturamento silenciosamente
+// (que era exatamente o comportamento antigo).
+const OPERACAO_JOIN = Prisma.sql`LEFT JOIN classificacao_operacoes co ON co.operation_code = t.operation_code`;
+const IS_VENDA = Prisma.sql`(co.operations_type = 'S' AND co.operation_mode = '4')`;
+const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operation_mode = '3')`;
 
 // Clientes com customer_code >= 110000000 são contas internas do TOTVS (transferência entre
 // filiais, ajuste de estoque, amostra, perda, etc.) - nunca um cliente real. Sem esse filtro,
 // esses movimentos entram como faturamento de verdade (bug real: ~59 mil transações / R$21,6mi
 // inflados no historico, descoberto batendo o Dashboard contra o relatorio nativo do TOTVS).
 const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
-// Filtro reutilizado: transação não cancelada, operação de negócio válida, cliente real.
-// Inclui devoluções (elas entram com sinal negativo via FATURAMENTO_COM_SINAL/PECAS_COM_SINAL, não são excluídas).
-const SALE_OPERATION_FILTER = Prisma.sql`((t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)})) AND ${REAL_CUSTOMER_FILTER})`;
+// Filtro reutilizado: transação não cancelada, operação de venda-ou-devolução real,
+// cliente real. Inclui devoluções (entram com sinal negativo via FATURAMENTO_COM_SINAL/
+// PECAS_COM_SINAL, não são excluídas) - qualquer outra classificação (compra, consignação,
+// remessa, brinde, ou operação nunca sincronizada) já fica fora daqui.
+const SALE_OPERATION_FILTER = Prisma.sql`((${IS_VENDA} OR ${IS_DEVOLUCAO}) AND ${REAL_CUSTOMER_FILTER})`;
 // O ETL grava net_value/quantity de devolução com o sinal que o TOTVS mandou - às vezes
 // positivo, às vezes já negativo, inconsistente (confirmado em todo o historico, todas as
 // filiais). Um "* -1" simples inverteria de volta pra positivo quando já vinha negativo,
 // cancelando a devolução em vez de subtrair (bug real: ~R$11,27mi inflados no historico
 // inteiro). ABS() normaliza pro valor absoluto antes de aplicar o sinal negativo, entao
-// funciona certo independente de como o dado chegou do ETL.
-const FATURAMENTO_COM_SINAL = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
-const PECAS_COM_SINAL = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
+// funciona certo independente de como o dado chegou do ETL. SALE_OPERATION_FILTER já
+// garante que só sobra venda ou devolução aqui, então o ELSE é sempre venda.
+const FATURAMENTO_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
+const PECAS_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
 // Só conta como "venda" (transação/cliente) quando não é devolução
-const IS_SALE = Prisma.sql`t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})`;
+const IS_SALE = IS_VENDA;
 // Filtro reutilizado: filial de venda (exclui filiais em EXCLUDED_BRANCH_CODES, se houver)
 const STORE_BRANCH_FILTER = EXCLUDED_BRANCH_LIST.length > 0
   ? Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`
@@ -169,6 +184,7 @@ export async function getVendasPeriodo(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -227,6 +243,7 @@ export async function getVendasDiarias(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -272,6 +289,7 @@ export async function getVendasMensais(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -315,6 +333,7 @@ export async function getVendasVendedor(
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -370,6 +389,7 @@ export async function getVendasVendedorPorFilial(
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ti.seller_code != 1
@@ -424,6 +444,7 @@ export async function getTopProdutos(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -468,10 +489,11 @@ export async function getDevolucoesPorFilial(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
-      AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
+      AND ${IS_DEVOLUCAO}
       AND ${STORE_BRANCH_FILTER}
       AND ${REAL_CUSTOMER_FILTER}
       ${produtoFilter}
@@ -505,6 +527,7 @@ export async function getClientesNovosPorFilial(
     WITH primeira_compra AS (
       SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
       FROM transacoes t
+      ${OPERACAO_JOIN}
       WHERE t.customer_code IS NOT NULL
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
@@ -525,6 +548,7 @@ export async function getClientesNovosPorFilial(
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -542,6 +566,15 @@ export async function getClientesNovosPorFilial(
     });
   }
   return map;
+}
+
+// Todo operation_code distinto ja visto no historico - usado pra sincronizar a
+// classificacao (classificacao_operacoes) direto da API do TOTVS.
+export async function getTodosOperationCodes(): Promise<number[]> {
+  const rows = await prisma.$queryRaw<Array<{ operation_code: number }>>`
+    SELECT DISTINCT operation_code FROM transacoes WHERE operation_code IS NOT NULL
+  `;
+  return rows.map((r) => r.operation_code);
 }
 
 // Meta (nível 3 = 100%) por filial, apenas metas de loja (seller_code IS NULL)

@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
-import { getVendedoresApi } from '../services/totvs.service.js';
+import { getVendedoresApi, syncClassificacaoOperacoes } from '../services/totvs.service.js';
+import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -464,6 +465,19 @@ router.get('/produtos/classificacoes', async (_req: Request, res: Response) => {
   try {
     const dimensoes = await produtosService.getClassificacoes();
     res.json({ dimensoes });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Resincroniza a classificacao de operacoes (venda/devolucao/nenhuma) direto da API
+// do TOTVS pra todo operation_code ja visto no historico - roda sob demanda quando
+// aparecer numero estranho, pra pegar operacao nova que o TOTVS criou sem avisar.
+router.post('/produtos/sincronizar-classificacao-operacoes', authMiddleware, adminOnly, async (_req: Request, res: Response) => {
+  try {
+    const codigos = await vendasService.getTodosOperationCodes();
+    const atualizados = await syncClassificacaoOperacoes(codigos);
+    res.json({ codigos_encontrados: codigos.length, atualizados });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

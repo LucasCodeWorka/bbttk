@@ -1,4 +1,5 @@
 import https from 'https';
+import { prisma } from '../config/database.js';
 
 const API_BASE_URL = process.env.TOTVS_API_URL || 'https://www30.bhan.com.br:9443/api/totvsmoda';
 
@@ -115,4 +116,66 @@ export async function getVendedoresApi(): Promise<Map<number, string>> {
 
 export function getVendedorNome(code: number): string {
   return vendedoresCache.get(code) || `Vendedor ${code}`;
+}
+
+// Busca a classificacao real (operationsType/operationMode) direto na API do TOTVS
+// (general/v2/operations) pros codigos passados, e grava no cache proprio
+// (classificacao_operacoes) - usado pelo calculo de faturamento em vez de manter
+// lista de codigo fixa na mao, que fica desatualizada toda vez que o TOTVS cria
+// operacao nova.
+export async function syncClassificacaoOperacoes(operationCodes: number[]): Promise<number> {
+  if (operationCodes.length === 0) return 0;
+
+  const token = await getApiToken();
+  if (!token) throw new Error('Nao foi possivel autenticar na API TOTVS');
+
+  const headers = { Authorization: `Bearer ${token}` };
+  let atualizados = 0;
+
+  // A API aceita OperationCodeList repetido na query, mas o servidor rejeita URL muito
+  // longa (404 acima de ~5700 caracteres, testado) - lotes pequenos evitam isso.
+  for (let i = 0; i < operationCodes.length; i += 50) {
+    const lote = operationCodes.slice(i, i + 50);
+    const qs = lote.map((c) => `OperationCodeList=${c}`).join('&');
+
+    const response = await fetch(`${API_BASE_URL}/general/v2/operations?${qs}&PageSize=1000`, {
+      method: 'GET',
+      headers,
+      // @ts-ignore
+      agent: httpsAgent,
+    });
+
+    if (!response.ok) continue;
+
+    const data = (await response.json()) as {
+      items?: Array<{
+        operationCode: number;
+        description?: string;
+        isFinancial?: boolean;
+        invoiceData?: { operationsType?: string; operationMode?: string };
+      }>;
+    };
+
+    for (const item of data.items || []) {
+      await prisma.classificacaoOperacao.upsert({
+        where: { operationCode: item.operationCode },
+        create: {
+          operationCode: item.operationCode,
+          description: item.description,
+          isFinancial: item.isFinancial ?? null,
+          operationsType: item.invoiceData?.operationsType,
+          operationMode: item.invoiceData?.operationMode,
+        },
+        update: {
+          description: item.description,
+          isFinancial: item.isFinancial ?? null,
+          operationsType: item.invoiceData?.operationsType,
+          operationMode: item.invoiceData?.operationMode,
+        },
+      });
+      atualizados++;
+    }
+  }
+
+  return atualizados;
 }

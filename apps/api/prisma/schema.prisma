@@ -58,23 +58,23 @@ model DistributionItem {
 }
 
 model Meta {
-  id         Int       @id @default(autoincrement())
-  ano        Int
-  mes        Int
-  branchCode Int       @map("branch_code")
-  sellerCode Int?      @map("seller_code")
-  nivel1     Decimal?  @default(0) @map("nivel_1") @db.Decimal(15, 2)
-  nivel2     Decimal?  @default(0) @map("nivel_2") @db.Decimal(15, 2)
-  nivel3     Decimal?  @default(0) @map("nivel_3") @db.Decimal(15, 2)
-  nivel4     Decimal?  @default(0) @map("nivel_4") @db.Decimal(15, 2)
-  nivel5     Decimal?  @default(0) @map("nivel_5") @db.Decimal(15, 2)
-  comissaoNivel1 Decimal? @map("comissao_nivel_1") @db.Decimal(5, 2)
-  comissaoNivel2 Decimal? @map("comissao_nivel_2") @db.Decimal(5, 2)
-  comissaoNivel3 Decimal? @map("comissao_nivel_3") @db.Decimal(5, 2)
-  comissaoNivel4 Decimal? @map("comissao_nivel_4") @db.Decimal(5, 2)
-  comissaoNivel5 Decimal? @map("comissao_nivel_5") @db.Decimal(5, 2)
-  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id             Int       @id @default(autoincrement())
+  ano            Int
+  mes            Int
+  branchCode     Int       @map("branch_code")
+  sellerCode     Int?      @map("seller_code")
+  nivel1         Decimal?  @default(0) @map("nivel_1") @db.Decimal(15, 2)
+  nivel2         Decimal?  @default(0) @map("nivel_2") @db.Decimal(15, 2)
+  nivel3         Decimal?  @default(0) @map("nivel_3") @db.Decimal(15, 2)
+  nivel4         Decimal?  @default(0) @map("nivel_4") @db.Decimal(15, 2)
+  nivel5         Decimal?  @default(0) @map("nivel_5") @db.Decimal(15, 2)
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  comissaoNivel1 Decimal?  @map("comissao_nivel_1") @db.Decimal(5, 2)
+  comissaoNivel2 Decimal?  @map("comissao_nivel_2") @db.Decimal(5, 2)
+  comissaoNivel3 Decimal?  @map("comissao_nivel_3") @db.Decimal(5, 2)
+  comissaoNivel4 Decimal?  @map("comissao_nivel_4") @db.Decimal(5, 2)
+  comissaoNivel5 Decimal?  @map("comissao_nivel_5") @db.Decimal(5, 2)
 
   @@unique([ano, mes, branchCode, sellerCode])
   @@index([branchCode], map: "idx_metas_branch")
@@ -93,6 +93,23 @@ model MetaNivel {
   comissaoPercentual Decimal   @default(0) @map("comissao_percentual") @db.Decimal(5, 2)
 
   @@map("meta_niveis")
+}
+
+// Cache proprio (nao-ETL) da classificacao real de cada operation_code, puxada direto
+// da API do TOTVS (general/v2/operations). O que caracteriza uma venda de verdade e
+// SEMPRE operationsType='S' + operationMode='4' - nunca o operation_code em si, que o
+// TOTVS pode criar/aposentar a qualquer momento (ja aconteceu varias vezes). Guardar
+// aqui em vez de manter lista de codigos manual, que precisa ser remendada toda vez
+// que aparece operacao nova.
+model ClassificacaoOperacao {
+  operationCode  Int      @id @map("operation_code")
+  description    String?  @db.VarChar(255)
+  isFinancial    Boolean? @map("is_financial")
+  operationsType String?  @map("operations_type") @db.VarChar(5)
+  operationMode  String?  @map("operation_mode") @db.VarChar(5)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("classificacao_operacoes")
 }
 
 model branches {
@@ -452,4 +469,45 @@ model stg_saldo_virtual_csv {
   @@index([saldo_date], map: "idx_stg_saldo_virtual_csv_date")
   @@index([product_code], map: "idx_stg_saldo_virtual_csv_product")
   @@index([rejection_reason], map: "idx_stg_saldo_virtual_csv_rejection")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model pcp_estoque_sem_giro_analitico {
+  product_sku             String    @db.VarChar(50)
+  product_code            Int
+  reference_code          String?   @db.VarChar(100)
+  reference_name          String?   @db.VarChar(255)
+  product_name            String?   @db.VarChar(255)
+  descricao               String?
+  colecao                 String?
+  categoria               String?
+  linha                   String?
+  genero                  String?
+  branch_code             Int
+  branch_name             String?   @db.VarChar(100)
+  quantidade_estoque      Decimal   @db.Decimal(14, 3)
+  ultima_venda            DateTime? @db.Date
+  dias_sem_giro           Int
+  preco_medio_365d        Decimal?  @db.Decimal(15, 4)
+  valor_estoque           Decimal   @db.Decimal(18, 4)
+  quantidade_vendida_180d Decimal   @default(0) @db.Decimal(15, 4)
+  media_mensal_180d       Decimal   @default(0) @db.Decimal(15, 4)
+  cobertura_meses         Decimal?  @db.Decimal(15, 4)
+  faixa_sem_giro          String
+  faixa_cobertura         String
+  captured_at             DateTime? @db.Timestamp(6)
+  calculated_at           DateTime  @db.Timestamp(6)
+
+  @@index([branch_code], map: "idx_pcp_esg_branch")
+  @@index([calculated_at], map: "idx_pcp_esg_calculated_at")
+  @@index([categoria], map: "idx_pcp_esg_categoria")
+  @@index([cobertura_meses], map: "idx_pcp_esg_cobertura")
+  @@index([dias_sem_giro, branch_code, categoria, linha, genero], map: "idx_pcp_esg_dashboard")
+  @@index([dias_sem_giro], map: "idx_pcp_esg_dias")
+  @@index([genero], map: "idx_pcp_esg_genero")
+  @@index([linha], map: "idx_pcp_esg_linha")
+  @@index([product_code], map: "idx_pcp_esg_product_code")
+  @@index([reference_code], map: "idx_pcp_esg_reference")
+  @@index([product_sku], map: "idx_pcp_esg_sku")
+  @@ignore
 }
