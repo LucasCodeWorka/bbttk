@@ -451,7 +451,6 @@ export async function getTopProdutos(
       AND ti.seller_code != 1
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
-      AND (p.is_finished_product = true OR p.product_code IS NULL)
       ${branchFilter}
       ${produtoFilter}
     GROUP BY COALESCE(p.reference_code, ti.product_code::text),
