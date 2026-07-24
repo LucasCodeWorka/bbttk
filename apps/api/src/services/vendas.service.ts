@@ -218,6 +218,79 @@ export async function getVendasPeriodo(
   });
 }
 
+// Divide a Fabrica (branch_code=2) em 3 linhas por operacao, igual o relatorio nativo
+// do TOTVS mostra (2-FABRICA / 2.1-DELIVERY / 2.3-ATACADO) - a Fabrica vende nos tres
+// canais dentro da mesma filial, e antes tudo virava uma linha so misturada. So cobre
+// as metricas de venda pura (faturamento/pecas/transacoes/clientes) - meta, devolucao
+// e clientes-novos nao tem infraestrutura pra separar por operacao (ficam so na linha
+// "2-FABRICA" principal, igual ja era antes do split).
+export async function getVendasFabricaDividida(
+  startDate: Date,
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
+): Promise<VendasFilial[]> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    linha: string;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+    clientes: bigint;
+  }>>`
+    SELECT
+      CASE
+        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
+        ELSE '2'
+      END as linha,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.customer_code END) as clientes
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    ${PRODUTO_ANALITICO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND t.branch_code = 2
+      AND ${SALE_OPERATION_FILTER}
+      ${produtoFilter}
+    GROUP BY linha
+  `;
+
+  const INFO_LINHA: Record<string, { code: number; name: string }> = {
+    '2': { code: 2, name: 'FABRICA' },
+    '2.1': { code: 2.1, name: 'FABRICA - DELIVERY' },
+    '2.3': { code: 2.3, name: 'FABRICA - ATACADO' },
+  };
+
+  return results.map(row => {
+    const transacoes = Number(row.transacoes);
+    const pecas = decimalToNumber(row.pecas);
+    const faturamento = decimalToNumber(row.faturamento);
+    const clientes = Number(row.clientes);
+    const info = INFO_LINHA[row.linha] || INFO_LINHA['2'];
+
+    return {
+      branch_code: info.code,
+      branch_name: info.name,
+      transacoes,
+      pecas: Math.round(pecas),
+      faturamento: round(faturamento),
+      pa: transacoes > 0 ? round(pecas / transacoes) : 0,
+      tm: transacoes > 0 ? round(faturamento / transacoes) : 0,
+      clientes,
+      pm: pecas > 0 ? round(faturamento / pecas) : 0,
+      tm_cliente: clientes > 0 ? round(faturamento / clientes) : 0,
+      pac: clientes > 0 ? round(pecas / clientes) : 0,
+    };
+  });
+}
+
 // Vendas diárias (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasDiarias(
   startDate: Date,
@@ -502,6 +575,56 @@ export async function getDevolucoesPorFilial(
   const map = new Map<number, { valor: number; qtde: number }>();
   for (const row of results) {
     map.set(row.branch_code, {
+      valor: round(decimalToNumber(row.valor_dev)),
+      qtde: Number(row.qtde_dev),
+    });
+  }
+  return map;
+}
+
+// Mesma divisao de getVendasFabricaDividida, aplicada a devolucao - sem isso, toda
+// devolucao da Fabrica (que na pratica e quase toda do Atacado) cairia na linha "2"
+// mesmo com pouca venda ali, mostrando um % de devolucao sem sentido.
+export async function getDevolucoesFabricaDividida(
+  startDate: Date,
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
+): Promise<Map<number, { valor: number; qtde: number }>> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    linha: string;
+    qtde_dev: bigint;
+    valor_dev: Decimal;
+  }>>`
+    SELECT
+      CASE
+        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
+        ELSE '2'
+      END as linha,
+      COUNT(DISTINCT t.transaction_code) as qtde_dev,
+      COALESCE(SUM(ABS(ti.net_value)), 0) as valor_dev
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    ${PRODUTO_ANALITICO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND t.branch_code = 2
+      AND ${IS_DEVOLUCAO}
+      AND ${REAL_CUSTOMER_FILTER}
+      ${produtoFilter}
+    GROUP BY linha
+  `;
+
+  const CODIGO_LINHA: Record<string, number> = { '2': 2, '2.1': 2.1, '2.3': 2.3 };
+
+  const map = new Map<number, { valor: number; qtde: number }>();
+  for (const row of results) {
+    map.set(CODIGO_LINHA[row.linha] ?? 2, {
       valor: round(decimalToNumber(row.valor_dev)),
       qtde: Number(row.qtde_dev),
     });

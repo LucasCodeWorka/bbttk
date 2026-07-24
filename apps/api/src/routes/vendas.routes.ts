@@ -305,7 +305,7 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const ultimoDiaMes = new Date(ano, mes, 0);
     const diasRestantes = Math.max(ultimoDiaMes.getDate() - endAtual.getDate(), 0);
 
-    const [
+    let [
       filiaisAtual,
       filiaisAnterior,
       devolucoesMap,
@@ -318,6 +318,24 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getMetasPorFilial(ano, mes),
     ]);
+
+    // Fabrica (branch_code 2) vende em 3 canais (varejo, delivery, atacado) - troca a
+    // linha unica por 3, igual o relatorio nativo do TOTVS mostra (2/2.1/2.3). Meta e
+    // clientes-novos continuam so na linha "2" (sem infraestrutura pra separar por
+    // operacao ainda) - ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
+    if (!branchCodes || branchCodes.includes(2)) {
+      const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
+        vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro),
+        vendasService.getVendasFabricaDividida(startAnterior, endAnterior, produtoFiltro),
+        vendasService.getDevolucoesFabricaDividida(startAtual, endAtual, produtoFiltro),
+      ]);
+      filiaisAtual = filiaisAtual.filter(f => f.branch_code !== 2).concat(fabricaDivididaAtual);
+      filiaisAnterior = filiaisAnterior.filter(f => f.branch_code !== 2).concat(fabricaDivididaAnterior);
+      devolucoesMap.delete(2);
+      for (const [codigo, valor] of devolucaoFabricaDividida) {
+        devolucoesMap.set(codigo, valor);
+      }
+    }
 
     const anteriorDict = new Map(filiaisAnterior.map(f => [f.branch_code, f]));
 
