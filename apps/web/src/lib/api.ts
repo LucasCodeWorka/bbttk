@@ -68,11 +68,11 @@ function branchesQuery(branchCodes?: number[]): string {
   return branchCodes && branchCodes.length > 0 ? `branches=${branchCodes.join(',')}` : '';
 }
 
-// Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
+// Filtro de classificacao de produto (categoria, genero, status, linha, colecao, tecido)
 export interface ProdutoFiltro {
   categoria?: string[];
   genero?: string[];
-  grupo?: string[];
+  status?: string[];
   linha?: string[];
   colecao?: string[];
   tecido?: string[];

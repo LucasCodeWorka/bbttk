@@ -108,7 +108,7 @@ export async function getImpactoAgrupamento(
 const CLASSIFICACOES_FILTRO: Array<{ chave: string; coluna: string; label: string }> = [
   { chave: 'categoria', coluna: 'class_categoria', label: 'Categoria' },
   { chave: 'genero', coluna: 'class_genero', label: 'Genero' },
-  { chave: 'grupo', coluna: 'class_grupo', label: 'Grupo/Marca' },
+  { chave: 'status', coluna: 'class_status', label: 'Status' },
   { chave: 'linha', coluna: 'class_linha', label: 'Linha' },
   { chave: 'colecao', coluna: 'class_colecao', label: 'Colecao' },
   { chave: 'tecido', coluna: 'class_tecido', label: 'Tecido' },

@@ -29,7 +29,7 @@ function resolveProdutoFiltro(req: Request): ProdutoFiltro | undefined {
   const filtro: ProdutoFiltro = {
     categoria: parseLista('categoria'),
     genero: parseLista('genero'),
-    grupo: parseLista('grupo'),
+    status: parseLista('status'),
     linha: parseLista('linha'),
     colecao: parseLista('colecao'),
     tecido: parseLista('tecido'),

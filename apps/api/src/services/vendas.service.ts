@@ -113,14 +113,14 @@ function buildBranchFilter(branchCodes?: number[]) {
   return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
 }
 
-// Filtro por classificacao de produto (categoria, genero, grupo/marca, linha,
+// Filtro por classificacao de produto (categoria, genero, status, linha,
 // colecao, tecido) - vem da tabela `produto_analitico`, sincronizada pelo ETL
 // com as classificacoes cadastradas no ERP. Cada dimensao aceita varios valores
 // (OR entre valores da mesma dimensao, AND entre dimensoes diferentes).
 export interface ProdutoFiltro {
   categoria?: string[];
   genero?: string[];
-  grupo?: string[];
+  status?: string[];
   linha?: string[];
   colecao?: string[];
   tecido?: string[];
@@ -129,7 +129,7 @@ export interface ProdutoFiltro {
 const CLASSIFICACAO_COLUNAS: Record<keyof ProdutoFiltro, string> = {
   categoria: 'class_categoria',
   genero: 'class_genero',
-  grupo: 'class_grupo',
+  status: 'class_status',
   linha: 'class_linha',
   colecao: 'class_colecao',
   tecido: 'class_tecido',
