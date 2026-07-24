@@ -13,8 +13,23 @@ function colorMatchKeyOf(color_code: string | null, color_name: string | null): 
   return color_code || color_name || '';
 }
 
-// Cores distintas cadastradas (agrupadas por color_code+color_name)
-export async function getCoresDistintas(): Promise<CorProduto[]> {
+// Cores distintas cadastradas (agrupadas por color_code+color_name) - exclui cor que
+// ja foi usada em outro agrupamento do mesmo tipo (uma cor so pode estar em um
+// agrupamento por vez). Passando excluirGrupoId, as cores desse grupo continuam
+// aparecendo (usado na tela de edicao, pra nao sumir a propria cor do grupo sendo
+// editado).
+export async function getCoresDistintas(tipo?: string, excluirGrupoId?: number): Promise<CorProduto[]> {
+  const usadaFilter = tipo
+    ? Prisma.sql`
+        AND NOT EXISTS (
+          SELECT 1 FROM agrupamento_membros am
+          WHERE am.tipo = ${tipo}
+            AND am.color_match_key = COALESCE(produtos.color_code, produtos.color_name)
+            ${excluirGrupoId ? Prisma.sql`AND am.grupo_id != ${excluirGrupoId}` : Prisma.empty}
+        )
+      `
+    : Prisma.empty;
+
   const results = await prisma.$queryRaw<Array<{
     color_code: string | null;
     color_name: string | null;
@@ -28,6 +43,7 @@ export async function getCoresDistintas(): Promise<CorProduto[]> {
       COUNT(*) as qtd_skus
     FROM produtos
     WHERE color_name IS NOT NULL
+      ${usadaFilter}
     GROUP BY color_code, color_name
     ORDER BY color_name
   `;

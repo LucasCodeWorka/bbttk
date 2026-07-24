@@ -168,8 +168,13 @@ async function uploadFile<T>(endpoint: string, token: string, file: File): Promi
 
 // Produtos
 export const produtosApi = {
-  getCores: (token: string) =>
-    fetchApi<{ cores: CorProduto[] }>('/api/produtos/cores', { token }),
+  getCores: (token: string, tipo?: string, grupoId?: number) => {
+    const params = new URLSearchParams();
+    if (tipo) params.set('tipo', tipo);
+    if (grupoId) params.set('grupoId', String(grupoId));
+    const qs = params.toString();
+    return fetchApi<{ cores: CorProduto[] }>(`/api/produtos/cores${qs ? `?${qs}` : ''}`, { token });
+  },
 
   getImpactoAgrupamento: (token: string, tipo: string, cores: { color_code: string | null; color_name: string | null }[], excluirGrupoId?: number) =>
     fetchApi<{ impacto: ImpactoAgrupamentoItem[] }>('/api/produtos/impacto-agrupamento', {

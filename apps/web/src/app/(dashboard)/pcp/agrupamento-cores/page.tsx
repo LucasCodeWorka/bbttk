@@ -34,6 +34,7 @@ export default function AgrupamentoCoresPage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [cores, setCores] = useState<CorProduto[]>([]);
+  const [coresEdicao, setCoresEdicao] = useState<CorProduto[]>([]);
   const [grupos, setGrupos] = useState<AgrupamentoGrupo[]>([]);
 
   const [passo, setPasso] = useState<1 | 2>(1);
@@ -64,7 +65,7 @@ export default function AgrupamentoCoresPage() {
     setIsLoading(true);
     try {
       const [coresRes, gruposRes] = await Promise.all([
-        produtosApi.getCores(token),
+        produtosApi.getCores(token, TIPO),
         agrupamentosApi.getGrupos(token, TIPO),
       ]);
       setCores(coresRes.cores);
@@ -95,6 +96,25 @@ export default function AgrupamentoCoresPage() {
         meta: `${c.color_code || '-'} · ${c.qtd_referencias} refs`,
       })),
     [cores]
+  );
+
+  // Lista de cores pra tela de edicao - inclui as cores do proprio grupo sendo
+  // editado (que ja estao "usadas" por ele), diferente da lista de criacao que
+  // exclui qualquer cor ja usada em qualquer agrupamento.
+  const coresByKeyEdicao = useMemo(() => {
+    const map = new Map<string, CorProduto>();
+    coresEdicao.forEach((c) => map.set(matchKeyOf(c), c));
+    return map;
+  }, [coresEdicao]);
+
+  const opcoesCoresEdicao: MultiSelectOption[] = useMemo(
+    () =>
+      coresEdicao.map((c) => ({
+        value: matchKeyOf(c),
+        label: c.color_name || c.color_code || '(sem nome)',
+        meta: `${c.color_code || '-'} · ${c.qtd_referencias} refs`,
+      })),
+    [coresEdicao]
   );
 
   async function handleUploadCsv(e: React.ChangeEvent<HTMLInputElement>) {
@@ -222,11 +242,20 @@ export default function AgrupamentoCoresPage() {
     }
   }
 
-  function abrirEdicao(grupo: AgrupamentoGrupo) {
+  async function abrirEdicao(grupo: AgrupamentoGrupo) {
     setGrupoEditando(grupo);
     setNomeEdicao(grupo.nome);
     setCoresNovasEdicao([]);
     setImpactoEdicao([]);
+
+    if (!token) return;
+    try {
+      const res = await produtosApi.getCores(token, TIPO, grupo.id);
+      setCoresEdicao(res.cores);
+    } catch (error) {
+      showToast('Erro ao carregar cores', 'error');
+      console.error(error);
+    }
   }
 
   async function handleSalvarNome() {
@@ -263,7 +292,7 @@ export default function AgrupamentoCoresPage() {
     setCarregandoImpactoEdicao(true);
     try {
       const coresParaImpacto = coresNovasEdicao.map((key) => {
-        const cor = coresByKey.get(key);
+        const cor = coresByKeyEdicao.get(key);
         return { color_code: cor?.color_code ?? null, color_name: cor?.color_name ?? key };
       });
 
@@ -609,7 +638,7 @@ export default function AgrupamentoCoresPage() {
               </label>
               <div className="flex gap-2 flex-wrap mb-2">
                 {coresNovasEdicao.map((key) => {
-                  const cor = coresByKey.get(key);
+                  const cor = coresByKeyEdicao.get(key);
                   return (
                     <Badge key={key} variant="info">
                       {cor?.color_name || key}
@@ -691,7 +720,7 @@ export default function AgrupamentoCoresPage() {
       >
         <div className="space-y-4">
           <MultiSelectSearch
-            options={opcoesCores}
+            options={opcoesCoresEdicao}
             selected={coresNovasEdicao}
             onChange={setCoresNovasEdicao}
             placeholder="Buscar cor por nome..."
