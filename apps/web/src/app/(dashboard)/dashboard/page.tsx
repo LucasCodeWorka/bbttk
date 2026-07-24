@@ -141,8 +141,8 @@ export default function DashboardPage() {
 
   const filialOptions = filiaisDisponiveis.map((f) => ({ value: parseInt(f.value), label: f.label }));
 
-  // Dados para o gráfico de barras
-  const dadosBarras = vendas?.filiais?.slice(0, 8).map(f => ({
+  // Dados para o gráfico de barras - todas as filiais, nao so as primeiras 8
+  const dadosBarras = vendas?.filiais?.map(f => ({
     name: f.branch_name,
     value: f.faturamento,
   })) || [];

@@ -54,13 +54,13 @@ function RankedBarList({
   const max = Math.max(...data.map((d) => d.value), 1);
 
   return (
-    <div className="space-y-3.5 py-1">
+    <div className="space-y-2.5 py-1">
       {data.map((d, i) => {
         const pct = Math.max((d.value / max) * 100, 2);
         const cor = d.color || CORES_MARCA[i % CORES_MARCA.length];
         return (
           <div key={d.name}>
-            <div className="flex items-center justify-between text-sm mb-1 gap-3">
+            <div className="flex items-center justify-between text-xs mb-1 gap-3">
               <span className="font-medium text-gray-700 truncate" title={d.name}>
                 {truncar(d.name, 26)}
               </span>
@@ -68,7 +68,7 @@ function RankedBarList({
                 {formatValue(d.value)}
               </span>
             </div>
-            <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{ width: `${pct}%`, backgroundColor: cor }}
