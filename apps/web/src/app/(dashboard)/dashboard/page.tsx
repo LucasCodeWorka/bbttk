@@ -304,7 +304,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.faturamento || 0)}
           variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -312,7 +312,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.pecas || 0)}
           variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -320,7 +320,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.tm || 0)}
           variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -328,7 +328,7 @@ export default function DashboardPage() {
           value={(vendas?.total?.pa || 0).toFixed(2)}
           variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -336,7 +336,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.transacoes || 0)}
           variation={comparativo?.total?.variacao?.transacoes?.percentual}
           color="blue"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -344,7 +344,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.clientes || 0)}
           variation={comparativo?.total?.variacao?.clientes?.percentual}
           color="red"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
         <KPICard
@@ -352,7 +352,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.pm || 0)}
           variation={comparativo?.total?.variacao?.pm?.percentual}
           color="green"
-          valueSize="md"
+          valueSize="sm"
           isLoading={isLoading}
         />
       </div>
