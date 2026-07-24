@@ -638,8 +638,11 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium" title={p.nome}>
-                      {p.nome.length > 25 ? p.nome.substring(0, 25) + '...' : p.nome}
+                    <TableCell className="font-medium" title={`${p.referencia} - ${p.nome}`}>
+                      {p.referencia}
+                      <span className="text-gray-400 font-normal">
+                        {' '}- {p.nome.length > 20 ? p.nome.substring(0, 20) + '...' : p.nome}
+                      </span>
                     </TableCell>
                     <TableCell align="right">{formatNumber(p.quantidade)}</TableCell>
                     <TableCell align="right">{formatMoney(p.valor)}</TableCell>
