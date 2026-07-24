@@ -316,13 +316,36 @@ export default function DashboardPage() {
         <KPICard
           title="Ticket Medio"
           value={formatMoney(vendas?.total?.tm || 0)}
+          variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"
           isLoading={isLoading}
         />
         <KPICard
           title="Pecas/Atendimento"
           value={(vendas?.total?.pa || 0).toFixed(2)}
+          variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Atendimento"
+          value={formatNumber(vendas?.total?.transacoes || 0)}
+          variation={comparativo?.total?.variacao?.transacoes?.percentual}
+          color="blue"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Clientes"
+          value={formatNumber(vendas?.total?.clientes || 0)}
+          variation={comparativo?.total?.variacao?.clientes?.percentual}
+          color="red"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Preco Medio da Peca"
+          value={formatMoney(vendas?.total?.pm || 0)}
+          variation={comparativo?.total?.variacao?.pm?.percentual}
+          color="green"
           isLoading={isLoading}
         />
       </div>

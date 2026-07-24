@@ -417,6 +417,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const varTotalFat = vendasService.calcularVariacao(totalAtual.faturamento, totalAnterior.faturamento);
     const varTotalPecas = vendasService.calcularVariacao(totalAtual.pecas, totalAnterior.pecas);
     const varTotalTrans = vendasService.calcularVariacao(totalAtual.transacoes, totalAnterior.transacoes);
+    const varTotalClientes = vendasService.calcularVariacao(totalAtual.clientes, totalAnterior.clientes);
+    const varTotalTm = vendasService.calcularVariacao(totalAtual.tm, totalAnterior.tm);
+    const varTotalPa = vendasService.calcularVariacao(totalAtual.pa, totalAnterior.pa);
+    const varTotalPm = vendasService.calcularVariacao(totalAtual.pm, totalAnterior.pm);
 
     filiaisComparativo.sort((a, b) => a.branch_code - b.branch_code);
 
@@ -437,6 +441,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
           faturamento: varTotalFat,
           pecas: varTotalPecas,
           transacoes: varTotalTrans,
+          clientes: varTotalClientes,
+          tm: varTotalTm,
+          pa: varTotalPa,
+          pm: varTotalPm,
         },
       },
     });

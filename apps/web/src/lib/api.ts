@@ -305,6 +305,8 @@ export interface VendasResponse {
     transacoes: number;
     pa: number;
     tm: number;
+    clientes: number;
+    pm: number;
   };
 }
 
@@ -422,6 +424,10 @@ export interface ComparativoAnoResponse {
       faturamento: { atual: number; anterior: number; diferenca: number; percentual: number };
       pecas: { atual: number; anterior: number; diferenca: number; percentual: number };
       transacoes: { atual: number; anterior: number; diferenca: number; percentual: number };
+      clientes: { atual: number; anterior: number; diferenca: number; percentual: number };
+      tm: { atual: number; anterior: number; diferenca: number; percentual: number };
+      pa: { atual: number; anterior: number; diferenca: number; percentual: number };
+      pm: { atual: number; anterior: number; diferenca: number; percentual: number };
     };
   };
 }
