@@ -2,8 +2,6 @@ import * as vendasService from './vendas.service.js';
 import * as metasService from './metas.service.js';
 import { FILIAIS } from '../config/constants.js';
 
-const ATACADO_BRANCH_CODES = [2];
-
 function round(value: number, decimals: number = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
@@ -57,8 +55,6 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
 
   const todasFiliais = Object.keys(FILIAIS).map(Number);
   const filiaisEscopo = branchCodes && branchCodes.length > 0 ? branchCodes : todasFiliais;
-  const filiaisVarejo = filiaisEscopo.filter((c) => !ATACADO_BRANCH_CODES.includes(c));
-  const filiaisAtacado = filiaisEscopo.filter((c) => ATACADO_BRANCH_CODES.includes(c));
 
   const [vendasPorFilial, metasDoMes, niveis, metasPorFilial] = await Promise.all([
     vendasService.getVendasVendedorPorFilial(startDate, endDate, branchCodes),
@@ -154,15 +150,15 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
   const metaTotal = filiaisEscopo.reduce((sum, code) => sum + (metasPorFilial.get(code) || 0), 0);
   const realizadoTotal = vendedores.reduce((sum, v) => sum + v.faturamento, 0);
 
-  // Canal: Varejo (todas as filiais exceto Fabrica) vs Atacado (Fabrica)
-  const [vendasVarejo, vendasAtacado] = await Promise.all([
-    filiaisVarejo.length > 0 ? vendasService.getVendasPeriodo(startDate, endDate, filiaisVarejo) : Promise.resolve([]),
-    filiaisAtacado.length > 0 ? vendasService.getVendasPeriodo(startDate, endDate, filiaisAtacado) : Promise.resolve([]),
-  ]);
+  // Canal: Atacado e definido por operacao (venda atacado da Fabrica), nao por filial -
+  // a Fabrica/branch 2 tambem vende Varejo/Delivery, que agora entra certo no Varejo
+  // em vez de tudo virar Atacado (bug real: relatorio batendo Fabrica inteira como
+  // Atacado, inflando o canal errado).
+  const porCanal = await vendasService.getVendasPorCanal(startDate, endDate, filiaisEscopo);
 
-  function resumoCanal(nome: string, codigo: string, vendasCanal: { faturamento: number }[], filiaisCanal: number[]) {
-    const faturamento = round(vendasCanal.reduce((sum, f) => sum + f.faturamento, 0));
-    const meta = round(filiaisCanal.reduce((sum, code) => sum + (metasPorFilial.get(code) || 0), 0));
+  function resumoCanal(nome: string, codigo: string, faturamentoCanal: number, metaCanal: number) {
+    const faturamento = round(faturamentoCanal);
+    const meta = round(metaCanal);
     return {
       canal: codigo,
       nome,
@@ -173,8 +169,8 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
   }
 
   const canal = [
-    resumoCanal('Varejo', 'VAR', vendasVarejo, filiaisVarejo),
-    resumoCanal('Atacado', 'ATA', vendasAtacado, filiaisAtacado),
+    resumoCanal('Varejo', 'VAR', porCanal.varejo, metaTotal),
+    resumoCanal('Atacado', 'ATA', porCanal.atacado, 0),
   ];
 
   vendedores.sort((a, b) => b.faturamento - a.faturamento);

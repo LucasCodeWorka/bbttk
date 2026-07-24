@@ -576,6 +576,41 @@ export async function getTodosOperationCodes(): Promise<number[]> {
   return rows.map((r) => r.operation_code);
 }
 
+// Faturamento por canal (Varejo x Atacado) - Atacado NAO e definido por filial (a
+// Fabrica/branch 2 vende Atacado, mas tambem Varejo/Delivery dentro da mesma filial,
+// e contava tudo como Atacado por engano). O sinal de canal vem da descricao da
+// operacao classificada (ex: "800 - VENDA ATACADO (FABRICA)", "802 - DEVOLUCAO VENDA
+// ATACADO (FABRICA)") em vez de um operation_code fixo, pelo mesmo motivo de sempre:
+// o TOTVS pode criar/trocar o codigo, a descricao e o sinal mais estavel.
+export async function getVendasPorCanal(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<{ varejo: number; atacado: number }> {
+  const branchFilter = buildBranchFilter(branchCodes);
+
+  const results = await prisma.$queryRaw<Array<{ atacado: Decimal | null; total: Decimal | null }>>`
+    SELECT
+      COALESCE(SUM(CASE WHEN co.description ILIKE '%ATACADO%' THEN ${FATURAMENTO_COM_SINAL} ELSE 0 END), 0) as atacado,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as total
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+  `;
+
+  const row = results[0];
+  const atacado = round(decimalToNumber(row?.atacado ?? null));
+  const total = round(decimalToNumber(row?.total ?? null));
+  return { varejo: round(total - atacado), atacado };
+}
+
 // Meta (nível 3 = 100%) por filial, apenas metas de loja (seller_code IS NULL)
 export async function getMetasPorFilial(ano: number, mes: number): Promise<Map<number, number>> {
   const metas = await metasService.getMetas(ano, mes);
