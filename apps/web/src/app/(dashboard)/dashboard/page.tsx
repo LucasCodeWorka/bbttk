@@ -298,12 +298,13 @@ export default function DashboardPage() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <KPICard
           title="Faturamento"
           value={formatMoney(vendas?.total?.faturamento || 0)}
           variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -311,6 +312,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.pecas || 0)}
           variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -318,6 +320,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.tm || 0)}
           variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -325,6 +328,7 @@ export default function DashboardPage() {
           value={(vendas?.total?.pa || 0).toFixed(2)}
           variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -332,6 +336,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.transacoes || 0)}
           variation={comparativo?.total?.variacao?.transacoes?.percentual}
           color="blue"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -339,6 +344,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.clientes || 0)}
           variation={comparativo?.total?.variacao?.clientes?.percentual}
           color="red"
+          valueSize="md"
           isLoading={isLoading}
         />
         <KPICard
@@ -346,6 +352,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.pm || 0)}
           variation={comparativo?.total?.variacao?.pm?.percentual}
           color="green"
+          valueSize="md"
           isLoading={isLoading}
         />
       </div>
