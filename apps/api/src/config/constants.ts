@@ -9,10 +9,14 @@ export const FILIAIS: Record<number, string> = {
   7: 'PARANGABA',
   8: 'RIOMAR',
   9: 'IGUATEMI EXP.',
+  10: 'MOSSORO',
   11: 'RIOMAR PK',
   12: 'MESSEJANA',
   13: 'EUSEBIO',
+  16: 'VIA SUL',
   17: 'NORTH SHOPPING',
+  18: 'TERRAZO SHOPPING',
+  19: 'MART MODA',
 };
 
 // Filiais que não são lojas de venda - hoje nenhuma (Fabrica/2 passou a vender como Atacado)

@@ -214,7 +214,7 @@ export async function getVendasPeriodo(
 
     return {
       branch_code: row.branch_code,
-      branch_name: row.branch_name || FILIAIS[row.branch_code] || `Filial ${row.branch_code}`,
+      branch_name: FILIAIS[row.branch_code] || row.branch_name || `Filial ${row.branch_code}`,
       transacoes,
       pecas: Math.round(pecas),
       faturamento: round(faturamento),

@@ -34,11 +34,11 @@ export function KPICard({ title, value, variation, icon, color = 'red', isLoadin
 
   return (
     <Card className={cn(colors[color])}>
-      <CardTitle icon={icon}>{title}</CardTitle>
-      <div className="flex items-end justify-between mt-2 gap-2">
-        <CardValue size={valueSize} className="truncate">{value}</CardValue>
-        {variation !== undefined && <VariationBadge value={variation} />}
+      <div className="flex items-center justify-between gap-2">
+        <CardTitle icon={icon} className="truncate">{title}</CardTitle>
+        {variation !== undefined && <VariationBadge value={variation} className="shrink-0" />}
       </div>
+      <CardValue size={valueSize} className="truncate mt-2">{value}</CardValue>
     </Card>
   );
 }

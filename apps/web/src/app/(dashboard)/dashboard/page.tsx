@@ -324,7 +324,7 @@ export default function DashboardPage() {
           isLoading={isLoading}
         />
         <KPICard
-          title="Pecas/Atendimento"
+          title="PA"
           value={(vendas?.total?.pa || 0).toFixed(2)}
           variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
@@ -374,7 +374,7 @@ export default function DashboardPage() {
           </CardHeader>
           <div className="mb-4 pb-4 border-b border-gray-100">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total</p>
-            <p className="text-2xl font-bold text-gray-900">{formatMoney(vendas?.total?.faturamento || 0)}</p>
+            <p className="text-sm font-bold text-gray-900">{formatMoney(vendas?.total?.faturamento || 0)}</p>
           </div>
           <LoadingOverlay active={isLoading}>
             <BarChart data={dadosBarras} horizontal />
