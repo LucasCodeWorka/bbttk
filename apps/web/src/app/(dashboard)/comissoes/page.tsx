@@ -8,7 +8,7 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { Badge } from '@/components/ui/Badge';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
-import { metasApi, ComissoesResponse, VendedorComissao } from '@/lib/api';
+import { metasApi, ComissoesResponse, VendedorComissao, ComissaoCelula } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
@@ -92,6 +92,36 @@ export default function ComissoesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dados, sortKey, sortDir]);
 
+  // Uma linha por combinacao (vendedor, loja) - nao agrupa varias lojas do mesmo
+  // vendedor numa linha so, porque cada loja tem meta/nivel/comissao proprios.
+  type LinhaComissao = ComissaoCelula & { seller_code: number; seller_name: string };
+
+  const linhas: LinhaComissao[] = useMemo(() => {
+    return (dados?.vendedores || []).flatMap((v) =>
+      v.celulas.map((c) => ({ ...c, seller_code: v.seller_code, seller_name: v.seller_name }))
+    );
+  }, [dados]);
+
+  function getSortValueLinha(l: LinhaComissao, key: string): number | string {
+    if (key === 'seller_name') return l.seller_name;
+    return (l[key as keyof LinhaComissao] as number) ?? 0;
+  }
+
+  const linhasOrdenadas = useMemo(() => {
+    if (!sortKey) return linhas;
+    const arr = [...linhas];
+    arr.sort((a, b) => {
+      const va = getSortValueLinha(a, sortKey);
+      const vb = getSortValueLinha(b, sortKey);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        return String(va).localeCompare(String(vb)) * (sortDir === 'asc' ? 1 : -1);
+      }
+      return (va - vb) * (sortDir === 'asc' ? 1 : -1);
+    });
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas, sortKey, sortDir]);
+
   function ThSort({ label, sortKeyName, align = 'right' }: { label: React.ReactNode; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName;
     return (
@@ -107,19 +137,19 @@ export default function ComissoesPage() {
     exportToCsv(
       `comissoes-${ano}-${String(mes).padStart(2, '0')}`,
       [
-        { header: 'Vendedor', value: (v: VendedorComissao) => v.seller_name },
-        { header: 'Loja(s)', value: (v: VendedorComissao) => v.filiais.map((c) => FILIAIS[c] || c).join(', ') },
-        { header: 'Faturamento', value: (v: VendedorComissao) => v.faturamento },
+        { header: 'Vendedor', value: (l: LinhaComissao) => l.seller_name },
+        { header: 'Loja', value: (l: LinhaComissao) => l.branch_name },
+        { header: 'Faturamento', value: (l: LinhaComissao) => l.faturamento },
         ...niveis.map((n) => ({
           header: n.nivel_nome,
-          value: (v: VendedorComissao) => (v[`nivel_${n.nivel_ordem}` as keyof VendedorComissao] as number) ?? 0,
+          value: (l: LinhaComissao) => (l[`nivel_${n.nivel_ordem}` as keyof LinhaComissao] as number) ?? 0,
         })),
-        { header: 'Nivel Atingido', value: (v: VendedorComissao) => niveis.find((n) => n.nivel_ordem === v.nivel_atingido)?.nivel_nome ?? '-' },
-        { header: 'Resultado %', value: (v: VendedorComissao) => v.resultado_pct },
-        { header: '% Comissao', value: (v: VendedorComissao) => v.comissao_pct },
-        { header: 'Comissao', value: (v: VendedorComissao) => v.comissao_valor },
+        { header: 'Nivel Atingido', value: (l: LinhaComissao) => niveis.find((n) => n.nivel_ordem === l.nivel_atingido)?.nivel_nome ?? '-' },
+        { header: 'Resultado %', value: (l: LinhaComissao) => l.resultado_pct },
+        { header: '% Comissao', value: (l: LinhaComissao) => l.comissao_pct },
+        { header: 'Comissao', value: (l: LinhaComissao) => l.comissao_valor },
       ],
-      vendedoresOrdenados
+      linhasOrdenadas
     );
   }
 
@@ -245,7 +275,7 @@ export default function ComissoesPage() {
               <TableRow>
                 <TableCell isHeader>#</TableCell>
                 <ThSort label="Vendedor" sortKeyName="seller_name" align="left" />
-                <TableCell isHeader align="left">Loja(s)</TableCell>
+                <ThSort label="Loja" sortKeyName="branch_name" align="left" />
                 <ThSort label="Faturamento" sortKeyName="faturamento" />
                 {niveis.map((n) => (
                   <ThSort
@@ -268,28 +298,17 @@ export default function ComissoesPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {vendedoresOrdenados.map((v, i) => {
-                const nivelInfo = niveis.find((n) => n.nivel_ordem === v.nivel_atingido);
+              {linhasOrdenadas.map((l, i) => {
+                const nivelInfo = niveis.find((n) => n.nivel_ordem === l.nivel_atingido);
                 return (
-                  <TableRow key={v.seller_code}>
+                  <TableRow key={`${l.seller_code}-${l.branch_code}`}>
                     <TableCell>{i + 1}</TableCell>
-                    <TableCell className="font-medium whitespace-nowrap">{v.seller_name}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <div className="flex flex-wrap gap-1">
-                        {v.filiais.map((code) => (
-                          <span
-                            key={code}
-                            className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded"
-                          >
-                            {FILIAIS[code] || `Filial ${code}`}
-                          </span>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell align="right" className="whitespace-nowrap">{formatMoney(v.faturamento)}</TableCell>
+                    <TableCell className="font-medium whitespace-nowrap">{l.seller_name}</TableCell>
+                    <TableCell className="whitespace-nowrap">{l.branch_name}</TableCell>
+                    <TableCell align="right" className="whitespace-nowrap">{formatMoney(l.faturamento)}</TableCell>
                     {niveis.map((n) => {
-                      const alvo = v[`nivel_${n.nivel_ordem}` as keyof typeof v] as number;
-                      const atingiu = v.nivel_atingido >= n.nivel_ordem && alvo > 0;
+                      const alvo = l[`nivel_${n.nivel_ordem}` as keyof typeof l] as number;
+                      const atingiu = l.nivel_atingido >= n.nivel_ordem && alvo > 0;
                       return (
                         <TableCell
                           key={n.nivel_ordem}
@@ -307,15 +326,15 @@ export default function ComissoesPage() {
                           style={{ backgroundColor: nivelInfo.nivel_cor }}
                           variant="default"
                         >
-                          {nivelInfo.nivel_nome} ({v.resultado_pct.toFixed(1)}%)
+                          {nivelInfo.nivel_nome} ({l.resultado_pct.toFixed(1)}%)
                         </Badge>
                       ) : (
-                        <span className="text-gray-400 text-sm">{v.resultado_pct.toFixed(1)}%</span>
+                        <span className="text-gray-400 text-sm">{l.resultado_pct.toFixed(1)}%</span>
                       )}
                     </TableCell>
-                    <TableCell align="center" className="whitespace-nowrap">{v.comissao_pct.toFixed(1)}%</TableCell>
+                    <TableCell align="center" className="whitespace-nowrap">{l.comissao_pct.toFixed(1)}%</TableCell>
                     <TableCell align="right" className="whitespace-nowrap font-semibold">
-                      {formatMoney(v.comissao_valor)}
+                      {formatMoney(l.comissao_valor)}
                     </TableCell>
                   </TableRow>
                 );
