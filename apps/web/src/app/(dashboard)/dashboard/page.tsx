@@ -304,7 +304,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.faturamento || 0)}
           variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
@@ -312,7 +312,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.pecas || 0)}
           variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
@@ -320,7 +320,7 @@ export default function DashboardPage() {
           value={formatMoney(vendas?.total?.tm || 0)}
           variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
@@ -328,7 +328,7 @@ export default function DashboardPage() {
           value={(vendas?.total?.pa || 0).toFixed(2)}
           variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
@@ -336,7 +336,7 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.transacoes || 0)}
           variation={comparativo?.total?.variacao?.transacoes?.percentual}
           color="blue"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
@@ -344,15 +344,15 @@ export default function DashboardPage() {
           value={formatNumber(vendas?.total?.clientes || 0)}
           variation={comparativo?.total?.variacao?.clientes?.percentual}
           color="red"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
-          title="Preco Medio da Peca"
+          title="Preco Medio"
           value={formatMoney(vendas?.total?.pm || 0)}
           variation={comparativo?.total?.variacao?.pm?.percentual}
           color="green"
-          valueSize="sm"
+          valueSize="xs"
           isLoading={isLoading}
         />
       </div>
@@ -372,6 +372,10 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Vendas por Filial</CardTitle>
           </CardHeader>
+          <div className="mb-4 pb-4 border-b border-gray-100">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total</p>
+            <p className="text-2xl font-bold text-gray-900">{formatMoney(vendas?.total?.faturamento || 0)}</p>
+          </div>
           <LoadingOverlay active={isLoading}>
             <BarChart data={dadosBarras} horizontal />
           </LoadingOverlay>

@@ -54,11 +54,12 @@ export function CardTitle({ children, className, icon }: CardTitleProps) {
 interface CardValueProps {
   children: ReactNode;
   className?: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
 export function CardValue({ children, className, size = 'lg' }: CardValueProps) {
   const sizes = {
+    xs: 'text-base',
     sm: 'text-lg',
     md: 'text-xl',
     lg: 'text-2xl',

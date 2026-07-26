@@ -11,7 +11,7 @@ interface KPICardProps {
   icon?: React.ReactNode;
   color?: 'red' | 'green' | 'yellow' | 'purple' | 'blue';
   isLoading?: boolean;
-  valueSize?: 'sm' | 'md' | 'lg';
+  valueSize?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
 export function KPICard({ title, value, variation, icon, color = 'red', isLoading, valueSize = 'lg' }: KPICardProps) {
