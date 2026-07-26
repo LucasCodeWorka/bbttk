@@ -11,6 +11,12 @@ interface SubItem {
   label: string;
   href: string;
   icon: React.ReactNode;
+  // Por padrao um item de submenu herda a permissao do modulo que o contem (entry.key).
+  // moduleKey/adminOnly permitem sobrescrever isso por item - necessario pro modulo
+  // Configurador, que agrupa itens de modulos/permissoes diferentes (Metas e comissoes
+  // sao 'comercial', Agrupamento de Cores e 'pcp', Usuarios e admin-only).
+  moduleKey?: string;
+  adminOnly?: boolean;
 }
 
 type NavEntry =
@@ -65,6 +71,13 @@ const iconAgrupamentoCores = (
   </svg>
 );
 
+const iconConfigurador = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
 const navEntries: NavEntry[] = [
   { type: 'link', label: 'Inicio', href: '/inicio', icon: iconInicio },
   {
@@ -74,7 +87,6 @@ const navEntries: NavEntry[] = [
     icon: iconComercial,
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: iconDashboard },
-      { label: 'Metas', href: '/metas', icon: iconMetas },
       { label: 'Comissoes', href: '/comissoes', icon: iconComissoes },
     ],
   },
@@ -83,8 +95,17 @@ const navEntries: NavEntry[] = [
     key: 'pcp',
     label: 'PCP',
     icon: iconPcp,
+    items: [],
+  },
+  {
+    type: 'module',
+    key: 'configurador',
+    label: 'Configurações',
+    icon: iconConfigurador,
     items: [
-      { label: 'Agrupamento de Cores', href: '/pcp/agrupamento-cores', icon: iconAgrupamentoCores },
+      { label: 'Metas', href: '/metas', icon: iconMetas, moduleKey: 'comercial' },
+      { label: 'Agrupamento de Cores', href: '/pcp/agrupamento-cores', icon: iconAgrupamentoCores, moduleKey: 'pcp' },
+      { label: 'Usuarios', href: '/usuarios', icon: iconUsuarios, adminOnly: true },
     ],
   },
   {
@@ -96,7 +117,6 @@ const navEntries: NavEntry[] = [
       { label: 'Estoque Sem Giro', href: '/pcp-novo', icon: iconAgrupamentoCores },
     ],
   },
-  { type: 'link', label: 'Usuarios', href: '/usuarios', icon: iconUsuarios, adminOnly: true },
 ];
 
 interface SidebarProps {
@@ -109,6 +129,13 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps) {
   const { user, logout, isAdmin, canAccessModule } = useAuth();
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
 
+  // Um item de submenu usa sua propria permissao se definida (moduleKey/adminOnly),
+  // senao herda a do modulo que o contem.
+  function itemVisivel(item: SubItem, moduleKey: string): boolean {
+    if (item.adminOnly) return isAdmin;
+    return canAccessModule(item.moduleKey || moduleKey);
+  }
+
   // Auto-expande o modulo que contem a rota ativa
   useEffect(() => {
     const activeModule = navEntries.find(
@@ -119,10 +146,119 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps) {
     }
   }, [pathname]);
 
-  const visibleEntries = navEntries.filter((entry) => {
-    if (entry.type === 'module') return entry.disabled || canAccessModule(entry.key);
-    return !entry.adminOnly || (entry.adminOnly && isAdmin);
-  });
+  const visibleEntries = navEntries
+    .map((entry) => {
+      if (entry.type !== 'module') return entry;
+      const items = entry.items.filter((item) => itemVisivel(item, entry.key));
+      return { ...entry, items };
+    })
+    .filter((entry) => {
+      if (entry.type === 'module') return entry.disabled || entry.items.length > 0;
+      return !entry.adminOnly || (entry.adminOnly && isAdmin);
+    });
+
+  // Configuracoes fica fixo no rodape da sidebar, separado da navegacao principal,
+  // em vez de disputar espaco/ordem com os modulos de trabalho do dia a dia.
+  const mainEntries = visibleEntries.filter((entry) => !(entry.type === 'module' && entry.key === 'configurador'));
+  const configEntry = visibleEntries.find((entry) => entry.type === 'module' && entry.key === 'configurador');
+
+  function renderEntry(entry: (typeof visibleEntries)[number]) {
+    if (entry.type === 'link') {
+      const isActive = pathname === entry.href;
+      return (
+        <Link
+          key={entry.href}
+          href={entry.href}
+          className={cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all',
+            isActive
+              ? 'bg-[var(--bbtk-yellow)] text-gray-900 font-semibold'
+              : 'text-gray-600 hover:bg-gray-100'
+          )}
+        >
+          <span className={cn(isActive && 'text-[var(--bbtk-red)]')}>{entry.icon}</span>
+          {!isCollapsed && <span>{entry.label}</span>}
+        </Link>
+      );
+    }
+
+    // Modulo
+    const isExpanded = expandedModule === entry.key;
+    const hasActiveChild = entry.items.some((item) => item.href === pathname);
+
+    if (entry.disabled) {
+      return (
+        <div
+          key={entry.key}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-400 cursor-not-allowed"
+          title="Em breve"
+        >
+          <span>{entry.icon}</span>
+          {!isCollapsed && (
+            <span className="flex-1 flex items-center justify-between">
+              {entry.label}
+              <span className="text-[10px] font-semibold uppercase bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full">
+                Em breve
+              </span>
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div key={entry.key}>
+        <button
+          type="button"
+          onClick={() => setExpandedModule(isExpanded ? null : entry.key)}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all',
+            hasActiveChild
+              ? 'text-[var(--bbtk-red)] font-semibold'
+              : 'text-gray-600 hover:bg-gray-100'
+          )}
+        >
+          <span>{entry.icon}</span>
+          {!isCollapsed && (
+            <span className="flex-1 flex items-center justify-between text-left">
+              {entry.label}
+              <svg
+                className={cn('w-4 h-4 transition-transform', isExpanded && 'rotate-90')}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          )}
+        </button>
+
+        {isExpanded && !isCollapsed && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-gray-100 pl-3">
+            {entry.items.map((item) => {
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all',
+                    isActive
+                      ? 'bg-[var(--bbtk-yellow)] text-gray-900 font-semibold'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  )}
+                >
+                  <span className={cn(isActive && 'text-[var(--bbtk-red)]')}>{item.icon}</span>
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <aside
@@ -151,104 +287,15 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps) {
 
       {/* Menu */}
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {visibleEntries.map((entry) => {
-          if (entry.type === 'link') {
-            const isActive = pathname === entry.href;
-            return (
-              <Link
-                key={entry.href}
-                href={entry.href}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all',
-                  isActive
-                    ? 'bg-[var(--bbtk-yellow)] text-gray-900 font-semibold'
-                    : 'text-gray-600 hover:bg-gray-100'
-                )}
-              >
-                <span className={cn(isActive && 'text-[var(--bbtk-red)]')}>{entry.icon}</span>
-                {!isCollapsed && <span>{entry.label}</span>}
-              </Link>
-            );
-          }
-
-          // Modulo
-          const isExpanded = expandedModule === entry.key;
-          const hasActiveChild = entry.items.some((item) => item.href === pathname);
-
-          if (entry.disabled) {
-            return (
-              <div
-                key={entry.key}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-400 cursor-not-allowed"
-                title="Em breve"
-              >
-                <span>{entry.icon}</span>
-                {!isCollapsed && (
-                  <span className="flex-1 flex items-center justify-between">
-                    {entry.label}
-                    <span className="text-[10px] font-semibold uppercase bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full">
-                      Em breve
-                    </span>
-                  </span>
-                )}
-              </div>
-            );
-          }
-
-          return (
-            <div key={entry.key}>
-              <button
-                type="button"
-                onClick={() => setExpandedModule(isExpanded ? null : entry.key)}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all',
-                  hasActiveChild
-                    ? 'text-[var(--bbtk-red)] font-semibold'
-                    : 'text-gray-600 hover:bg-gray-100'
-                )}
-              >
-                <span>{entry.icon}</span>
-                {!isCollapsed && (
-                  <span className="flex-1 flex items-center justify-between text-left">
-                    {entry.label}
-                    <svg
-                      className={cn('w-4 h-4 transition-transform', isExpanded && 'rotate-90')}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </span>
-                )}
-              </button>
-
-              {isExpanded && !isCollapsed && (
-                <div className="ml-4 mt-1 space-y-1 border-l border-gray-100 pl-3">
-                  {entry.items.map((item) => {
-                    const isActive = pathname === item.href;
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={cn(
-                          'flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all',
-                          isActive
-                            ? 'bg-[var(--bbtk-yellow)] text-gray-900 font-semibold'
-                            : 'text-gray-600 hover:bg-gray-100'
-                        )}
-                      >
-                        <span className={cn(isActive && 'text-[var(--bbtk-red)]')}>{item.icon}</span>
-                        <span>{item.label}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {mainEntries.map((entry) => renderEntry(entry))}
       </nav>
+
+      {/* Configuracoes - fixo no rodape, separado da navegacao principal */}
+      {configEntry && (
+        <div className="p-3 border-t border-gray-100">
+          {renderEntry(configEntry)}
+        </div>
+      )}
 
       {/* Toggle */}
       <button

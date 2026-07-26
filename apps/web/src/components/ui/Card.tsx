@@ -40,11 +40,17 @@ interface CardTitleProps {
   children: ReactNode;
   className?: string;
   icon?: ReactNode;
+  size?: 'xs' | 'sm';
 }
 
-export function CardTitle({ children, className, icon }: CardTitleProps) {
+export function CardTitle({ children, className, icon, size = 'sm' }: CardTitleProps) {
+  const sizes = {
+    xs: 'text-xs',
+    sm: 'text-sm',
+  };
+
   return (
-    <h3 className={cn('text-sm font-semibold text-gray-600 flex items-center gap-2', className)}>
+    <h3 className={cn(sizes[size], 'font-semibold text-gray-600 flex items-center gap-2', className)}>
       {icon}
       {children}
     </h3>
@@ -54,11 +60,12 @@ export function CardTitle({ children, className, icon }: CardTitleProps) {
 interface CardValueProps {
   children: ReactNode;
   className?: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
 export function CardValue({ children, className, size = 'lg' }: CardValueProps) {
   const sizes = {
+    xs: 'text-base',
     sm: 'text-lg',
     md: 'text-xl',
     lg: 'text-2xl',

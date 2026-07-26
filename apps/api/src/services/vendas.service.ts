@@ -1,26 +1,57 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
-import { FILIAIS, EXCLUDED_OPERATIONS, EXCLUDED_BRANCH_CODES, DEVOLUTION_OPERATIONS } from '../config/constants.js';
+import { FILIAIS, EXCLUDED_BRANCH_CODES } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as metasService from './metas.service.js';
 
-// Operações de negócio (não venda, não devolução) sempre excluídas do cálculo
-const EXCLUDED_OPERATIONS_LIST = [...EXCLUDED_OPERATIONS];
-const DEVOLUTION_OPERATIONS_LIST = [...DEVOLUTION_OPERATIONS];
 const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
 
-// Clientes com customer_code >= 110000000 são contas internas do TOTVS (transferência entre
-// filiais, ajuste de estoque, amostra, perda, etc.) - nunca um cliente real. Sem esse filtro,
-// esses movimentos entram como faturamento de verdade (bug real: ~59 mil transações / R$21,6mi
-// inflados no historico, descoberto batendo o Dashboard contra o relatorio nativo do TOTVS).
-const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
-// Filtro reutilizado: transação não cancelada, operação de negócio válida, cliente real.
-// Inclui devoluções (elas entram com sinal negativo via DEVOLUTION_SIGN, não são excluídas).
-const SALE_OPERATION_FILTER = Prisma.sql`((t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(EXCLUDED_OPERATIONS_LIST)})) AND ${REAL_CUSTOMER_FILTER})`;
-// Sinal: -1 para devolução (TOTVS operationMode='3'/operationsType='E'), +1 para venda
-const DEVOLUTION_SIGN = Prisma.sql`(CASE WHEN t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)}) THEN -1 ELSE 1 END)`;
+// Classificacao de operacao vem do cache local (classificacao_operacoes, sincronizado
+// direto de general/v2/operations na API do TOTVS) em vez de lista de operation_code
+// fixa na mao. O TOTVS ja criou operacao nova (compra, consignacao, remessa, brinde)
+// varias vezes sem avisar, e cada vez que isso acontece ela cai silenciosamente como
+// "venda" ate alguem desconfiar de um numero errado - ja causou faturamento inflado
+// mais de uma vez. O que caracteriza uma venda de verdade NUNCA e o operation_code em
+// si (o TOTVS pode criar/aposentar codigo a qualquer momento) - e sempre a combinacao
+// invoiceData.operationsType='S' + operationMode='4'. Devolucao e sempre 'E'+'3'.
+// Operacao sem classificacao no cache (nunca sincronizada) fica de fora por padrao -
+// mais seguro errar excluindo um codigo novo do que inflar faturamento silenciosamente
+// (que era exatamente o comportamento antigo).
+const OPERACAO_JOIN = Prisma.sql`LEFT JOIN classificacao_operacoes co ON co.operation_code = t.operation_code`;
+const IS_VENDA = Prisma.sql`(co.operations_type = 'S' AND co.operation_mode = '4')`;
+const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operation_mode = '3')`;
+
+// HISTÓRICO: customer_code >= 110000000 já foi usado como heurística pra excluir "conta
+// interna do TOTVS" (transferência entre filiais, ajuste de estoque, amostra, perda) que
+// entrava como faturamento de verdade por causa das listas antigas de operation_code fixas
+// e imprecisas (bug real: ~59 mil transações / R$21,6mi inflados no histórico). Essa
+// heurística ficou REDUNDANTE e ativamente prejudicial depois que a classificação virou
+// dinâmica e precisa (IS_VENDA/IS_DEVOLUCAO via operationsType/operationMode, sincronizado
+// direto do TOTVS): uma transferência/ajuste real NUNCA tem operationsType='S'+operationMode=
+// '4', então IS_VENDA já exclui ela sozinha, sem precisar olhar customer_code. Enquanto isso,
+// o customer_code>=110000000 também aparece em vendas E devoluções REAIS e completas
+// (status=4/Atendida) - o TOTVS usa esse código como fallback quando não há CPF/cadastro do
+// cliente balcão. Excluir por customer_code jogava fora receita real dos dois lados (achado
+// batendo contra o FISFL024: maio/2026 tinha R$251,96 de devolução real descartada; 17/04/2026
+// tinha uma venda real de R$379,98 descartada, filial 11, cliente 110000011, op 1200 Atendida).
+// Conferido no histórico inteiro (2019-2026): só 20 vendas reais nesse padrão, R$2.996,51 no
+// total, nada parecido com o bug antigo - seguro remover o filtro de cliente por completo.
+// Filtro reutilizado: transação não cancelada, operação de venda-ou-devolução real (a
+// classificação por operationsType/operationMode já garante isso sozinha). Qualquer outra
+// classificação (compra, consignação, remessa, brinde, transferência, ou operação nunca
+// sincronizada) já fica fora daqui.
+const SALE_OPERATION_FILTER = Prisma.sql`(${IS_VENDA} OR ${IS_DEVOLUCAO})`;
+// O ETL grava net_value/quantity de devolução com o sinal que o TOTVS mandou - às vezes
+// positivo, às vezes já negativo, inconsistente (confirmado em todo o historico, todas as
+// filiais). Um "* -1" simples inverteria de volta pra positivo quando já vinha negativo,
+// cancelando a devolução em vez de subtrair (bug real: ~R$11,27mi inflados no historico
+// inteiro). ABS() normaliza pro valor absoluto antes de aplicar o sinal negativo, entao
+// funciona certo independente de como o dado chegou do ETL. SALE_OPERATION_FILTER já
+// garante que só sobra venda ou devolução aqui, então o ELSE é sempre venda.
+const FATURAMENTO_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
+const PECAS_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
 // Só conta como "venda" (transação/cliente) quando não é devolução
-const IS_SALE = Prisma.sql`t.operation_code IS NULL OR t.operation_code NOT IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})`;
+const IS_SALE = IS_VENDA;
 // Filtro reutilizado: filial de venda (exclui filiais em EXCLUDED_BRANCH_CODES, se houver)
 const STORE_BRANCH_FILTER = EXCLUDED_BRANCH_LIST.length > 0
   ? Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`
@@ -57,6 +88,17 @@ interface VendasVendedor {
   tm: number;
 }
 
+interface VendasVendedorFilial {
+  seller_code: number;
+  seller_name?: string;
+  branch_code: number;
+  transacoes: number;
+  pecas: number;
+  faturamento: number;
+  pa: number;
+  tm: number;
+}
+
 interface Produto {
   referencia: string;
   nome: string;
@@ -81,14 +123,14 @@ function buildBranchFilter(branchCodes?: number[]) {
   return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
 }
 
-// Filtro por classificacao de produto (categoria, genero, grupo/marca, linha,
+// Filtro por classificacao de produto (categoria, genero, status, linha,
 // colecao, tecido) - vem da tabela `produto_analitico`, sincronizada pelo ETL
 // com as classificacoes cadastradas no ERP. Cada dimensao aceita varios valores
 // (OR entre valores da mesma dimensao, AND entre dimensoes diferentes).
 export interface ProdutoFiltro {
   categoria?: string[];
   genero?: string[];
-  grupo?: string[];
+  status?: string[];
   linha?: string[];
   colecao?: string[];
   tecido?: string[];
@@ -97,7 +139,7 @@ export interface ProdutoFiltro {
 const CLASSIFICACAO_COLUNAS: Record<keyof ProdutoFiltro, string> = {
   categoria: 'class_categoria',
   genero: 'class_genero',
-  grupo: 'class_grupo',
+  status: 'class_status',
   linha: 'class_linha',
   colecao: 'class_colecao',
   tecido: 'class_tecido',
@@ -145,13 +187,14 @@ export async function getVendasPeriodo(
       t.branch_code,
       t.branch_name,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento,
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.customer_code END) as clientes
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -171,7 +214,80 @@ export async function getVendasPeriodo(
 
     return {
       branch_code: row.branch_code,
-      branch_name: row.branch_name || FILIAIS[row.branch_code] || `Filial ${row.branch_code}`,
+      branch_name: FILIAIS[row.branch_code] || row.branch_name || `Filial ${row.branch_code}`,
+      transacoes,
+      pecas: Math.round(pecas),
+      faturamento: round(faturamento),
+      pa: transacoes > 0 ? round(pecas / transacoes) : 0,
+      tm: transacoes > 0 ? round(faturamento / transacoes) : 0,
+      clientes,
+      pm: pecas > 0 ? round(faturamento / pecas) : 0,
+      tm_cliente: clientes > 0 ? round(faturamento / clientes) : 0,
+      pac: clientes > 0 ? round(pecas / clientes) : 0,
+    };
+  });
+}
+
+// Divide a Fabrica (branch_code=2) em 3 linhas por operacao, igual o relatorio nativo
+// do TOTVS mostra (2-FABRICA / 2.1-DELIVERY / 2.3-ATACADO) - a Fabrica vende nos tres
+// canais dentro da mesma filial, e antes tudo virava uma linha so misturada. So cobre
+// as metricas de venda pura (faturamento/pecas/transacoes/clientes) - meta, devolucao
+// e clientes-novos nao tem infraestrutura pra separar por operacao (ficam so na linha
+// "2-FABRICA" principal, igual ja era antes do split).
+export async function getVendasFabricaDividida(
+  startDate: Date,
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
+): Promise<VendasFilial[]> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    linha: string;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+    clientes: bigint;
+  }>>`
+    SELECT
+      CASE
+        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
+        ELSE '2'
+      END as linha,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.customer_code END) as clientes
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    ${PRODUTO_ANALITICO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND t.branch_code = 2
+      AND ${SALE_OPERATION_FILTER}
+      ${produtoFilter}
+    GROUP BY linha
+  `;
+
+  const INFO_LINHA: Record<string, { code: number; name: string }> = {
+    '2': { code: 2, name: 'FABRICA' },
+    '2.1': { code: 2.1, name: 'FABRICA - DELIVERY' },
+    '2.3': { code: 2.3, name: 'FABRICA - ATACADO' },
+  };
+
+  return results.map(row => {
+    const transacoes = Number(row.transacoes);
+    const pecas = decimalToNumber(row.pecas);
+    const faturamento = decimalToNumber(row.faturamento);
+    const clientes = Number(row.clientes);
+    const info = INFO_LINHA[row.linha] || INFO_LINHA['2'];
+
+    return {
+      branch_code: info.code,
+      branch_name: info.name,
       transacoes,
       pecas: Math.round(pecas),
       faturamento: round(faturamento),
@@ -204,12 +320,13 @@ export async function getVendasDiarias(
     SELECT
       t.transaction_date as data,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -249,12 +366,13 @@ export async function getVendasMensais(
     SELECT
       DATE_TRUNC('month', t.transaction_date) as mes,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(ti.quantity * ${DEVOLUTION_SIGN}), 0) as pecas,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -293,11 +411,12 @@ export async function getVendasVendedor(
     SELECT
       ti.seller_code,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
-      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as pecas,
-      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as faturamento
+      SUM(${PECAS_COM_SINAL}) as pecas,
+      SUM(${FATURAMENTO_COM_SINAL}) as faturamento
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -327,6 +446,75 @@ export async function getVendasVendedor(
   });
 }
 
+// Vendas por vendedor, quebrado por filial (matriz vendedor x loja) - usado pela tela de
+// Comissoes pra deixar explicito de qual(is) loja(s) cada vendedor e, ja que um vendedor
+// pode vender em mais de uma filial no mesmo mes.
+export async function getVendasVendedorPorFilial(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<VendasVendedorFilial[]> {
+  const branchFilter = buildBranchFilter(branchCodes);
+
+  const results = await prisma.$queryRaw<Array<{
+    seller_code: number;
+    branch_code: number;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+  }>>`
+    SELECT
+      ti.seller_code,
+      ti.branch_code,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
+      SUM(${PECAS_COM_SINAL}) as pecas,
+      SUM(${FATURAMENTO_COM_SINAL}) as faturamento
+    FROM transacao_itens ti
+    JOIN transacoes t ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND ti.seller_code != 1
+      AND ti.seller_code IS NOT NULL
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+    GROUP BY ti.seller_code, ti.branch_code
+    ORDER BY ti.seller_code, faturamento DESC
+  `;
+
+  return results.map(row => {
+    const transacoes = Number(row.transacoes);
+    const pecas = decimalToNumber(row.pecas);
+    const faturamento = decimalToNumber(row.faturamento);
+
+    return {
+      seller_code: row.seller_code,
+      branch_code: row.branch_code,
+      transacoes,
+      pecas: Math.round(pecas),
+      faturamento: round(faturamento),
+      pa: transacoes > 0 ? round(pecas / transacoes) : 0,
+      tm: transacoes > 0 ? round(faturamento / transacoes) : 0,
+    };
+  });
+}
+
+// Nomes de vendedor - vem de dim_vendedor (sincronizado pelo ETL), nao mais de uma
+// chamada ao vivo na API do TOTVS. A busca ao vivo (seller/v2/search) so cobria uma
+// lista fixa de filiais no codigo (nunca incluia Fabrica/2 nem 10/16/18/19), entao
+// vendedor dessas filiais sempre caia no fallback "Vendedor {code}". dim_vendedor cobre
+// todas as filiais e se corrige sozinho se o ETL atualizar um nome depois.
+export async function getVendedoresMap(): Promise<Map<number, string>> {
+  const rows = await prisma.dim_vendedor.findMany({ select: { seller_code: true, seller_name: true } });
+  const map = new Map<number, string>();
+  for (const r of rows) {
+    if (r.seller_name) map.set(r.seller_code, r.seller_name);
+  }
+  return map;
+}
+
 // Top produtos
 export async function getTopProdutos(
   startDate: Date,
@@ -347,19 +535,19 @@ export async function getTopProdutos(
     SELECT
       COALESCE(p.reference_code, ti.product_code::text) as referencia,
       COALESCE(p.reference_name, p.product_name, 'Produto ' || ti.product_code) as nome,
-      SUM(ti.quantity * ${DEVOLUTION_SIGN}) as quantidade,
-      SUM(ti.net_value * ${DEVOLUTION_SIGN}) as valor
+      SUM(${PECAS_COM_SINAL}) as quantidade,
+      SUM(${FATURAMENTO_COM_SINAL}) as valor
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ti.seller_code != 1
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
-      AND (p.is_finished_product = true OR p.product_code IS NULL)
       ${branchFilter}
       ${produtoFilter}
     GROUP BY COALESCE(p.reference_code, ti.product_code::text),
@@ -392,17 +580,17 @@ export async function getDevolucoesPorFilial(
     SELECT
       t.branch_code,
       COUNT(DISTINCT t.transaction_code) as qtde_dev,
-      COALESCE(SUM(ti.net_value), 0) as valor_dev
+      COALESCE(SUM(ABS(ti.net_value)), 0) as valor_dev
     FROM transacoes t
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
-      AND t.operation_code IN (${Prisma.join(DEVOLUTION_OPERATIONS_LIST)})
+      AND ${IS_DEVOLUCAO}
       AND ${STORE_BRANCH_FILTER}
-      AND ${REAL_CUSTOMER_FILTER}
       ${produtoFilter}
     GROUP BY t.branch_code
   `;
@@ -410,6 +598,55 @@ export async function getDevolucoesPorFilial(
   const map = new Map<number, { valor: number; qtde: number }>();
   for (const row of results) {
     map.set(row.branch_code, {
+      valor: round(decimalToNumber(row.valor_dev)),
+      qtde: Number(row.qtde_dev),
+    });
+  }
+  return map;
+}
+
+// Mesma divisao de getVendasFabricaDividida, aplicada a devolucao - sem isso, toda
+// devolucao da Fabrica (que na pratica e quase toda do Atacado) cairia na linha "2"
+// mesmo com pouca venda ali, mostrando um % de devolucao sem sentido.
+export async function getDevolucoesFabricaDividida(
+  startDate: Date,
+  endDate: Date,
+  produtoFiltro?: ProdutoFiltro
+): Promise<Map<number, { valor: number; qtde: number }>> {
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    linha: string;
+    qtde_dev: bigint;
+    valor_dev: Decimal;
+  }>>`
+    SELECT
+      CASE
+        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
+        ELSE '2'
+      END as linha,
+      COUNT(DISTINCT t.transaction_code) as qtde_dev,
+      COALESCE(SUM(ABS(ti.net_value)), 0) as valor_dev
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    ${PRODUTO_ANALITICO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND t.branch_code = 2
+      AND ${IS_DEVOLUCAO}
+      ${produtoFilter}
+    GROUP BY linha
+  `;
+
+  const CODIGO_LINHA: Record<string, number> = { '2': 2, '2.1': 2.1, '2.3': 2.3 };
+
+  const map = new Map<number, { valor: number; qtde: number }>();
+  for (const row of results) {
+    map.set(CODIGO_LINHA[row.linha] ?? 2, {
       valor: round(decimalToNumber(row.valor_dev)),
       qtde: Number(row.qtde_dev),
     });
@@ -434,6 +671,7 @@ export async function getClientesNovosPorFilial(
     WITH primeira_compra AS (
       SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
       FROM transacoes t
+      ${OPERACAO_JOIN}
       WHERE t.customer_code IS NOT NULL
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
@@ -448,12 +686,13 @@ export async function getClientesNovosPorFilial(
     SELECT
       t.branch_code,
       COUNT(DISTINCT t.customer_code) as clientes_novos,
-      COALESCE(SUM(ti.net_value * ${DEVOLUTION_SIGN}), 0) as faturamento_cn
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento_cn
     FROM transacoes t
     JOIN novos n ON n.customer_code = t.customer_code
     LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
@@ -471,6 +710,50 @@ export async function getClientesNovosPorFilial(
     });
   }
   return map;
+}
+
+// Todo operation_code distinto ja visto no historico - usado pra sincronizar a
+// classificacao (classificacao_operacoes) direto da API do TOTVS.
+export async function getTodosOperationCodes(): Promise<number[]> {
+  const rows = await prisma.$queryRaw<Array<{ operation_code: number }>>`
+    SELECT DISTINCT operation_code FROM transacoes WHERE operation_code IS NOT NULL
+  `;
+  return rows.map((r) => r.operation_code);
+}
+
+// Faturamento por canal (Varejo x Atacado) - Atacado NAO e definido por filial (a
+// Fabrica/branch 2 vende Atacado, mas tambem Varejo/Delivery dentro da mesma filial,
+// e contava tudo como Atacado por engano). O sinal de canal vem da descricao da
+// operacao classificada (ex: "800 - VENDA ATACADO (FABRICA)", "802 - DEVOLUCAO VENDA
+// ATACADO (FABRICA)") em vez de um operation_code fixo, pelo mesmo motivo de sempre:
+// o TOTVS pode criar/trocar o codigo, a descricao e o sinal mais estavel.
+export async function getVendasPorCanal(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<{ varejo: number; atacado: number }> {
+  const branchFilter = buildBranchFilter(branchCodes);
+
+  const results = await prisma.$queryRaw<Array<{ atacado: Decimal | null; total: Decimal | null }>>`
+    SELECT
+      COALESCE(SUM(CASE WHEN co.description ILIKE '%ATACADO%' THEN ${FATURAMENTO_COM_SINAL} ELSE 0 END), 0) as atacado,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as total
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+  `;
+
+  const row = results[0];
+  const atacado = round(decimalToNumber(row?.atacado ?? null));
+  const total = round(decimalToNumber(row?.total ?? null));
+  return { varejo: round(total - atacado), atacado };
 }
 
 // Meta (nível 3 = 100%) por filial, apenas metas de loja (seller_code IS NULL)

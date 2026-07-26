@@ -9,25 +9,26 @@ export const FILIAIS: Record<number, string> = {
   7: 'PARANGABA',
   8: 'RIOMAR',
   9: 'IGUATEMI EXP.',
+  10: 'MOSSORO',
   11: 'RIOMAR PK',
   12: 'MESSEJANA',
   13: 'EUSEBIO',
+  16: 'VIA SUL',
   17: 'NORTH SHOPPING',
+  18: 'TERRAZO SHOPPING',
+  19: 'MART MODA',
 };
-
-// Operações excluídas (não são vendas)
-export const EXCLUDED_OPERATIONS = new Set([
-  140, 76, 25, 26, 27, 273, 44, 240, 241, 242, 243, 244, 245, 239, 238, 237, 236
-]);
 
 // Filiais que não são lojas de venda - hoje nenhuma (Fabrica/2 passou a vender como Atacado)
 export const EXCLUDED_BRANCH_CODES = new Set<number>([]);
 
-// Operações de devolução (TOTVS: invoiceData.operationsType = 'E' e operationMode = '3')
-// Contam como faturamento negativo/devolução, não como venda.
-export const DEVOLUTION_OPERATIONS = new Set([
-  1, 46, 192, 604, 802, 900, 905, 9041
-]);
+// A classificacao de venda/devolucao NAO usa mais lista de operation_code fixa aqui -
+// isso ja causou faturamento inflado mais de uma vez porque o TOTVS cria operacao nova
+// (compra, consignacao, remessa, brinde) sem avisar, e ela caia como "venda" por padrao
+// ate alguem desconfiar de um numero errado. Agora vem de `classificacao_operacoes`
+// (tabela propria, sincronizada da API do TOTVS via totvs.service.ts syncClassificacaoOperacoes),
+// usando operationsType/operationMode direto - ver OPERACAO_JOIN/IS_VENDA/IS_DEVOLUCAO
+// em vendas.service.ts.
 
 // Níveis de meta (percentuais)
 export const NIVEL_PERCENTUAIS = {

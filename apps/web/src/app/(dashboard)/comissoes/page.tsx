@@ -7,7 +7,9 @@ import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge } from '@/components/ui/Badge';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
-import { metasApi, ComissoesResponse, VendedorComissao } from '@/lib/api';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
+import { metasApi, ComissoesResponse, VendedorComissao, ComissaoCelula } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,6 +20,7 @@ export default function ComissoesPage() {
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  const [vendedoresSelecionados, setVendedoresSelecionados] = useState<string[]>([]);
   const [dados, setDados] = useState<ComissoesResponse | null>(null);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -54,6 +57,27 @@ export default function ComissoesPage() {
 
   const niveis = dados?.niveis || [];
 
+  const filiaisMatriz = useMemo(() => {
+    const codes = new Set<number>();
+    (dados?.vendedores || []).forEach((v) => v.filiais.forEach((c) => codes.add(c)));
+    return Array.from(codes).sort((a, b) => (FILIAIS[a] || '').localeCompare(FILIAIS[b] || ''));
+  }, [dados]);
+
+  const vendedorOptions = useMemo(() => {
+    return (dados?.vendedores || [])
+      .map((v) => ({ value: String(v.seller_code), label: v.seller_name || `Vendedor ${v.seller_code}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [dados]);
+
+  // Filtro de vendedor e so de exibicao (client-side) - os dados ja vem carregados
+  // com todos os vendedores do periodo/filial, entao nao precisa recarregar da API.
+  const vendedoresFiltrados = useMemo(() => {
+    const base = dados?.vendedores || [];
+    if (vendedoresSelecionados.length === 0) return base;
+    const selecionadosNum = new Set(vendedoresSelecionados.map(Number));
+    return base.filter((v) => selecionadosNum.has(v.seller_code));
+  }, [dados, vendedoresSelecionados]);
+
   function handleSort(key: string) {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -70,7 +94,7 @@ export default function ComissoesPage() {
   }
 
   const vendedoresOrdenados = useMemo(() => {
-    const base = dados?.vendedores || [];
+    const base = vendedoresFiltrados;
     if (!sortKey) return base;
     const arr = [...base];
     arr.sort((a, b) => {
@@ -83,7 +107,37 @@ export default function ComissoesPage() {
     });
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dados, sortKey, sortDir]);
+  }, [vendedoresFiltrados, sortKey, sortDir]);
+
+  // Uma linha por combinacao (vendedor, loja) - nao agrupa varias lojas do mesmo
+  // vendedor numa linha so, porque cada loja tem meta/nivel/comissao proprios.
+  type LinhaComissao = ComissaoCelula & { seller_code: number; seller_name: string };
+
+  const linhas: LinhaComissao[] = useMemo(() => {
+    return vendedoresFiltrados.flatMap((v) =>
+      v.celulas.map((c) => ({ ...c, seller_code: v.seller_code, seller_name: v.seller_name }))
+    );
+  }, [vendedoresFiltrados]);
+
+  function getSortValueLinha(l: LinhaComissao, key: string): number | string {
+    if (key === 'seller_name') return l.seller_name;
+    return (l[key as keyof LinhaComissao] as number) ?? 0;
+  }
+
+  const linhasOrdenadas = useMemo(() => {
+    if (!sortKey) return linhas;
+    const arr = [...linhas];
+    arr.sort((a, b) => {
+      const va = getSortValueLinha(a, sortKey);
+      const vb = getSortValueLinha(b, sortKey);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        return String(va).localeCompare(String(vb)) * (sortDir === 'asc' ? 1 : -1);
+      }
+      return (va - vb) * (sortDir === 'asc' ? 1 : -1);
+    });
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas, sortKey, sortDir]);
 
   function ThSort({ label, sortKeyName, align = 'right' }: { label: React.ReactNode; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName;
@@ -100,18 +154,19 @@ export default function ComissoesPage() {
     exportToCsv(
       `comissoes-${ano}-${String(mes).padStart(2, '0')}`,
       [
-        { header: 'Vendedor', value: (v: VendedorComissao) => v.seller_name },
-        { header: 'Faturamento', value: (v: VendedorComissao) => v.faturamento },
+        { header: 'Vendedor', value: (l: LinhaComissao) => l.seller_name },
+        { header: 'Loja', value: (l: LinhaComissao) => l.branch_name },
+        { header: 'Faturamento', value: (l: LinhaComissao) => l.faturamento },
         ...niveis.map((n) => ({
           header: n.nivel_nome,
-          value: (v: VendedorComissao) => (v[`nivel_${n.nivel_ordem}` as keyof VendedorComissao] as number) ?? 0,
+          value: (l: LinhaComissao) => (l[`nivel_${n.nivel_ordem}` as keyof LinhaComissao] as number) ?? 0,
         })),
-        { header: 'Nivel Atingido', value: (v: VendedorComissao) => niveis.find((n) => n.nivel_ordem === v.nivel_atingido)?.nivel_nome ?? '-' },
-        { header: 'Resultado %', value: (v: VendedorComissao) => v.resultado_pct },
-        { header: '% Comissao', value: (v: VendedorComissao) => v.comissao_pct },
-        { header: 'Comissao', value: (v: VendedorComissao) => v.comissao_valor },
+        { header: 'Nivel Atingido', value: (l: LinhaComissao) => niveis.find((n) => n.nivel_ordem === l.nivel_atingido)?.nivel_nome ?? '-' },
+        { header: 'Resultado %', value: (l: LinhaComissao) => l.resultado_pct },
+        { header: '% Comissao', value: (l: LinhaComissao) => l.comissao_pct },
+        { header: 'Comissao', value: (l: LinhaComissao) => l.comissao_valor },
       ],
-      vendedoresOrdenados
+      linhasOrdenadas
     );
   }
 
@@ -152,6 +207,13 @@ export default function ComissoesPage() {
             label="Filial"
             className="w-52"
           />
+          <ClassificacaoMultiSelect
+            selected={vendedoresSelecionados}
+            onChange={setVendedoresSelecionados}
+            options={vendedorOptions}
+            label="Vendedor"
+            className="w-52"
+          />
           <Button onClick={carregarDados} isLoading={isLoading}>
             Atualizar
           </Button>
@@ -159,7 +221,7 @@ export default function ComissoesPage() {
       </div>
 
       {/* Realizado vs Meta + Canal + Top3 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <LoadingOverlay active={isLoading} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="border-l-4 border-l-[var(--bbtk-red)]">
           <CardTitle>Realizado vs Meta</CardTitle>
           <div className="mt-2">
@@ -213,7 +275,7 @@ export default function ComissoesPage() {
             )}
           </div>
         </Card>
-      </div>
+      </LoadingOverlay>
 
       {/* Tabela de vendedores */}
       <Card>
@@ -228,16 +290,16 @@ export default function ComissoesPage() {
             </Button>
           </div>
         </CardHeader>
-        {isLoading ? (
-          <div className="py-10 text-center text-gray-500">Carregando...</div>
-        ) : !dados || dados.vendedores.length === 0 ? (
+        {!isLoading && (!dados || vendedoresFiltrados.length === 0) ? (
           <div className="py-10 text-center text-gray-500">Nenhum vendedor com vendas nesse periodo</div>
         ) : (
+          <LoadingOverlay active={isLoading}>
           <Table>
             <TableHead>
               <TableRow>
                 <TableCell isHeader>#</TableCell>
                 <ThSort label="Vendedor" sortKeyName="seller_name" align="left" />
+                <ThSort label="Loja" sortKeyName="branch_name" align="left" />
                 <ThSort label="Faturamento" sortKeyName="faturamento" />
                 {niveis.map((n) => (
                   <ThSort
@@ -260,16 +322,17 @@ export default function ComissoesPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {vendedoresOrdenados.map((v, i) => {
-                const nivelInfo = niveis.find((n) => n.nivel_ordem === v.nivel_atingido);
+              {linhasOrdenadas.map((l, i) => {
+                const nivelInfo = niveis.find((n) => n.nivel_ordem === l.nivel_atingido);
                 return (
-                  <TableRow key={v.seller_code}>
+                  <TableRow key={`${l.seller_code}-${l.branch_code}`}>
                     <TableCell>{i + 1}</TableCell>
-                    <TableCell className="font-medium whitespace-nowrap">{v.seller_name}</TableCell>
-                    <TableCell align="right" className="whitespace-nowrap">{formatMoney(v.faturamento)}</TableCell>
+                    <TableCell className="font-medium whitespace-nowrap">{l.seller_name}</TableCell>
+                    <TableCell className="whitespace-nowrap">{l.branch_name}</TableCell>
+                    <TableCell align="right" className="whitespace-nowrap">{formatMoney(l.faturamento)}</TableCell>
                     {niveis.map((n) => {
-                      const alvo = v[`nivel_${n.nivel_ordem}` as keyof typeof v] as number;
-                      const atingiu = v.nivel_atingido >= n.nivel_ordem && alvo > 0;
+                      const alvo = l[`nivel_${n.nivel_ordem}` as keyof typeof l] as number;
+                      const atingiu = l.nivel_atingido >= n.nivel_ordem && alvo > 0;
                       return (
                         <TableCell
                           key={n.nivel_ordem}
@@ -287,26 +350,26 @@ export default function ComissoesPage() {
                           style={{ backgroundColor: nivelInfo.nivel_cor }}
                           variant="default"
                         >
-                          {nivelInfo.nivel_nome} ({v.resultado_pct.toFixed(1)}%)
+                          {nivelInfo.nivel_nome} ({l.resultado_pct.toFixed(1)}%)
                         </Badge>
                       ) : (
-                        <span className="text-gray-400 text-sm">{v.resultado_pct.toFixed(1)}%</span>
+                        <span className="text-gray-400 text-sm">{l.resultado_pct.toFixed(1)}%</span>
                       )}
                     </TableCell>
-                    <TableCell align="center" className="whitespace-nowrap">{v.comissao_pct.toFixed(1)}%</TableCell>
+                    <TableCell align="center" className="whitespace-nowrap">{l.comissao_pct.toFixed(1)}%</TableCell>
                     <TableCell align="right" className="whitespace-nowrap font-semibold">
-                      {formatMoney(v.comissao_valor)}
+                      {formatMoney(l.comissao_valor)}
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
-            {dados.vendedores.length > 0 && (
+            {vendedoresFiltrados.length > 0 && (
               <tfoot>
                 <TableRow isHighlighted>
-                  <TableCell className="font-bold" colSpan={2}>TOTAL</TableCell>
+                  <TableCell className="font-bold" colSpan={3}>TOTAL</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados.vendedores.reduce((s, v) => s + v.faturamento, 0))}
+                    {formatMoney(vendedoresFiltrados.reduce((s, v) => s + v.faturamento, 0))}
                   </TableCell>
                   {niveis.map((n) => (
                     <TableCell key={n.nivel_ordem} />
@@ -314,12 +377,73 @@ export default function ComissoesPage() {
                   <TableCell align="center">-</TableCell>
                   <TableCell align="center">-</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados.vendedores.reduce((s, v) => s + v.comissao_valor, 0))}
+                    {formatMoney(vendedoresFiltrados.reduce((s, v) => s + v.comissao_valor, 0))}
                   </TableCell>
                 </TableRow>
               </tfoot>
             )}
           </Table>
+          </LoadingOverlay>
+        )}
+      </Card>
+
+      {/* Matriz Vendedor x Loja */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Matriz Vendedor x Loja</CardTitle>
+        </CardHeader>
+        <p className="text-sm text-gray-500 -mt-2 mb-2">
+          Faturamento de cada vendedor por loja no periodo - deixa claro em qual(is) loja(s)
+          cada vendedor vendeu e qual comissao se aplica em cada uma.
+        </p>
+        {!isLoading && (!dados || vendedoresFiltrados.length === 0 || filiaisMatriz.length === 0) ? (
+          <div className="py-10 text-center text-gray-500">Nenhum dado para montar a matriz</div>
+        ) : (
+          <LoadingOverlay active={isLoading} className="overflow-x-auto">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell isHeader align="left">Vendedor</TableCell>
+                  {filiaisMatriz.map((code) => (
+                    <TableCell key={code} isHeader align="right" className="whitespace-nowrap">
+                      {FILIAIS[code] || `Filial ${code}`}
+                    </TableCell>
+                  ))}
+                  <TableCell isHeader align="right">Total</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {vendedoresOrdenados.map((v) => {
+                  const celulaPorFilial = new Map(v.celulas.map((c) => [c.branch_code, c]));
+                  return (
+                    <TableRow key={v.seller_code}>
+                      <TableCell className="font-medium whitespace-nowrap">{v.seller_name}</TableCell>
+                      {filiaisMatriz.map((code) => {
+                        const celula = celulaPorFilial.get(code);
+                        return (
+                          <TableCell key={code} align="right" className="whitespace-nowrap">
+                            {celula ? (
+                              <div>
+                                {formatMoney(celula.faturamento)}
+                                <div className="text-xs text-gray-400">
+                                  {celula.comissao_pct.toFixed(1)}% = {formatMoney(celula.comissao_valor)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell align="right" className="font-semibold whitespace-nowrap">
+                        {formatMoney(v.faturamento)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </LoadingOverlay>
         )}
       </Card>
     </div>

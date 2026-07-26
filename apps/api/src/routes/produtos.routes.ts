@@ -6,10 +6,13 @@ const router = Router();
 
 router.use(authMiddleware, moduleAccess('pcp'));
 
-// Cores distintas cadastradas
-router.get('/produtos/cores', async (_req: Request, res: Response) => {
+// Cores distintas cadastradas - ?tipo=cor_produto exclui cor ja usada em outro
+// agrupamento; ?grupoId=X mantem visiveis as cores do proprio grupo (tela de edicao)
+router.get('/produtos/cores', async (req: Request, res: Response) => {
   try {
-    const cores = await produtosService.getCoresDistintas();
+    const tipo = req.query.tipo as string | undefined;
+    const grupoId = req.query.grupoId ? parseInt(req.query.grupoId as string) : undefined;
+    const cores = await produtosService.getCoresDistintas(tipo, grupoId);
     res.json({ cores });
   } catch (error) {
     res.status(500).json({ error: String(error) });

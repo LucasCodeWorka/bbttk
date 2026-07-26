@@ -36,6 +36,11 @@ export default function MetasPage() {
     nivel_3: '',
     nivel_4: '',
     nivel_5: '',
+    comissao_nivel_1: '',
+    comissao_nivel_2: '',
+    comissao_nivel_3: '',
+    comissao_nivel_4: '',
+    comissao_nivel_5: '',
   });
 
   // Modal Distribuição
@@ -146,6 +151,11 @@ export default function MetasPage() {
         nivel_3: parseFloat(metaForm.nivel_3) || 0,
         nivel_4: parseFloat(metaForm.nivel_4) || 0,
         nivel_5: parseFloat(metaForm.nivel_5) || 0,
+        comissao_nivel_1: metaForm.comissao_nivel_1 === '' ? null : parseFloat(metaForm.comissao_nivel_1),
+        comissao_nivel_2: metaForm.comissao_nivel_2 === '' ? null : parseFloat(metaForm.comissao_nivel_2),
+        comissao_nivel_3: metaForm.comissao_nivel_3 === '' ? null : parseFloat(metaForm.comissao_nivel_3),
+        comissao_nivel_4: metaForm.comissao_nivel_4 === '' ? null : parseFloat(metaForm.comissao_nivel_4),
+        comissao_nivel_5: metaForm.comissao_nivel_5 === '' ? null : parseFloat(metaForm.comissao_nivel_5),
       });
 
       showToast('Meta salva com sucesso!', 'success');
@@ -158,6 +168,11 @@ export default function MetasPage() {
         nivel_3: '',
         nivel_4: '',
         nivel_5: '',
+        comissao_nivel_1: '',
+        comissao_nivel_2: '',
+        comissao_nivel_3: '',
+        comissao_nivel_4: '',
+        comissao_nivel_5: '',
       });
       carregarDados();
     } catch (error) {
@@ -494,11 +509,18 @@ export default function MetasPage() {
                       : <em className="text-gray-500">Todos</em>
                     }
                   </TableCell>
-                  <TableCell align="right">{formatMoney(m.nivel_1)}</TableCell>
-                  <TableCell align="right">{formatMoney(m.nivel_2)}</TableCell>
-                  <TableCell align="right">{formatMoney(m.nivel_3)}</TableCell>
-                  <TableCell align="right">{formatMoney(m.nivel_4)}</TableCell>
-                  <TableCell align="right">{formatMoney(m.nivel_5)}</TableCell>
+                  {([1, 2, 3, 4, 5] as const).map(ordem => {
+                    const valor = m[`nivel_${ordem}` as keyof Meta] as number;
+                    const comissao = m[`comissao_nivel_${ordem}` as keyof Meta] as number | null;
+                    return (
+                      <TableCell key={ordem} align="right">
+                        {formatMoney(valor)}
+                        {comissao !== null && (
+                          <div className="text-xs text-gray-400">{comissao}%</div>
+                        )}
+                      </TableCell>
+                    );
+                  })}
                   <TableCell align="center">
                     <Button
                       variant="danger"
@@ -561,6 +583,30 @@ export default function MetasPage() {
                 placeholder="0,00"
               />
             ))}
+          </div>
+
+          <div>
+            <p className="text-sm text-gray-500 mb-2">
+              % de comissao por nivel para esta loja/vendedor - deixe em branco pra usar o
+              padrao global configurado abaixo.
+            </p>
+            <div className="grid grid-cols-5 gap-2">
+              {niveis.map(n => (
+                <Input
+                  key={n.nivel_ordem}
+                  label={`${n.nivel_nome} %`}
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={metaForm[`comissao_nivel_${n.nivel_ordem}` as keyof typeof metaForm]}
+                  onChange={(e) => setMetaForm(prev => ({
+                    ...prev,
+                    [`comissao_nivel_${n.nivel_ordem}`]: e.target.value,
+                  }))}
+                  placeholder="Padrao"
+                />
+              ))}
+            </div>
           </div>
         </div>
 

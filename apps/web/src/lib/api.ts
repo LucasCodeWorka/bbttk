@@ -68,11 +68,11 @@ function branchesQuery(branchCodes?: number[]): string {
   return branchCodes && branchCodes.length > 0 ? `branches=${branchCodes.join(',')}` : '';
 }
 
-// Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
+// Filtro de classificacao de produto (categoria, genero, status, linha, colecao, tecido)
 export interface ProdutoFiltro {
   categoria?: string[];
   genero?: string[];
-  grupo?: string[];
+  status?: string[];
   linha?: string[];
   colecao?: string[];
   tecido?: string[];
@@ -125,9 +125,9 @@ export const vendasApi = {
       `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getComparativoAno: (inicio: string, fim: string, produtoFiltro?: ProdutoFiltro) =>
+  getComparativoAno: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<ComparativoAnoResponse>(
-      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(produtoFiltroQuery(produtoFiltro))}`
+      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
   getProjecaoMes: (branchCode?: number, produtoFiltro?: ProdutoFiltro) =>
@@ -168,8 +168,13 @@ async function uploadFile<T>(endpoint: string, token: string, file: File): Promi
 
 // Produtos
 export const produtosApi = {
-  getCores: (token: string) =>
-    fetchApi<{ cores: CorProduto[] }>('/api/produtos/cores', { token }),
+  getCores: (token: string, tipo?: string, grupoId?: number) => {
+    const params = new URLSearchParams();
+    if (tipo) params.set('tipo', tipo);
+    if (grupoId) params.set('grupoId', String(grupoId));
+    const qs = params.toString();
+    return fetchApi<{ cores: CorProduto[] }>(`/api/produtos/cores${qs ? `?${qs}` : ''}`, { token });
+  },
 
   getImpactoAgrupamento: (token: string, tipo: string, cores: { color_code: string | null; color_name: string | null }[], excluirGrupoId?: number) =>
     fetchApi<{ impacto: ImpactoAgrupamentoItem[] }>('/api/produtos/impacto-agrupamento', {
@@ -305,6 +310,8 @@ export interface VendasResponse {
     transacoes: number;
     pa: number;
     tm: number;
+    clientes: number;
+    pm: number;
   };
 }
 
@@ -422,6 +429,10 @@ export interface ComparativoAnoResponse {
       faturamento: { atual: number; anterior: number; diferenca: number; percentual: number };
       pecas: { atual: number; anterior: number; diferenca: number; percentual: number };
       transacoes: { atual: number; anterior: number; diferenca: number; percentual: number };
+      clientes: { atual: number; anterior: number; diferenca: number; percentual: number };
+      tm: { atual: number; anterior: number; diferenca: number; percentual: number };
+      pa: { atual: number; anterior: number; diferenca: number; percentual: number };
+      pm: { atual: number; anterior: number; diferenca: number; percentual: number };
     };
   };
 }
@@ -545,9 +556,9 @@ export interface MetaNivel {
   comissao_percentual: number;
 }
 
-export interface VendedorComissao {
-  seller_code: number;
-  seller_name: string;
+export interface ComissaoCelula {
+  branch_code: number;
+  branch_name: string;
   faturamento: number;
   nivel_1: number;
   nivel_2: number;
@@ -558,6 +569,23 @@ export interface VendedorComissao {
   resultado_pct: number;
   comissao_pct: number;
   comissao_valor: number;
+}
+
+export interface VendedorComissao {
+  seller_code: number;
+  seller_name: string;
+  filiais: number[];
+  faturamento: number;
+  nivel_1: number;
+  nivel_2: number;
+  nivel_3: number;
+  nivel_4: number;
+  nivel_5: number;
+  nivel_atingido: number;
+  resultado_pct: number;
+  comissao_pct: number;
+  comissao_valor: number;
+  celulas: ComissaoCelula[];
 }
 
 export interface CanalComissao {
@@ -588,6 +616,11 @@ export interface Meta {
   nivel_3: number;
   nivel_4: number;
   nivel_5: number;
+  comissao_nivel_1: number | null;
+  comissao_nivel_2: number | null;
+  comissao_nivel_3: number | null;
+  comissao_nivel_4: number | null;
+  comissao_nivel_5: number | null;
 }
 
 export interface MetaData {
@@ -600,6 +633,11 @@ export interface MetaData {
   nivel_3: number;
   nivel_4: number;
   nivel_5: number;
+  comissao_nivel_1?: number | null;
+  comissao_nivel_2?: number | null;
+  comissao_nivel_3?: number | null;
+  comissao_nivel_4?: number | null;
+  comissao_nivel_5?: number | null;
 }
 
 export interface DistribuicaoItem {

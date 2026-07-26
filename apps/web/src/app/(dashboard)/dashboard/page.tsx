@@ -11,6 +11,7 @@ import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge, VariationBadge } from '@/components/ui/Badge';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
@@ -96,7 +97,7 @@ export default function DashboardPage() {
         granularidade === 'diario'
           ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
           : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getComparativoAno(dataInicio, dataFim, produtoFiltro),
+        vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getProjecaoFiliais(produtoFiltro),
@@ -140,8 +141,8 @@ export default function DashboardPage() {
 
   const filialOptions = filiaisDisponiveis.map((f) => ({ value: parseInt(f.value), label: f.label }));
 
-  // Dados para o gráfico de barras
-  const dadosBarras = vendas?.filiais?.slice(0, 8).map(f => ({
+  // Dados para o gráfico de barras - todas as filiais, nao so as primeiras 8
+  const dadosBarras = vendas?.filiais?.map(f => ({
     name: f.branch_name,
     value: f.faturamento,
   })) || [];
@@ -297,31 +298,61 @@ export default function DashboardPage() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <KPICard
-          title="Faturamento"
+          title="Venda"
           value={formatMoney(vendas?.total?.faturamento || 0)}
           variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
-          title="Pecas"
+          title="Quantidade"
           value={formatNumber(vendas?.total?.pecas || 0)}
           variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
-          title="Ticket Medio"
+          title="TKM"
           value={formatMoney(vendas?.total?.tm || 0)}
+          variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"
+          valueSize="xs"
           isLoading={isLoading}
         />
         <KPICard
-          title="Pecas/Atendimento"
+          title="PA"
           value={(vendas?.total?.pa || 0).toFixed(2)}
+          variation={comparativo?.total?.variacao?.pa?.percentual}
           color="purple"
+          valueSize="xs"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Atendimento"
+          value={formatNumber(vendas?.total?.transacoes || 0)}
+          variation={comparativo?.total?.variacao?.transacoes?.percentual}
+          color="blue"
+          valueSize="xs"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Clientes"
+          value={formatNumber(vendas?.total?.clientes || 0)}
+          variation={comparativo?.total?.variacao?.clientes?.percentual}
+          color="red"
+          valueSize="xs"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Preco Medio"
+          value={formatMoney(vendas?.total?.pm || 0)}
+          variation={comparativo?.total?.variacao?.pm?.percentual}
+          color="green"
+          valueSize="xs"
           isLoading={isLoading}
         />
       </div>
@@ -332,14 +363,22 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Vendas Diarias</CardTitle>
           </CardHeader>
-          <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
+          <LoadingOverlay active={isLoading}>
+            <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
+          </LoadingOverlay>
         </Card>
 
         <Card>
           <CardHeader>
             <CardTitle>Vendas por Filial</CardTitle>
           </CardHeader>
-          <BarChart data={dadosBarras} horizontal />
+          <div className="mb-4 pb-4 border-b border-gray-100">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total</p>
+            <p className="text-sm font-bold text-gray-900">{formatMoney(vendas?.total?.faturamento || 0)}</p>
+          </div>
+          <LoadingOverlay active={isLoading}>
+            <BarChart data={dadosBarras} horizontal />
+          </LoadingOverlay>
         </Card>
       </div>
 
@@ -351,6 +390,7 @@ export default function DashboardPage() {
             Exportar Excel
           </Button>
         </CardHeader>
+        <LoadingOverlay active={isLoading}>
         <Table>
           <TableHead>
             <TableRow>
@@ -527,6 +567,7 @@ export default function DashboardPage() {
             )}
           </TableBody>
         </Table>
+        </LoadingOverlay>
       </Card>
 
       {/* Vendedores e Produtos */}
@@ -536,7 +577,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Ranking Vendedores</CardTitle>
           </CardHeader>
-          <div className="max-h-96 overflow-y-auto">
+          <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
               <TableHead>
                 <TableRow>
@@ -569,7 +610,7 @@ export default function DashboardPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </LoadingOverlay>
         </Card>
 
         {/* Top Produtos */}
@@ -577,7 +618,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Top Produtos</CardTitle>
           </CardHeader>
-          <div className="max-h-96 overflow-y-auto">
+          <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
               <TableHead>
                 <TableRow>
@@ -601,8 +642,11 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium" title={p.nome}>
-                      {p.nome.length > 25 ? p.nome.substring(0, 25) + '...' : p.nome}
+                    <TableCell className="font-medium" title={`${p.referencia} - ${p.nome}`}>
+                      {p.referencia}
+                      <span className="text-gray-400 font-normal">
+                        {' '}- {p.nome.length > 20 ? p.nome.substring(0, 20) + '...' : p.nome}
+                      </span>
                     </TableCell>
                     <TableCell align="right">{formatNumber(p.quantidade)}</TableCell>
                     <TableCell align="right">{formatMoney(p.valor)}</TableCell>
@@ -610,7 +654,7 @@ export default function DashboardPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </LoadingOverlay>
         </Card>
       </div>
     </div>

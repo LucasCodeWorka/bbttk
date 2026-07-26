@@ -1,10 +1,20 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
-import { getVendedoresApi } from '../services/totvs.service.js';
+import { syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
+import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+// Antes de qualquer calculo de faturamento, garante que nao apareceu operation_code
+// novo sem classificacao (o TOTVS ja criou operacao nova sem avisar varias vezes) -
+// so bate no banco de verdade a cada 10 min (cache em memoria), entao nao pesa em
+// toda requisicao. Se achar codigo novo, sincroniza sozinho antes de responder.
+router.use(async (_req: Request, _res: Response, next: NextFunction) => {
+  await garantirClassificacaoAtualizada();
+  next();
+});
 
 // Resolve o filtro de classificacao de produto a partir da query string, ex:
 // ?categoria=CAMISA,BLUSA&genero=FEMININO - undefined quando nada foi passado.
@@ -19,7 +29,7 @@ function resolveProdutoFiltro(req: Request): ProdutoFiltro | undefined {
   const filtro: ProdutoFiltro = {
     categoria: parseLista('categoria'),
     genero: parseLista('genero'),
-    grupo: parseLista('grupo'),
+    status: parseLista('status'),
     linha: parseLista('linha'),
     colecao: parseLista('colecao'),
     tecido: parseLista('tecido'),
@@ -198,8 +208,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
 
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
 
-    // Buscar nomes dos vendedores da API TOTVS
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
 
     // Adicionar nomes
     const vendedoresComNomes = vendedores.map(v => ({
@@ -222,7 +231,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
 // Lista de vendedores (para select)
 router.get('/vendedores-lista', async (_req: Request, res: Response) => {
   try {
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
     const vendedores = Array.from(nomes.entries())
       .map(([code, name]) => ({ code, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -246,7 +255,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
     const endDate = new Date(ano, mes - 1, 0);
 
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
 
     const vendedoresComNomes = vendedores
       .map(v => ({
@@ -271,6 +280,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
 // Comparativo ano
 router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response) => {
   try {
+    const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
     const today = new Date();
     let startAtual: Date;
@@ -294,19 +304,37 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const ultimoDiaMes = new Date(ano, mes, 0);
     const diasRestantes = Math.max(ultimoDiaMes.getDate() - endAtual.getDate(), 0);
 
-    const [
+    let [
       filiaisAtual,
       filiaisAnterior,
       devolucoesMap,
       clientesNovosMap,
       metasMap,
     ] = await Promise.all([
-      vendasService.getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro),
-      vendasService.getVendasPeriodo(startAnterior, endAnterior, undefined, produtoFiltro),
+      vendasService.getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro),
+      vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro),
       vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getMetasPorFilial(ano, mes),
     ]);
+
+    // Fabrica (branch_code 2) vende em 3 canais (varejo, delivery, atacado) - troca a
+    // linha unica por 3, igual o relatorio nativo do TOTVS mostra (2/2.1/2.3). Meta e
+    // clientes-novos continuam so na linha "2" (sem infraestrutura pra separar por
+    // operacao ainda) - ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
+    if (!branchCodes || branchCodes.includes(2)) {
+      const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
+        vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro),
+        vendasService.getVendasFabricaDividida(startAnterior, endAnterior, produtoFiltro),
+        vendasService.getDevolucoesFabricaDividida(startAtual, endAtual, produtoFiltro),
+      ]);
+      filiaisAtual = filiaisAtual.filter(f => f.branch_code !== 2).concat(fabricaDivididaAtual);
+      filiaisAnterior = filiaisAnterior.filter(f => f.branch_code !== 2).concat(fabricaDivididaAnterior);
+      devolucoesMap.delete(2);
+      for (const [codigo, valor] of devolucaoFabricaDividida) {
+        devolucoesMap.set(codigo, valor);
+      }
+    }
 
     const anteriorDict = new Map(filiaisAnterior.map(f => [f.branch_code, f]));
 
@@ -406,6 +434,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const varTotalFat = vendasService.calcularVariacao(totalAtual.faturamento, totalAnterior.faturamento);
     const varTotalPecas = vendasService.calcularVariacao(totalAtual.pecas, totalAnterior.pecas);
     const varTotalTrans = vendasService.calcularVariacao(totalAtual.transacoes, totalAnterior.transacoes);
+    const varTotalClientes = vendasService.calcularVariacao(totalAtual.clientes, totalAnterior.clientes);
+    const varTotalTm = vendasService.calcularVariacao(totalAtual.tm, totalAnterior.tm);
+    const varTotalPa = vendasService.calcularVariacao(totalAtual.pa, totalAnterior.pa);
+    const varTotalPm = vendasService.calcularVariacao(totalAtual.pm, totalAnterior.pm);
 
     filiaisComparativo.sort((a, b) => a.branch_code - b.branch_code);
 
@@ -426,6 +458,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
           faturamento: varTotalFat,
           pecas: varTotalPecas,
           transacoes: varTotalTrans,
+          clientes: varTotalClientes,
+          tm: varTotalTm,
+          pa: varTotalPa,
+          pm: varTotalPm,
         },
       },
     });
@@ -463,6 +499,19 @@ router.get('/produtos/classificacoes', async (_req: Request, res: Response) => {
   try {
     const dimensoes = await produtosService.getClassificacoes();
     res.json({ dimensoes });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Resincroniza a classificacao de operacoes (venda/devolucao/nenhuma) direto da API
+// do TOTVS pra todo operation_code ja visto no historico - roda sob demanda quando
+// aparecer numero estranho, pra pegar operacao nova que o TOTVS criou sem avisar.
+router.post('/produtos/sincronizar-classificacao-operacoes', authMiddleware, adminOnly, async (_req: Request, res: Response) => {
+  try {
+    const codigos = await vendasService.getTodosOperationCodes();
+    const atualizados = await syncClassificacaoOperacoes(codigos);
+    res.json({ codigos_encontrados: codigos.length, atualizados });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
