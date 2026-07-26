@@ -44,6 +44,8 @@ export interface EstoqueSemGiroSku {
   colecao: string | null;
   dias_sem_giro: number;
   ultima_venda: string | null;
+  lojas_total: number;
+  lojas_sem_venda: number;
   quantidade: number;
   valor: number;
   cobertura_meses: number | null;
@@ -270,6 +272,8 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     const quantidade = decimalToNumber(row.quantidade);
     const valor = decimalToNumber(row.valor);
     const cobertura = row.cobertura_meses === null ? null : decimalToNumber(row.cobertura_meses);
+    const ultimaVenda = row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null;
+    const semVendaNaLoja = !ultimaVenda || row.dias_sem_giro >= 9999;
 
     if (!atual) {
       skuMap.set(row.product_sku, {
@@ -278,7 +282,9 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
         descricao: row.descricao || row.product_sku,
         colecao: row.colecao,
         dias_sem_giro: row.dias_sem_giro,
-        ultima_venda: row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null,
+        ultima_venda: ultimaVenda,
+        lojas_total: 1,
+        lojas_sem_venda: semVendaNaLoja ? 1 : 0,
         quantidade: round(quantidade, 0),
         valor: round(valor),
         cobertura_meses: cobertura === null ? null : round(cobertura, 1),
@@ -295,6 +301,11 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
 
     atual.quantidade = round(atual.quantidade + quantidade, 0);
     atual.valor = round(atual.valor + valor);
+    atual.lojas_total += 1;
+    if (semVendaNaLoja) atual.lojas_sem_venda += 1;
+    if (ultimaVenda && (!atual.ultima_venda || ultimaVenda > atual.ultima_venda)) {
+      atual.ultima_venda = ultimaVenda;
+    }
     atual.dias_sem_giro = Math.max(atual.dias_sem_giro, row.dias_sem_giro);
     atual.cobertura_meses =
       atual.cobertura_meses === null || cobertura === null

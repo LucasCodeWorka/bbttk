@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card, CardHeader, CardTitle, CardValue } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
@@ -30,6 +30,13 @@ const COBERTURA_OPTIONS = [
   { value: '24+', label: 'Acima de 24 meses' },
 ];
 
+const CARD_COLORS = [
+  'border-l-4 border-l-[var(--bbtk-red)]',
+  'border-l-4 border-l-[var(--bbtk-green)]',
+  'border-l-4 border-l-[var(--bbtk-yellow)]',
+  'border-l-4 border-l-[var(--bbtk-purple)]',
+];
+
 function shortLojaName(name: string, branchCode: number) {
   const clean = name.replace(' SHOPPING', '').replace('PATIO ', 'P. ');
   return clean.length <= 10 ? clean : `L${String(branchCode).padStart(2, '0')}`;
@@ -53,7 +60,16 @@ function faixaDiasLabel(dias: number) {
   return 'Acima de 90 dias';
 }
 
-function formatDiasSemGiro(dias: number, ultimaVenda: string | null) {
+function formatDiasSemGiro(
+  dias: number,
+  ultimaVenda: string | null,
+  lojasSemVenda: number,
+  lojasTotal: number
+) {
+  if (lojasSemVenda > 0 && lojasSemVenda === lojasTotal) return 'Nunca vendeu';
+  if (lojasSemVenda > 0) {
+    return `Sem venda em ${lojasSemVenda} loja${lojasSemVenda === 1 ? '' : 's'}`;
+  }
   if (!ultimaVenda || dias >= 9999) return 'Nunca vendeu';
   return `${formatNumber(dias)} dias`;
 }
@@ -121,7 +137,7 @@ export default function PcpNovoPage() {
       .map((loja) => ({ value: loja.branch_code, label: loja.branch_name }));
   }, [lojasFiltro, user]);
 
-  const lojasTabela = data?.lojas.slice(0, 6) || [];
+  const lojasTabela = data?.lojas || [];
   const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
   const totalColunasTabela = 5 + Math.max(lojasTabela.length, 1);
 
@@ -192,7 +208,7 @@ export default function PcpNovoPage() {
                 className={cn(
                   'h-12 rounded-lg border text-sm font-semibold transition-all',
                   active
-                    ? 'bg-gray-900 text-white border-gray-900'
+                    ? 'bg-[var(--bbtk-red)] text-white border-[var(--bbtk-red)]'
                     : 'bg-white text-gray-700 border-gray-300 hover:border-[var(--bbtk-red)]'
                 )}
               >
@@ -211,21 +227,25 @@ export default function PcpNovoPage() {
           quantidade: 0,
           valor: 0,
           pct_total: 0,
-        }))).map((item) => {
+        }))).map((item, index) => {
           const active = item.dias === diasSelecionado;
           return (
             <Card
               key={item.dias}
-              className={cn('cursor-pointer transition-all', active && 'border-red-300 bg-red-50')}
+              className={cn(
+                'cursor-pointer transition-all',
+                CARD_COLORS[index % CARD_COLORS.length],
+                active && 'ring-1 ring-[var(--bbtk-red)] bg-red-50'
+              )}
               hover
             >
               <button type="button" className="w-full text-left" onClick={() => setDiasSelecionado(item.dias)}>
-                <p className={cn('text-sm text-gray-500', active && 'font-semibold text-red-700')}>
+                <CardTitle className={cn(active && 'text-[var(--bbtk-red)]')}>
                   {item.label}{active ? ' - selecionado' : ''}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
+                </CardTitle>
+                <CardValue className="mt-2">
                   {isLoading ? '-' : `${formatNumber(item.sku_count)} SKUs`}
-                </p>
+                </CardValue>
                 <p className="text-sm text-gray-600 mt-1">
                   {formatNumber(item.quantidade)} pc - {formatMoney(item.valor)}
                 </p>
@@ -335,7 +355,7 @@ export default function PcpNovoPage() {
                       Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
                     </p>
                   </TableCell>
-                  <TableCell align="right" className="font-semibold text-red-600 whitespace-nowrap">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda)}</TableCell>
+                  <TableCell align="right" className="font-semibold text-red-600 whitespace-nowrap">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda, item.lojas_sem_venda, item.lojas_total)}</TableCell>
                   <TableCell align="right">{formatNumber(item.quantidade)}</TableCell>
                   <TableCell align="right" className="font-semibold whitespace-nowrap">{formatMoney(item.valor)}</TableCell>
                   {lojasTabela.length === 0 ? (
@@ -410,3 +430,4 @@ export default function PcpNovoPage() {
     </div>
   );
 }
+
