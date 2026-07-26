@@ -67,9 +67,6 @@ function formatDiasSemGiro(
   lojasTotal: number
 ) {
   if (lojasSemVenda > 0 && lojasSemVenda === lojasTotal) return 'Nunca vendeu';
-  if (lojasSemVenda > 0) {
-    return `Sem venda em ${lojasSemVenda} loja${lojasSemVenda === 1 ? '' : 's'}`;
-  }
   if (!ultimaVenda || dias >= 9999) return 'Nunca vendeu';
   return `${formatNumber(dias)} dias`;
 }

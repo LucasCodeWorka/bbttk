@@ -136,22 +136,6 @@ function buildCoberturaFilter(cobertura?: CoberturaFiltro): Prisma.Sql {
   return Prisma.sql`AND (a.cobertura_meses >= 24 OR a.cobertura_meses IS NULL)`;
 }
 
-function buildDiasFilter(dias: number): Prisma.Sql {
-  if (dias <= 30) {
-    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) <= 30`;
-  }
-
-  if (dias <= 60) {
-    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 30 AND COALESCE(a.dias_sem_giro, 9999) <= 60`;
-  }
-
-  if (dias <= 90) {
-    return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 60 AND COALESCE(a.dias_sem_giro, 9999) <= 90`;
-  }
-
-  return Prisma.sql`AND COALESCE(a.dias_sem_giro, 9999) > 90`;
-}
-
 function labelDias(dias: number): string {
   if (dias <= 30) return 'Ate 30 dias';
   if (dias <= 60) return '31 a 60 dias';
@@ -167,7 +151,6 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
   const branchFilter = buildBranchFilter(params.branchCodes);
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
   const coberturaFilter = buildCoberturaFilter(params.cobertura);
-  const diasFilter = buildDiasFilter(params.dias);
 
   return prisma.$queryRaw<AnaliticoRow[]>`
     SELECT
@@ -186,7 +169,6 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a
     WHERE COALESCE(a.quantidade_estoque, 0) > 0
-      ${diasFilter}
       ${branchFilter}
       ${produtoFilter}
       ${coberturaFilter}
@@ -194,38 +176,110 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
   `;
 }
 
+function isInDiasRange(diasSemGiro: number, diasFiltro: number): boolean {
+  const dias = diasSemGiro >= 9999 ? 9999 : diasSemGiro;
+
+  if (diasFiltro <= 30) return dias <= 30;
+  if (diasFiltro <= 60) return dias > 30 && dias <= 60;
+  if (diasFiltro <= 90) return dias > 60 && dias <= 90;
+  return dias > 90;
+}
+
+function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
+  const skuMap = new Map<string, EstoqueSemGiroSku>();
+
+  for (const row of rows) {
+    const atual = skuMap.get(row.product_sku);
+    const quantidade = decimalToNumber(row.quantidade);
+    const valor = decimalToNumber(row.valor);
+    const cobertura = row.cobertura_meses === null ? null : decimalToNumber(row.cobertura_meses);
+    const ultimaVenda = row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null;
+    const semVendaNaLoja = !ultimaVenda || row.dias_sem_giro >= 9999;
+    const diasRede = semVendaNaLoja ? 9999 : row.dias_sem_giro;
+
+    if (!atual) {
+      skuMap.set(row.product_sku, {
+        sku: row.product_sku,
+        referencia: row.reference_code || row.product_sku,
+        descricao: row.descricao || row.product_sku,
+        colecao: row.colecao,
+        dias_sem_giro: diasRede,
+        ultima_venda: ultimaVenda,
+        lojas_total: 1,
+        lojas_sem_venda: semVendaNaLoja ? 1 : 0,
+        quantidade: round(quantidade, 0),
+        valor: round(valor),
+        cobertura_meses: cobertura === null ? null : round(cobertura, 1),
+        lojas: [
+          {
+            branch_code: row.branch_code,
+            branch_name: rowBranchName(row.branch_code, row.branch_name),
+            quantidade: round(quantidade, 0),
+          },
+        ],
+      });
+      continue;
+    }
+
+    atual.quantidade = round(atual.quantidade + quantidade, 0);
+    atual.valor = round(atual.valor + valor);
+    atual.lojas_total += 1;
+    if (semVendaNaLoja) atual.lojas_sem_venda += 1;
+    if (ultimaVenda && (!atual.ultima_venda || ultimaVenda > atual.ultima_venda)) {
+      atual.ultima_venda = ultimaVenda;
+    }
+    atual.dias_sem_giro = Math.min(atual.dias_sem_giro, diasRede);
+    atual.cobertura_meses =
+      atual.cobertura_meses === null || cobertura === null
+        ? null
+        : round(Math.max(atual.cobertura_meses, cobertura), 1);
+    atual.lojas.push({
+      branch_code: row.branch_code,
+      branch_name: rowBranchName(row.branch_code, row.branch_name),
+      quantidade: round(quantidade, 0),
+    });
+  }
+
+  return [...skuMap.values()].map((sku) => ({
+    ...sku,
+    lojas: sku.lojas.sort((a, b) => a.branch_code - b.branch_code),
+  }));
+}
+
 export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<EstoqueSemGiroResponse> {
   const diasSelecionado = params.dias > 90 ? 91 : params.dias;
-  const rows = await getBaseRows({ ...params, dias: diasSelecionado });
+  const allRows = await getBaseRows(params);
+  const allSkus = aggregateSkuRows(allRows);
   const thresholds = [30, 60, 90, 91];
 
-  const resumoRows = await Promise.all(
-    thresholds.map(async (dias) => {
-      const bucketRows = await getBaseRows({ ...params, dias });
-      const skuSet = new Set(bucketRows.map((row) => row.product_sku));
-      const quantidade = bucketRows.reduce((sum, row) => sum + decimalToNumber(row.quantidade), 0);
-      const valor = bucketRows.reduce((sum, row) => sum + decimalToNumber(row.valor), 0);
-      return {
-        dias,
-        label: labelDias(dias),
-        sku_count: skuSet.size,
-        quantidade,
-        valor,
-      };
-    })
-  );
+  const resumoRows = thresholds.map((dias) => {
+    const bucketSkus = allSkus.filter((sku) => isInDiasRange(sku.dias_sem_giro, dias));
+    const quantidade = bucketSkus.reduce((sum, sku) => sum + sku.quantidade, 0);
+    const valor = bucketSkus.reduce((sum, sku) => sum + sku.valor, 0);
 
-  const totalSkuSet = new Set(rows.map((row) => row.product_sku));
-  const totalQuantidade = rows.reduce((sum, row) => sum + decimalToNumber(row.quantidade), 0);
-  const totalValor = rows.reduce((sum, row) => sum + decimalToNumber(row.valor), 0);
+    return {
+      dias,
+      label: labelDias(dias),
+      sku_count: bucketSkus.length,
+      quantidade,
+      valor,
+    };
+  });
+
   const baseTotal = resumoRows.reduce((sum, row) => sum + row.sku_count, 0);
-
   const resumo = resumoRows.map((row) => ({
     ...row,
     quantidade: round(row.quantidade, 0),
     valor: round(row.valor),
     pct_total: baseTotal > 0 ? round((row.sku_count / baseTotal) * 100, 1) : 0,
   }));
+
+  const selectedSkus = allSkus.filter((sku) => isInDiasRange(sku.dias_sem_giro, diasSelecionado));
+  const selectedSkuSet = new Set(selectedSkus.map((sku) => sku.sku));
+  const rows = allRows.filter((row) => selectedSkuSet.has(row.product_sku));
+
+  const totalQuantidade = selectedSkus.reduce((sum, sku) => sum + sku.quantidade, 0);
+  const totalValor = selectedSkus.reduce((sum, sku) => sum + sku.valor, 0);
 
   const lojasMap = new Map<number, string>();
   const resumoLojasMap = new Map<number, {
@@ -266,63 +320,11 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     }))
     .sort((a, b) => a.branch_code - b.branch_code);
 
-  const skuMap = new Map<string, EstoqueSemGiroSku>();
-  for (const row of rows) {
-    const atual = skuMap.get(row.product_sku);
-    const quantidade = decimalToNumber(row.quantidade);
-    const valor = decimalToNumber(row.valor);
-    const cobertura = row.cobertura_meses === null ? null : decimalToNumber(row.cobertura_meses);
-    const ultimaVenda = row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null;
-    const semVendaNaLoja = !ultimaVenda || row.dias_sem_giro >= 9999;
-
-    if (!atual) {
-      skuMap.set(row.product_sku, {
-        sku: row.product_sku,
-        referencia: row.reference_code || row.product_sku,
-        descricao: row.descricao || row.product_sku,
-        colecao: row.colecao,
-        dias_sem_giro: row.dias_sem_giro,
-        ultima_venda: ultimaVenda,
-        lojas_total: 1,
-        lojas_sem_venda: semVendaNaLoja ? 1 : 0,
-        quantidade: round(quantidade, 0),
-        valor: round(valor),
-        cobertura_meses: cobertura === null ? null : round(cobertura, 1),
-        lojas: [
-          {
-            branch_code: row.branch_code,
-            branch_name: rowBranchName(row.branch_code, row.branch_name),
-            quantidade: round(quantidade, 0),
-          },
-        ],
-      });
-      continue;
-    }
-
-    atual.quantidade = round(atual.quantidade + quantidade, 0);
-    atual.valor = round(atual.valor + valor);
-    atual.lojas_total += 1;
-    if (semVendaNaLoja) atual.lojas_sem_venda += 1;
-    if (ultimaVenda && (!atual.ultima_venda || ultimaVenda > atual.ultima_venda)) {
-      atual.ultima_venda = ultimaVenda;
-    }
-    atual.dias_sem_giro = Math.max(atual.dias_sem_giro, row.dias_sem_giro);
-    atual.cobertura_meses =
-      atual.cobertura_meses === null || cobertura === null
-        ? null
-        : round(Math.max(atual.cobertura_meses, cobertura), 1);
-    atual.lojas.push({
-      branch_code: row.branch_code,
-      branch_name: rowBranchName(row.branch_code, row.branch_name),
-      quantidade: round(quantidade, 0),
-    });
-  }
-
-  const topSkus = [...skuMap.values()]
+  const topSkus = selectedSkus
     .sort((a, b) => b.dias_sem_giro - a.dias_sem_giro || b.valor - a.valor)
     .slice(0, params.limit || 10);
 
-  const atualizadoEm = rows.reduce<Date | null>((latest, row) => {
+  const atualizadoEm = allRows.reduce<Date | null>((latest, row) => {
     if (!row.atualizado_em) return latest;
     if (!latest || row.atualizado_em > latest) return row.atualizado_em;
     return latest;
@@ -333,7 +335,7 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     dias_selecionado: diasSelecionado,
     resumo,
     total: {
-      sku_count: totalSkuSet.size,
+      sku_count: selectedSkus.length,
       quantidade: round(totalQuantidade, 0),
       valor: round(totalValor),
     },
@@ -344,7 +346,6 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     top_skus: topSkus,
   };
 }
-
 export async function getFiltrosEstoqueSemGiro() {
   const dimensoes = [
     { chave: 'categoria', coluna: 'categoria', label: 'Categoria' },
