@@ -16,7 +16,7 @@ export interface EstoqueSemGiroParams {
   branchCodes?: number[];
   cobertura?: CoberturaFiltro;
   produtoFiltro?: ProdutoFiltro;
-  limit?: number;
+  limit?: number | null;
 }
 
 export interface EstoqueSemGiroResumoItem {
@@ -42,6 +42,7 @@ export interface EstoqueSemGiroSku {
   referencia: string;
   descricao: string;
   colecao: string | null;
+  grade: string | null;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;
@@ -76,6 +77,8 @@ interface AnaliticoRow {
   reference_code: string | null;
   descricao: string | null;
   colecao: string | null;
+  cor: string | null;
+  tamanho: string | null;
   branch_code: number;
   branch_name: string | null;
   ultima_venda: Date | null;
@@ -147,6 +150,11 @@ function rowBranchName(branchCode: number, branchName?: string | null): string {
   return branchName || FILIAIS[branchCode] || `Filial ${branchCode}`;
 }
 
+function buildGrade(cor?: string | null, tamanho?: string | null): string | null {
+  const partes = [cor, tamanho].map((value) => value?.trim()).filter(Boolean);
+  return partes.length > 0 ? partes.join(' - ') : null;
+}
+
 async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]> {
   const branchFilter = buildBranchFilter(params.branchCodes);
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
@@ -159,6 +167,8 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       a.reference_code,
       COALESCE(a.descricao, a.reference_name, a.product_name, a.product_sku) as descricao,
       NULLIF(TRIM(a.colecao), '') as colecao,
+      COALESCE(NULLIF(TRIM(p.color_name), ''), NULLIF(TRIM(p.color_code), '')) as cor,
+      NULLIF(TRIM(p.size), '') as tamanho,
       a.branch_code,
       a.branch_name,
       a.ultima_venda,
@@ -168,6 +178,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       a.cobertura_meses,
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE COALESCE(a.quantidade_estoque, 0) > 0
       ${branchFilter}
       ${produtoFilter}
@@ -196,6 +207,7 @@ function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
     const ultimaVenda = row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null;
     const semVendaNaLoja = !ultimaVenda || row.dias_sem_giro >= 9999;
     const diasRede = semVendaNaLoja ? 9999 : row.dias_sem_giro;
+    const grade = buildGrade(row.cor, row.tamanho);
 
     if (!atual) {
       skuMap.set(row.product_sku, {
@@ -203,6 +215,7 @@ function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
         referencia: row.reference_code || row.product_sku,
         descricao: row.descricao || row.product_sku,
         colecao: row.colecao,
+        grade,
         dias_sem_giro: diasRede,
         ultima_venda: ultimaVenda,
         lojas_total: 1,
@@ -221,6 +234,7 @@ function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
       continue;
     }
 
+    if (!atual.grade && grade) atual.grade = grade;
     atual.quantidade = round(atual.quantidade + quantidade, 0);
     atual.valor = round(atual.valor + valor);
     atual.lojas_total += 1;
@@ -320,9 +334,9 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     }))
     .sort((a, b) => a.branch_code - b.branch_code);
 
-  const topSkus = selectedSkus
-    .sort((a, b) => b.dias_sem_giro - a.dias_sem_giro || b.valor - a.valor)
-    .slice(0, params.limit || 10);
+  const topSkusOrdenados = selectedSkus
+    .sort((a, b) => b.dias_sem_giro - a.dias_sem_giro || b.valor - a.valor);
+  const topSkus = params.limit && params.limit > 0 ? topSkusOrdenados.slice(0, params.limit) : topSkusOrdenados;
 
   const atualizadoEm = allRows.reduce<Date | null>((latest, row) => {
     if (!row.atualizado_em) return latest;

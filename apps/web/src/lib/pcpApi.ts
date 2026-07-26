@@ -49,7 +49,7 @@ export interface EstoqueSemGiroFiltro {
   categoria?: string[];
   linha?: string[];
   genero?: string[];
-  limit?: number;
+  limit?: number | 'all';
 }
 
 export interface EstoqueSemGiroResumoItem {
@@ -75,6 +75,7 @@ export interface EstoqueSemGiroSku {
   referencia: string;
   descricao: string;
   colecao: string | null;
+  grade: string | null;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;

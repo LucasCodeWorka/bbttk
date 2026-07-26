@@ -6,12 +6,13 @@ import { cn } from '@/lib/utils';
 interface TableProps {
   children: ReactNode;
   className?: string;
+  tableClassName?: string;
 }
 
-export function Table({ children, className }: TableProps) {
+export function Table({ children, className, tableClassName }: TableProps) {
   return (
     <div className={cn('overflow-x-auto', className)}>
-      <table className="w-full text-sm">{children}</table>
+      <table className={cn('w-full text-sm', tableClassName)}>{children}</table>
     </div>
   );
 }

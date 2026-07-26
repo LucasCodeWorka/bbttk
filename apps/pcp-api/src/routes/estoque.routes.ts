@@ -35,12 +35,14 @@ router.get('/estoque-sem-giro', async (req: Request, res: Response) => {
       genero: parseList(req.query.genero),
     };
 
+    const limit = req.query.limit === 'all' ? null : Number(req.query.limit || 10);
+
     res.json(await getEstoqueSemGiro({
       dias,
       cobertura,
       produtoFiltro,
       branchCodes: parseBranchCodes(req.query.branches),
-      limit: Number(req.query.limit || 10),
+      limit: limit === null ? null : Number.isFinite(limit) ? limit : 10,
     }));
   } catch (error) {
     res.status(500).json({ error: String(error) });

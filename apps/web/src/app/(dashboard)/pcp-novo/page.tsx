@@ -23,6 +23,13 @@ const DIAS_OPTIONS = [
   { value: 91, label: 'Acima de 90 dias' },
 ];
 
+const RANKING_OPTIONS = [
+  { value: '10', label: 'Top 10' },
+  { value: '25', label: 'Top 25' },
+  { value: '50', label: 'Top 50' },
+  { value: 'all', label: 'Todos SKUs' },
+];
+
 const COBERTURA_OPTIONS = [
   { value: '', label: 'Todas' },
   { value: '6-12', label: 'Entre 6 e 12 meses' },
@@ -76,6 +83,7 @@ export default function PcpNovoPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [diasSelecionado, setDiasSelecionado] = useState(91);
   const [cobertura, setCobertura] = useState('');
+  const [rankingLimit, setRankingLimit] = useState<'10' | '25' | '50' | 'all'>('10');
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [lojasFiltro, setLojasFiltro] = useState<PcpLojaFiltro[]>([]);
@@ -96,7 +104,7 @@ export default function PcpNovoPage() {
         categoria: produtoFiltro.categoria,
         linha: produtoFiltro.linha,
         genero: produtoFiltro.genero,
-        limit: 10,
+        limit: rankingLimit === 'all' ? 'all' : Number(rankingLimit),
       });
       setData(response);
     } catch (error) {
@@ -105,7 +113,7 @@ export default function PcpNovoPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [cobertura, diasSelecionado, filiaisSelecionadas, produtoFiltro, token]);
+  }, [cobertura, diasSelecionado, filiaisSelecionadas, produtoFiltro, rankingLimit, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -137,6 +145,7 @@ export default function PcpNovoPage() {
   const lojasTabela = data?.lojas || [];
   const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
   const totalColunasTabela = 5 + Math.max(lojasTabela.length, 1);
+  const lojaColumnWidth = lojasTabela.length > 0 ? 38 / lojasTabela.length : 38;
 
   const top10Totais = useMemo(() => {
     if (!data) return null;
@@ -157,7 +166,9 @@ export default function PcpNovoPage() {
     return { ...totais, lojas };
   }, [data]);
 
-  const adicionais = data && top10Totais
+  const rankingLabel = rankingLimit === 'all' ? 'Todos SKUs' : `Top ${rankingLimit}`;
+
+  const adicionais = data && top10Totais && rankingLimit !== 'all'
     ? {
         sku_count: Math.max(data.total.sku_count - data.top_skus.length, 0),
         quantidade: Math.max(data.total.quantidade - top10Totais.quantidade, 0),
@@ -291,7 +302,7 @@ export default function PcpNovoPage() {
         <CardHeader>
           <div>
             <CardTitle>
-              Top 10 SKUs sem girar - {faixaDiasLabel(diasSelecionado)}
+              {rankingLabel} sem girar - {faixaDiasLabel(diasSelecionado)}
             </CardTitle>
             {resumoSelecionado && (
               <p className="text-xs text-gray-400 mt-1">
@@ -299,30 +310,49 @@ export default function PcpNovoPage() {
               </p>
             )}
           </div>
+          <Select
+            label="Ranking"
+            value={rankingLimit}
+            onChange={(event) => setRankingLimit(event.target.value as '10' | '25' | '50' | 'all')}
+            options={RANKING_OPTIONS}
+            className="w-36"
+          />
         </CardHeader>
 
-        <Table>
+        <Table className="overflow-x-visible" tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]">
+          <colgroup>
+            <col style={{ width: '30%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '9%' }} />
+            {lojasTabela.length === 0 ? (
+              <col style={{ width: '38%' }} />
+            ) : lojasTabela.map((loja) => (
+              <col key={`col-${loja.branch_code}`} style={{ width: `${lojaColumnWidth}%` }} />
+            ))}
+          </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell isHeader>SKU</TableCell>
-              <TableCell isHeader>Descricao completa</TableCell>
-              <TableCell isHeader align="right">Dias sem giro</TableCell>
-              <TableCell isHeader align="right">Qtd</TableCell>
-              <TableCell isHeader align="right">Valor</TableCell>
-              <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800">
+              <TableCell isHeader className="!px-1.5 !py-2">Descricao completa</TableCell>
+              <TableCell isHeader className="!px-1.5 !py-2">Grade</TableCell>
+              <TableCell isHeader align="right" className="!px-1.5 !py-2">Dias sem giro</TableCell>
+              <TableCell isHeader align="right" className="!px-1.5 !py-2">Qtd</TableCell>
+              <TableCell isHeader align="right" className="!px-1.5 !py-2">Valor</TableCell>
+              <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-1.5 !py-2">
                 Distribuicao por loja (pc)
               </TableCell>
             </TableRow>
             <TableRow>
-              <TableCell isHeader className="bg-gray-50" />
-              <TableCell isHeader className="bg-gray-50" />
-              <TableCell isHeader className="bg-gray-50" />
-              <TableCell isHeader className="bg-gray-50" />
-              <TableCell isHeader className="bg-gray-50" />
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
               {lojasTabela.length === 0 ? (
-                <TableCell isHeader align="center" className="bg-blue-50 text-blue-800">-</TableCell>
+                <TableCell isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2">-</TableCell>
               ) : lojasTabela.map((loja) => (
-                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 whitespace-nowrap">
+                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2 truncate">
                   {shortLojaName(loja.branch_name, loja.branch_code)}
                 </TableCell>
               ))}
@@ -345,20 +375,20 @@ export default function PcpNovoPage() {
               const lojaMap = new Map(item.lojas.map((loja) => [loja.branch_code, loja.quantidade]));
               return (
                 <TableRow key={item.sku}>
-                  <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">{item.sku}</TableCell>
-                  <TableCell className="min-w-72">
-                    <p className="font-medium text-gray-900">{item.descricao}</p>
-                    <p className="text-xs text-gray-500">
+                  <TableCell className="!px-1.5 !py-2 align-top">
+                    <p className="font-medium text-gray-900 truncate" title={item.descricao}>{item.descricao}</p>
+                    <p className="text-[9px] text-gray-500 truncate">
                       Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
                     </p>
                   </TableCell>
-                  <TableCell align="right" className="font-semibold text-red-600 whitespace-nowrap">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda, item.lojas_sem_venda, item.lojas_total)}</TableCell>
-                  <TableCell align="right">{formatNumber(item.quantidade)}</TableCell>
-                  <TableCell align="right" className="font-semibold whitespace-nowrap">{formatMoney(item.valor)}</TableCell>
+                  <TableCell className="!px-1.5 !py-2 text-gray-700 truncate" title={item.grade || '-'}>{item.grade || '-'}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-semibold text-red-600 whitespace-normal leading-tight">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda, item.lojas_sem_venda, item.lojas_total)}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2">{formatNumber(item.quantidade)}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-semibold whitespace-normal leading-tight">{formatMoney(item.valor)}</TableCell>
                   {lojasTabela.length === 0 ? (
-                    <TableCell align="center">-</TableCell>
+                    <TableCell align="center" className="!px-1 !py-2">-</TableCell>
                   ) : lojasTabela.map((loja) => (
-                    <TableCell key={`${item.sku}-${loja.branch_code}`} align="center">
+                    <TableCell key={`${item.sku}-${loja.branch_code}`} align="center" className="!px-1 !py-2">
                       {formatNumber(lojaMap.get(loja.branch_code) || 0)}
                     </TableCell>
                   ))}
@@ -368,27 +398,27 @@ export default function PcpNovoPage() {
             {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
               <>
                 <TableRow isHighlighted>
-                  <TableCell colSpan={2} align="right" className="font-bold">Top 10:</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
-                  <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(top10Totais.valor)}</TableCell>
+                  <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 font-bold">{rankingLabel}:</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-bold whitespace-normal leading-tight">{formatMoney(top10Totais.valor)}</TableCell>
                   {lojasTabela.length === 0 ? (
-                    <TableCell align="center">-</TableCell>
+                    <TableCell align="center" className="!px-1 !py-2">-</TableCell>
                   ) : lojasTabela.map((loja) => (
-                    <TableCell key={`top10-${loja.branch_code}`} align="center" className="font-bold">
+                    <TableCell key={`top10-${loja.branch_code}`} align="center" className="!px-1 !py-2 font-bold">
                       {formatNumber(top10Totais.lojas.get(loja.branch_code) || 0)}
                     </TableCell>
                   ))}
                 </TableRow>
                 {adicionais && adicionais.sku_count > 0 && (
                   <TableRow>
-                    <TableCell colSpan={2} align="right" className="text-gray-500">
+                    <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 text-gray-500">
                       + {formatNumber(adicionais.sku_count)} SKUs adicionais:
                     </TableCell>
-                    <TableCell align="right" className="text-gray-500">-</TableCell>
-                    <TableCell align="right" className="text-gray-600">{formatNumber(adicionais.quantidade)}</TableCell>
-                    <TableCell align="right" className="text-gray-600 whitespace-nowrap">{formatMoney(adicionais.valor)}</TableCell>
-                    <TableCell align="center" colSpan={Math.max(lojasTabela.length, 1)} className="text-gray-500">
+                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-500">-</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-600">{formatNumber(adicionais.quantidade)}</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-600 whitespace-normal leading-tight">{formatMoney(adicionais.valor)}</TableCell>
+                    <TableCell align="center" colSpan={Math.max(lojasTabela.length, 1)} className="!px-1.5 !py-2 text-gray-500">
                       distribuicao similar
                     </TableCell>
                   </TableRow>
