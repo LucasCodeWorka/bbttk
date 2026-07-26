@@ -221,6 +221,13 @@ export default function PcpNovoPage() {
         </div>
       </div>
 
+      <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
+        <p className="text-sm font-medium text-gray-800">Painel em fase de teste</p>
+        <p className="text-xs text-gray-600 mt-1">
+          Os dados e regras deste dashboard ainda estao em validacao. Use como apoio e sinalize divergencias encontradas.
+        </p>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Filtrar periodo sem girar</CardTitle>
