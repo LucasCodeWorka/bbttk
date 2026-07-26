@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardValue } from '@/components/ui/Card';
@@ -356,7 +356,7 @@ export default function PcpNovoPage() {
             <TableRow>
               <TableCell isHeader className="!px-1.5 !py-2">Descricao completa</TableCell>
               <TableCell isHeader className="!px-1.5 !py-2">Grade</TableCell>
-              <TableCell isHeader align="right" className="!px-1.5 !py-2">Dias sem giro</TableCell>
+              <TableCell isHeader align="right" className="!px-1.5 !py-2">Sem giro</TableCell>
               <TableCell isHeader align="right" className="!px-1.5 !py-2">Qtd</TableCell>
               <TableCell isHeader align="right" className="!px-1.5 !py-2">Valor</TableCell>
               <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-1.5 !py-2">
@@ -477,4 +477,5 @@ export default function PcpNovoPage() {
     </div>
   );
 }
+
 
