@@ -21,16 +21,26 @@ const OPERACAO_JOIN = Prisma.sql`LEFT JOIN classificacao_operacoes co ON co.oper
 const IS_VENDA = Prisma.sql`(co.operations_type = 'S' AND co.operation_mode = '4')`;
 const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operation_mode = '3')`;
 
-// Clientes com customer_code >= 110000000 são contas internas do TOTVS (transferência entre
-// filiais, ajuste de estoque, amostra, perda, etc.) - nunca um cliente real. Sem esse filtro,
-// esses movimentos entram como faturamento de verdade (bug real: ~59 mil transações / R$21,6mi
-// inflados no historico, descoberto batendo o Dashboard contra o relatorio nativo do TOTVS).
-const REAL_CUSTOMER_FILTER = Prisma.sql`(t.customer_code IS NULL OR t.customer_code < 110000000)`;
-// Filtro reutilizado: transação não cancelada, operação de venda-ou-devolução real,
-// cliente real. Inclui devoluções (entram com sinal negativo via FATURAMENTO_COM_SINAL/
-// PECAS_COM_SINAL, não são excluídas) - qualquer outra classificação (compra, consignação,
-// remessa, brinde, ou operação nunca sincronizada) já fica fora daqui.
-const SALE_OPERATION_FILTER = Prisma.sql`((${IS_VENDA} OR ${IS_DEVOLUCAO}) AND ${REAL_CUSTOMER_FILTER})`;
+// HISTÓRICO: customer_code >= 110000000 já foi usado como heurística pra excluir "conta
+// interna do TOTVS" (transferência entre filiais, ajuste de estoque, amostra, perda) que
+// entrava como faturamento de verdade por causa das listas antigas de operation_code fixas
+// e imprecisas (bug real: ~59 mil transações / R$21,6mi inflados no histórico). Essa
+// heurística ficou REDUNDANTE e ativamente prejudicial depois que a classificação virou
+// dinâmica e precisa (IS_VENDA/IS_DEVOLUCAO via operationsType/operationMode, sincronizado
+// direto do TOTVS): uma transferência/ajuste real NUNCA tem operationsType='S'+operationMode=
+// '4', então IS_VENDA já exclui ela sozinha, sem precisar olhar customer_code. Enquanto isso,
+// o customer_code>=110000000 também aparece em vendas E devoluções REAIS e completas
+// (status=4/Atendida) - o TOTVS usa esse código como fallback quando não há CPF/cadastro do
+// cliente balcão. Excluir por customer_code jogava fora receita real dos dois lados (achado
+// batendo contra o FISFL024: maio/2026 tinha R$251,96 de devolução real descartada; 17/04/2026
+// tinha uma venda real de R$379,98 descartada, filial 11, cliente 110000011, op 1200 Atendida).
+// Conferido no histórico inteiro (2019-2026): só 20 vendas reais nesse padrão, R$2.996,51 no
+// total, nada parecido com o bug antigo - seguro remover o filtro de cliente por completo.
+// Filtro reutilizado: transação não cancelada, operação de venda-ou-devolução real (a
+// classificação por operationsType/operationMode já garante isso sozinha). Qualquer outra
+// classificação (compra, consignação, remessa, brinde, transferência, ou operação nunca
+// sincronizada) já fica fora daqui.
+const SALE_OPERATION_FILTER = Prisma.sql`(${IS_VENDA} OR ${IS_DEVOLUCAO})`;
 // O ETL grava net_value/quantity de devolução com o sinal que o TOTVS mandou - às vezes
 // positivo, às vezes já negativo, inconsistente (confirmado em todo o historico, todas as
 // filiais). Um "* -1" simples inverteria de volta pra positivo quando já vinha negativo,
@@ -567,7 +577,6 @@ export async function getDevolucoesPorFilial(
       AND t.status = 4
       AND ${IS_DEVOLUCAO}
       AND ${STORE_BRANCH_FILTER}
-      AND ${REAL_CUSTOMER_FILTER}
       ${produtoFilter}
     GROUP BY t.branch_code
   `;
@@ -615,7 +624,6 @@ export async function getDevolucoesFabricaDividida(
       AND t.status = 4
       AND t.branch_code = 2
       AND ${IS_DEVOLUCAO}
-      AND ${REAL_CUSTOMER_FILTER}
       ${produtoFilter}
     GROUP BY linha
   `;
