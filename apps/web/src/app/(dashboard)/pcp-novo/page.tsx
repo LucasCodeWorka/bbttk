@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardValue } from '@/components/ui/Card';
@@ -161,7 +161,7 @@ export default function PcpNovoPage() {
 
   const lojasTabela = data?.lojas || [];
   const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
-  const totalColunasTabela = 5 + Math.max(lojasTabela.length, 1);
+  const totalColunasTabela = 6 + Math.max(lojasTabela.length, 1);
   const lojaColumnWidth = lojasTabela.length > 0 ? 49 / lojasTabela.length : 49;
 
   const top10Totais = useMemo(() => {
@@ -341,11 +341,12 @@ export default function PcpNovoPage() {
 
         <Table className="overflow-x-visible" tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]">
           <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '5%' }} />
-            <col style={{ width: '7%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '6%' }} />
+            <col style={{ width: '4%' }} />
+            <col style={{ width: '6%' }} />
             {lojasTabela.length === 0 ? (
               <col style={{ width: '49%' }} />
             ) : lojasTabela.map((loja) => (
@@ -356,6 +357,7 @@ export default function PcpNovoPage() {
             <TableRow>
               <TableCell isHeader className="!px-1.5 !py-2">Descricao completa</TableCell>
               <TableCell isHeader className="!px-1.5 !py-2">Grade</TableCell>
+              <TableCell isHeader className="!px-1.5 !py-2">Cor de-para</TableCell>
               <TableCell isHeader align="right" className="!px-1.5 !py-2">Sem giro</TableCell>
               <TableCell isHeader align="right" className="!px-1.5 !py-2">Qtd</TableCell>
               <TableCell isHeader align="right" className="!px-1.5 !py-2">Valor</TableCell>
@@ -364,6 +366,7 @@ export default function PcpNovoPage() {
               </TableCell>
             </TableRow>
             <TableRow>
+              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
               <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
               <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
               <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
@@ -402,6 +405,7 @@ export default function PcpNovoPage() {
                     </p>
                   </TableCell>
                   <TableCell className="!px-1.5 !py-2 text-gray-700 truncate" title={item.grade || '-'}>{item.grade || '-'}</TableCell>
+                  <TableCell className="!px-1.5 !py-2 text-gray-700 truncate" title={item.cor_de_para || '-'}>{item.cor_de_para || '-'}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-semibold text-red-600 whitespace-normal leading-tight">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda, item.lojas_sem_venda, item.lojas_total)}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2">{formatNumber(item.quantidade)}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-semibold whitespace-normal leading-tight">{formatMoney(item.valor)}</TableCell>
@@ -418,7 +422,7 @@ export default function PcpNovoPage() {
             {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
               <>
                 <TableRow isHighlighted>
-                  <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 font-bold">{totalizadorLabel}</TableCell>
+                  <TableCell colSpan={3} align="right" className="!px-1.5 !py-2 font-bold">{totalizadorLabel}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold whitespace-normal leading-tight">{formatMoney(top10Totais.valor)}</TableCell>
@@ -432,7 +436,7 @@ export default function PcpNovoPage() {
                 </TableRow>
                 {adicionais && adicionais.sku_count > 0 && (
                   <TableRow>
-                    <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 text-gray-500">
+                    <TableCell colSpan={3} align="right" className="!px-1.5 !py-2 text-gray-500">
                       + {formatNumber(adicionais.sku_count)} SKUs adicionais:
                     </TableCell>
                     <TableCell align="right" className="!px-1.5 !py-2 text-gray-500">-</TableCell>

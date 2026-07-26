@@ -76,6 +76,7 @@ export interface EstoqueSemGiroSku {
   descricao: string;
   colecao: string | null;
   grade: string | null;
+  cor_de_para: string | null;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;

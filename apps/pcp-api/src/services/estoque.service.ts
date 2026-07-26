@@ -43,6 +43,7 @@ export interface EstoqueSemGiroSku {
   descricao: string;
   colecao: string | null;
   grade: string | null;
+  cor_de_para: string | null;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;
@@ -79,6 +80,7 @@ interface AnaliticoRow {
   colecao: string | null;
   cor: string | null;
   tamanho: string | null;
+  cor_de_para: string | null;
   branch_code: number;
   branch_name: string | null;
   ultima_venda: Date | null;
@@ -169,6 +171,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       NULLIF(TRIM(a.colecao), '') as colecao,
       COALESCE(NULLIF(TRIM(p.color_name), ''), NULLIF(TRIM(p.color_code), '')) as cor,
       NULLIF(TRIM(p.size), '') as tamanho,
+      NULLIF(TRIM(ag.nome), '') as cor_de_para,
       a.branch_code,
       a.branch_name,
       a.ultima_venda,
@@ -179,6 +182,13 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    LEFT JOIN agrupamento_membros am
+      ON am.tipo = 'cor_produto'
+      AND am.reference_code = COALESCE(a.reference_code, p.reference_code)
+      AND am.color_match_key = COALESCE(NULLIF(TRIM(p.color_code), ''), NULLIF(TRIM(p.color_name), ''))
+    LEFT JOIN agrupamento_grupos ag
+      ON ag.id = am.grupo_id
+      AND ag.tipo = am.tipo
     WHERE COALESCE(a.quantidade_estoque, 0) > 0
       ${branchFilter}
       ${produtoFilter}
@@ -216,6 +226,7 @@ function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
         descricao: row.descricao || row.product_sku,
         colecao: row.colecao,
         grade,
+        cor_de_para: row.cor_de_para,
         dias_sem_giro: diasRede,
         ultima_venda: ultimaVenda,
         lojas_total: 1,
@@ -235,6 +246,7 @@ function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
     }
 
     if (!atual.grade && grade) atual.grade = grade;
+    if (!atual.cor_de_para && row.cor_de_para) atual.cor_de_para = row.cor_de_para;
     atual.quantidade = round(atual.quantidade + quantidade, 0);
     atual.valor = round(atual.valor + valor);
     atual.lojas_total += 1;
