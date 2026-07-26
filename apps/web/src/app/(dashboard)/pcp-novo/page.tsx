@@ -184,6 +184,7 @@ export default function PcpNovoPage() {
   }, [data]);
 
   const rankingLabel = rankingLimit === 'all' ? 'Todos SKUs' : `Top ${rankingLimit}`;
+  const tableNeedsScroll = (data?.top_skus.length || 0) > 10;
   const totalizadorLabel = rankingLimit === 'all'
     ? 'Total:'
     : `Amostra (${formatNumber(data?.top_skus.length || 0)} SKUs):`;
@@ -339,7 +340,13 @@ export default function PcpNovoPage() {
           />
         </CardHeader>
 
-        <Table className="overflow-x-visible" tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]">
+        <Table
+          className={cn(
+            'overflow-x-visible',
+            tableNeedsScroll && 'max-h-[560px] overflow-y-auto pr-1'
+          )}
+          tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]"
+        >
           <colgroup>
             <col style={{ width: '18%' }} />
             <col style={{ width: '9%' }} />
@@ -353,7 +360,7 @@ export default function PcpNovoPage() {
               <col key={`col-${loja.branch_code}`} style={{ width: `${lojaColumnWidth}%` }} />
             ))}
           </colgroup>
-          <TableHead>
+          <TableHead className="sticky top-0 z-10">
             <TableRow>
               <TableCell isHeader className="!px-1.5 !py-2">Descricao completa</TableCell>
               <TableCell isHeader className="!px-1.5 !py-2">Grade</TableCell>
