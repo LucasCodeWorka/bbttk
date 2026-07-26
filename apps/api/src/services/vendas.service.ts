@@ -501,6 +501,20 @@ export async function getVendasVendedorPorFilial(
   });
 }
 
+// Nomes de vendedor - vem de dim_vendedor (sincronizado pelo ETL), nao mais de uma
+// chamada ao vivo na API do TOTVS. A busca ao vivo (seller/v2/search) so cobria uma
+// lista fixa de filiais no codigo (nunca incluia Fabrica/2 nem 10/16/18/19), entao
+// vendedor dessas filiais sempre caia no fallback "Vendedor {code}". dim_vendedor cobre
+// todas as filiais e se corrige sozinho se o ETL atualizar um nome depois.
+export async function getVendedoresMap(): Promise<Map<number, string>> {
+  const rows = await prisma.dim_vendedor.findMany({ select: { seller_code: true, seller_name: true } });
+  const map = new Map<number, string>();
+  for (const r of rows) {
+    if (r.seller_name) map.set(r.seller_code, r.seller_name);
+  }
+  return map;
+}
+
 // Top produtos
 export async function getTopProdutos(
   startDate: Date,

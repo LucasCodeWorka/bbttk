@@ -300,7 +300,7 @@ export default function DashboardPage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <KPICard
-          title="Faturamento"
+          title="Venda"
           value={formatMoney(vendas?.total?.faturamento || 0)}
           variation={comparativo?.total?.variacao?.faturamento?.percentual}
           color="red"
@@ -308,7 +308,7 @@ export default function DashboardPage() {
           isLoading={isLoading}
         />
         <KPICard
-          title="Pecas"
+          title="Quantidade"
           value={formatNumber(vendas?.total?.pecas || 0)}
           variation={comparativo?.total?.variacao?.pecas?.percentual}
           color="green"
@@ -316,7 +316,7 @@ export default function DashboardPage() {
           isLoading={isLoading}
         />
         <KPICard
-          title="Ticket Medio"
+          title="TKM"
           value={formatMoney(vendas?.total?.tm || 0)}
           variation={comparativo?.total?.variacao?.tm?.percentual}
           color="yellow"

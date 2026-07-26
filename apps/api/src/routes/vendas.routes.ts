@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
-import { getVendedoresApi, syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
+import { syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -208,8 +208,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
 
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
 
-    // Buscar nomes dos vendedores da API TOTVS
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
 
     // Adicionar nomes
     const vendedoresComNomes = vendedores.map(v => ({
@@ -232,7 +231,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
 // Lista de vendedores (para select)
 router.get('/vendedores-lista', async (_req: Request, res: Response) => {
   try {
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
     const vendedores = Array.from(nomes.entries())
       .map(([code, name]) => ({ code, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -256,7 +255,7 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
     const endDate = new Date(ano, mes - 1, 0);
 
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
 
     const vendedoresComNomes = vendedores
       .map(v => ({

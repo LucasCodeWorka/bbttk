@@ -113,10 +113,17 @@ model ClassificacaoOperacao {
 }
 
 model branches {
-  branch_code Int         @id
-  branch_name String      @db.VarChar(100)
-  updated_at  DateTime?   @default(now()) @db.Timestamp(6)
-  prd_saldo   prd_saldo[]
+  branch_code       Int         @id
+  branch_name       String      @db.VarChar(100)
+  updated_at        DateTime?   @default(now()) @db.Timestamp(6)
+  description       String?     @db.VarChar(255)
+  fantasy_name      String?     @db.VarChar(150)
+  branch_group_name String?     @db.VarChar(100)
+  cnpj              String?     @db.VarChar(20)
+  person_code       BigInt?
+  last_change       DateTime?   @db.Timestamp(6)
+  dados_api         Json?
+  prd_saldo         prd_saldo[]
 }
 
 model etl_log {
@@ -510,4 +517,16 @@ model pcp_estoque_sem_giro_analitico {
   @@index([reference_code], map: "idx_pcp_esg_reference")
   @@index([product_sku], map: "idx_pcp_esg_sku")
   @@ignore
+}
+
+model dim_vendedor {
+  seller_code            Int       @id
+  seller_name            String?   @db.VarChar(150)
+  person_code            BigInt?
+  person_name            String?   @db.VarChar(255)
+  max_change_filter_date DateTime? @db.Timestamp(6)
+  is_inactive            Boolean?
+  dados_api              Json?
+  created_at             DateTime? @default(now()) @db.Timestamp(6)
+  updated_at             DateTime? @default(now()) @db.Timestamp(6)
 }

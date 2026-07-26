@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import * as metasService from '../services/metas.service.js';
 import * as comissoesService from '../services/comissoes.service.js';
-import { getVendedoresApi } from '../services/totvs.service.js';
+import * as vendasService from '../services/vendas.service.js';
 import { authMiddleware } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -139,7 +139,7 @@ router.get('/metas/comissoes', async (req: Request, res: Response) => {
       : undefined;
 
     const relatorio = await comissoesService.getRelatorioComissao(ano, mes, branchCodes);
-    const nomes = await getVendedoresApi();
+    const nomes = await vendasService.getVendedoresMap();
 
     const comNomes = {
       ...relatorio,
