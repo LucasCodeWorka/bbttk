@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { Badge } from '@/components/ui/Badge';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { metasApi, ComissoesResponse, VendedorComissao, ComissaoCelula } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
@@ -19,6 +20,7 @@ export default function ComissoesPage() {
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  const [vendedoresSelecionados, setVendedoresSelecionados] = useState<string[]>([]);
   const [dados, setDados] = useState<ComissoesResponse | null>(null);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -61,6 +63,21 @@ export default function ComissoesPage() {
     return Array.from(codes).sort((a, b) => (FILIAIS[a] || '').localeCompare(FILIAIS[b] || ''));
   }, [dados]);
 
+  const vendedorOptions = useMemo(() => {
+    return (dados?.vendedores || [])
+      .map((v) => ({ value: String(v.seller_code), label: v.seller_name || `Vendedor ${v.seller_code}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [dados]);
+
+  // Filtro de vendedor e so de exibicao (client-side) - os dados ja vem carregados
+  // com todos os vendedores do periodo/filial, entao nao precisa recarregar da API.
+  const vendedoresFiltrados = useMemo(() => {
+    const base = dados?.vendedores || [];
+    if (vendedoresSelecionados.length === 0) return base;
+    const selecionadosNum = new Set(vendedoresSelecionados.map(Number));
+    return base.filter((v) => selecionadosNum.has(v.seller_code));
+  }, [dados, vendedoresSelecionados]);
+
   function handleSort(key: string) {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -77,7 +94,7 @@ export default function ComissoesPage() {
   }
 
   const vendedoresOrdenados = useMemo(() => {
-    const base = dados?.vendedores || [];
+    const base = vendedoresFiltrados;
     if (!sortKey) return base;
     const arr = [...base];
     arr.sort((a, b) => {
@@ -90,17 +107,17 @@ export default function ComissoesPage() {
     });
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dados, sortKey, sortDir]);
+  }, [vendedoresFiltrados, sortKey, sortDir]);
 
   // Uma linha por combinacao (vendedor, loja) - nao agrupa varias lojas do mesmo
   // vendedor numa linha so, porque cada loja tem meta/nivel/comissao proprios.
   type LinhaComissao = ComissaoCelula & { seller_code: number; seller_name: string };
 
   const linhas: LinhaComissao[] = useMemo(() => {
-    return (dados?.vendedores || []).flatMap((v) =>
+    return vendedoresFiltrados.flatMap((v) =>
       v.celulas.map((c) => ({ ...c, seller_code: v.seller_code, seller_name: v.seller_name }))
     );
-  }, [dados]);
+  }, [vendedoresFiltrados]);
 
   function getSortValueLinha(l: LinhaComissao, key: string): number | string {
     if (key === 'seller_name') return l.seller_name;
@@ -190,6 +207,13 @@ export default function ComissoesPage() {
             label="Filial"
             className="w-52"
           />
+          <ClassificacaoMultiSelect
+            selected={vendedoresSelecionados}
+            onChange={setVendedoresSelecionados}
+            options={vendedorOptions}
+            label="Vendedor"
+            className="w-52"
+          />
           <Button onClick={carregarDados} isLoading={isLoading}>
             Atualizar
           </Button>
@@ -266,7 +290,7 @@ export default function ComissoesPage() {
             </Button>
           </div>
         </CardHeader>
-        {!isLoading && (!dados || dados.vendedores.length === 0) ? (
+        {!isLoading && (!dados || vendedoresFiltrados.length === 0) ? (
           <div className="py-10 text-center text-gray-500">Nenhum vendedor com vendas nesse periodo</div>
         ) : (
           <LoadingOverlay active={isLoading}>
@@ -340,12 +364,12 @@ export default function ComissoesPage() {
                 );
               })}
             </TableBody>
-            {(dados?.vendedores.length ?? 0) > 0 && (
+            {vendedoresFiltrados.length > 0 && (
               <tfoot>
                 <TableRow isHighlighted>
                   <TableCell className="font-bold" colSpan={3}>TOTAL</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados?.vendedores.reduce((s, v) => s + v.faturamento, 0) || 0)}
+                    {formatMoney(vendedoresFiltrados.reduce((s, v) => s + v.faturamento, 0))}
                   </TableCell>
                   {niveis.map((n) => (
                     <TableCell key={n.nivel_ordem} />
@@ -353,7 +377,7 @@ export default function ComissoesPage() {
                   <TableCell align="center">-</TableCell>
                   <TableCell align="center">-</TableCell>
                   <TableCell align="right" className="font-bold whitespace-nowrap">
-                    {formatMoney(dados?.vendedores.reduce((s, v) => s + v.comissao_valor, 0) || 0)}
+                    {formatMoney(vendedoresFiltrados.reduce((s, v) => s + v.comissao_valor, 0))}
                   </TableCell>
                 </TableRow>
               </tfoot>
@@ -372,7 +396,7 @@ export default function ComissoesPage() {
           Faturamento de cada vendedor por loja no periodo - deixa claro em qual(is) loja(s)
           cada vendedor vendeu e qual comissao se aplica em cada uma.
         </p>
-        {!isLoading && (!dados || dados.vendedores.length === 0 || filiaisMatriz.length === 0) ? (
+        {!isLoading && (!dados || vendedoresFiltrados.length === 0 || filiaisMatriz.length === 0) ? (
           <div className="py-10 text-center text-gray-500">Nenhum dado para montar a matriz</div>
         ) : (
           <LoadingOverlay active={isLoading} className="overflow-x-auto">
