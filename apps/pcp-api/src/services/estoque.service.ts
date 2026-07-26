@@ -173,7 +173,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       NULLIF(TRIM(p.size), '') as tamanho,
       NULLIF(TRIM(ag.nome), '') as cor_de_para,
       a.branch_code,
-      a.branch_name,
+      COALESCE(NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
       a.ultima_venda,
       COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
       COALESCE(a.quantidade_estoque, 0) as quantidade,
@@ -181,6 +181,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       a.cobertura_meses,
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a
+    LEFT JOIN branches b ON b.branch_code = a.branch_code
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     LEFT JOIN agrupamento_membros am
       ON am.tipo = 'cor_produto'
@@ -397,11 +398,14 @@ export async function getFiltrosEstoqueSemGiro() {
   }
 
   const lojas = await prisma.$queryRaw<Array<{ branch_code: number; branch_name: string | null }>>`
-    SELECT branch_code, MAX(branch_name) as branch_name
-    FROM pcp_estoque_sem_giro_analitico
-    WHERE branch_code IS NOT NULL
-    GROUP BY branch_code
-    ORDER BY branch_code
+    SELECT
+      a.branch_code,
+      COALESCE(MAX(NULLIF(TRIM(b.description), '')), MAX(NULLIF(TRIM(b.fantasy_name), '')), MAX(NULLIF(TRIM(a.branch_name), '')), MAX(NULLIF(TRIM(b.branch_name), ''))) as branch_name
+    FROM pcp_estoque_sem_giro_analitico a
+    LEFT JOIN branches b ON b.branch_code = a.branch_code
+    WHERE a.branch_code IS NOT NULL
+    GROUP BY a.branch_code
+    ORDER BY a.branch_code
   `;
 
   return {

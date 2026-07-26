@@ -44,24 +44,7 @@ const CARD_COLORS = [
   'border-l-4 border-l-[var(--bbtk-purple)]',
 ];
 
-const LOJA_LABELS: Record<number, string> = {
-  1: 'IGU',
-  2: 'FAB',
-  3: 'BEN',
-  4: 'DEL',
-  5: 'L05',
-  6: 'SOB',
-  7: 'PAR',
-  8: 'RIO',
-  9: 'EXP',
-  11: 'RPK',
-  12: 'MES',
-  13: 'EUS',
-  17: 'NOR',
-};
-
 function shortLojaName(name: string, branchCode: number) {
-  if (LOJA_LABELS[branchCode]) return LOJA_LABELS[branchCode];
   const clean = name.replace(/SHOPPING|PATIO|\s+/g, ' ').trim();
   return clean.slice(0, 4).toUpperCase() || `L${String(branchCode).padStart(2, '0')}`;
 }
