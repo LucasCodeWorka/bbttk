@@ -26,7 +26,7 @@ export function KPICard({ title, value, variation, icon, color = 'red', isLoadin
   if (isLoading) {
     return (
       <Card className={cn(colors[color])}>
-        <CardTitle className="animate-pulse-soft">{title}</CardTitle>
+        <CardTitle size="xs" className="animate-pulse-soft">{title}</CardTitle>
         <div className="h-8 w-32 bg-gray-200 rounded animate-pulse mt-2" />
       </Card>
     );
@@ -35,7 +35,7 @@ export function KPICard({ title, value, variation, icon, color = 'red', isLoadin
   return (
     <Card className={cn(colors[color])}>
       <div className="flex items-center justify-between gap-2">
-        <CardTitle icon={icon} className="truncate">{title}</CardTitle>
+        <CardTitle size="xs" icon={icon} className="truncate">{title}</CardTitle>
         {variation !== undefined && <VariationBadge value={variation} className="shrink-0" />}
       </div>
       <CardValue size={valueSize} className="truncate mt-2">{value}</CardValue>
