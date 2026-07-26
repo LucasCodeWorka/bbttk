@@ -44,9 +44,26 @@ const CARD_COLORS = [
   'border-l-4 border-l-[var(--bbtk-purple)]',
 ];
 
+const LOJA_LABELS: Record<number, string> = {
+  1: 'IGU',
+  2: 'FAB',
+  3: 'BEN',
+  4: 'DEL',
+  5: 'L05',
+  6: 'SOB',
+  7: 'PAR',
+  8: 'RIO',
+  9: 'EXP',
+  11: 'RPK',
+  12: 'MES',
+  13: 'EUS',
+  17: 'NOR',
+};
+
 function shortLojaName(name: string, branchCode: number) {
-  const clean = name.replace(' SHOPPING', '').replace('PATIO ', 'P. ');
-  return clean.length <= 10 ? clean : `L${String(branchCode).padStart(2, '0')}`;
+  if (LOJA_LABELS[branchCode]) return LOJA_LABELS[branchCode];
+  const clean = name.replace(/SHOPPING|PATIO|\s+/g, ' ').trim();
+  return clean.slice(0, 4).toUpperCase() || `L${String(branchCode).padStart(2, '0')}`;
 }
 
 function formatDateTime(value: string | null) {
@@ -145,7 +162,7 @@ export default function PcpNovoPage() {
   const lojasTabela = data?.lojas || [];
   const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
   const totalColunasTabela = 5 + Math.max(lojasTabela.length, 1);
-  const lojaColumnWidth = lojasTabela.length > 0 ? 38 / lojasTabela.length : 38;
+  const lojaColumnWidth = lojasTabela.length > 0 ? 49 / lojasTabela.length : 49;
 
   const top10Totais = useMemo(() => {
     if (!data) return null;
@@ -167,6 +184,9 @@ export default function PcpNovoPage() {
   }, [data]);
 
   const rankingLabel = rankingLimit === 'all' ? 'Todos SKUs' : `Top ${rankingLimit}`;
+  const totalizadorLabel = rankingLimit === 'all'
+    ? 'Total:'
+    : `Amostra (${formatNumber(data?.top_skus.length || 0)} SKUs):`;
 
   const adicionais = data && top10Totais && rankingLimit !== 'all'
     ? {
@@ -321,13 +341,13 @@ export default function PcpNovoPage() {
 
         <Table className="overflow-x-visible" tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]">
           <colgroup>
-            <col style={{ width: '30%' }} />
+            <col style={{ width: '22%' }} />
             <col style={{ width: '10%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '7%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '9%' }} />
+            <col style={{ width: '7%' }} />
             {lojasTabela.length === 0 ? (
-              <col style={{ width: '38%' }} />
+              <col style={{ width: '49%' }} />
             ) : lojasTabela.map((loja) => (
               <col key={`col-${loja.branch_code}`} style={{ width: `${lojaColumnWidth}%` }} />
             ))}
@@ -352,7 +372,7 @@ export default function PcpNovoPage() {
               {lojasTabela.length === 0 ? (
                 <TableCell isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2">-</TableCell>
               ) : lojasTabela.map((loja) => (
-                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2 truncate">
+                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 !px-0.5 !py-2 whitespace-nowrap" title={loja.branch_name}>
                   {shortLojaName(loja.branch_name, loja.branch_code)}
                 </TableCell>
               ))}
@@ -376,7 +396,7 @@ export default function PcpNovoPage() {
               return (
                 <TableRow key={item.sku}>
                   <TableCell className="!px-1.5 !py-2 align-top">
-                    <p className="font-medium text-gray-900 truncate" title={item.descricao}>{item.descricao}</p>
+                    <p className="font-medium text-gray-900 truncate max-w-full" title={item.descricao}>{item.descricao}</p>
                     <p className="text-[9px] text-gray-500 truncate">
                       Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
                     </p>
@@ -398,7 +418,7 @@ export default function PcpNovoPage() {
             {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
               <>
                 <TableRow isHighlighted>
-                  <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 font-bold">{rankingLabel}:</TableCell>
+                  <TableCell colSpan={2} align="right" className="!px-1.5 !py-2 font-bold">{totalizadorLabel}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold whitespace-normal leading-tight">{formatMoney(top10Totais.valor)}</TableCell>
