@@ -44,11 +44,57 @@ const CARD_COLORS = [
   'border-l-4 border-l-[var(--bbtk-purple)]',
 ];
 
-function shortLojaName(name: string, branchCode: number) {
-  const clean = name.replace(/SHOPPING|PATIO|\s+/g, ' ').trim();
-  return clean.slice(0, 4).toUpperCase() || `L${String(branchCode).padStart(2, '0')}`;
-}
+const LOJA_ABBREVIATIONS_BY_CODE: Record<number, string> = {
+  1: 'IGU',
+  2: 'FAB',
+  3: 'BEN',
+  4: 'DEL',
+  5: 'L05',
+  6: 'SOB',
+  7: 'PAR',
+  8: 'RIO',
+  9: 'EXP',
+  10: 'MOS',
+  11: 'RPK',
+  12: 'MES',
+  13: 'EUS',
+  16: 'VIA',
+  17: 'NOR',
+  18: 'TER',
+  19: 'MAR',
+};
 
+const LOJA_ABBREVIATIONS_BY_NAME: Record<string, string> = {
+  IGUATEMI: 'IGU',
+  FABRICA: 'FAB',
+  BENFICA: 'BEN',
+  'DEL PASEO': 'DEL',
+  'PATIO DOM LUIS': 'L05',
+  'PATIO DOM LUIS SHOPPING': 'L05',
+  'SOBRAL SHOPPING': 'SOB',
+  PARANGABA: 'PAR',
+  RIOMAR: 'RIO',
+  'RIOMAR SHOPPING': 'RIO',
+  'IGUATEMI EXP.': 'EXP',
+  'IGUATEMI EXP': 'EXP',
+  MOSSORO: 'MOS',
+  'RIOMAR PK': 'RPK',
+  'RIOMAR KENNEDY': 'RPK',
+  MESSEJANA: 'MES',
+  EUSEBIO: 'EUS',
+  'VIA SUL': 'VIA',
+  'NORTH SHOPPING': 'NOR',
+  'TERRAZO SHOPPING': 'TER',
+  'MART MODA': 'MAR',
+};
+
+function shortLojaName(name: string, branchCode: number) {
+  const normalized = name.replace(/\s+/g, ' ').trim().toUpperCase();
+  if (LOJA_ABBREVIATIONS_BY_NAME[normalized]) return LOJA_ABBREVIATIONS_BY_NAME[normalized];
+  if (!normalized || /^\d+$/.test(normalized)) return LOJA_ABBREVIATIONS_BY_CODE[branchCode] || `L${String(branchCode).padStart(2, '0')}`;
+  const clean = normalized.replace(/SHOPPING|PATIO/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean.slice(0, 3) || LOJA_ABBREVIATIONS_BY_CODE[branchCode] || `L${String(branchCode).padStart(2, '0')}`;
+}
 function formatDateTime(value: string | null) {
   if (!value) return '-';
   return new Date(value).toLocaleString('pt-BR', {
