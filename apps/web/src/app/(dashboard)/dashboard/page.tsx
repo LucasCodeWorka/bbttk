@@ -15,7 +15,7 @@ import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
-import { exportToCsv } from '@/lib/exportCsv';
+import { exportToXlsx } from '@/lib/exportXlsx';
 import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
@@ -305,11 +305,20 @@ export default function DashboardPage() {
   function formatarPercentualExportacao(value: number): string {
     return `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)}%`;
   }
+
+  function renderBadgeAtingimentoMeta(pct: number) {
+    const atingimento = Math.max(0, pct);
+    return (
+      <Badge variant={atingimento >= 100 ? 'success' : 'danger'}>
+        {formatarPercentualExportacao(atingimento)}
+      </Badge>
+    );
+  }
   function exportarComparativo() {
     const linhaTotal = criarLinhaTotalComparativo();
     const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
 
-    exportToCsv(
+    exportToXlsx(
       `comparativo-filiais-${dataInicio}-a-${dataFim}`,
       [
         { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
@@ -356,10 +365,26 @@ export default function DashboardPage() {
         { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj ? formatarPercentualExportacao(f.proj.variacao_vs_ano_anterior) : '' },
         { header: 'Bate Meta', value: (f: LinhaComparativo) => f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
       ],
-      linhasExportacao
+      linhasExportacao,
+      'Comparativo por filial'
     );
   }
+  function exportarRankingVendedores() {
+    const linhasExportacao = vendedoresRanking.map((v, i) => ({ ...v, posicao: i + 1 }));
 
+    exportToXlsx(
+      `ranking-vendedores-${dataInicio}-a-${dataFim}`,
+      [
+        { header: '#', value: (v: typeof linhasExportacao[number]) => v.posicao },
+        { header: 'Vendedor', value: (v: typeof linhasExportacao[number]) => v.seller_name },
+        { header: 'Faturamento', value: (v: typeof linhasExportacao[number]) => formatMoney(v.faturamento) },
+        { header: 'Pecas', value: (v: typeof linhasExportacao[number]) => v.pecas },
+        { header: 'PA', value: (v: typeof linhasExportacao[number]) => v.pa },
+      ],
+      linhasExportacao,
+      'Ranking vendedores'
+    );
+  }
   function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);
     return (
@@ -600,7 +625,7 @@ export default function DashboardPage() {
                   <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.valor) : '-'}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.faturamento)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap">
-                    {f.meta.valor > 0 ? <VariationBadge value={f.meta.pct - 100} /> : '-'}
+                    {f.meta.valor > 0 ? renderBadgeAtingimentoMeta(f.meta.pct) : '-'}
                   </TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.faturamento)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.faturamento} /></TableCell>
@@ -662,7 +687,13 @@ export default function DashboardPage() {
                   {formatMoney(comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0))}
                 </TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.faturamento)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">
+                  {(() => {
+                    const metaTotal = comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0);
+                    const pctMetaTotal = metaTotal > 0 ? (comparativo.total.atual.faturamento / metaTotal) * 100 : 0;
+                    return metaTotal > 0 ? renderBadgeAtingimentoMeta(pctMetaTotal) : '-';
+                  })()}
+                </TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.faturamento)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.faturamento.percentual} /></TableCell>
                 <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
@@ -730,17 +761,22 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Ranking Vendedores</CardTitle>
-            <Select
-              aria-label="Quantidade de vendedores no ranking"
-              value={limiteRankingVendedores}
-              onChange={(e) => setLimiteRankingVendedores(e.target.value as '10' | '20' | 'todos')}
-              options={[
-                { value: '10', label: 'TOP 10' },
-                { value: '20', label: 'TOP 20' },
-                { value: 'todos', label: 'TODOS' },
-              ]}
-              className="w-32"
-            />
+            <div className="flex items-center gap-2">
+              <Select
+                aria-label="Quantidade de vendedores no ranking"
+                value={limiteRankingVendedores}
+                onChange={(e) => setLimiteRankingVendedores(e.target.value as '10' | '20' | 'todos')}
+                options={[
+                  { value: '10', label: 'TOP 10' },
+                  { value: '20', label: 'TOP 20' },
+                  { value: 'todos', label: 'TODOS' },
+                ]}
+                className="w-32"
+              />
+              <Button variant="secondary" size="sm" onClick={exportarRankingVendedores}>
+                Exportar Excel
+              </Button>
+            </div>
           </CardHeader>
           <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
