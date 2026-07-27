@@ -1,6 +1,6 @@
 'use client';
 
-import { CSSProperties, ReactNode } from 'react';
+import { CSSProperties, ReactNode, forwardRef } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TableProps {
@@ -9,13 +9,15 @@ interface TableProps {
   tableClassName?: string;
 }
 
-export function Table({ children, className, tableClassName }: TableProps) {
+// forwardRef no wrapper com scroll horizontal - permite que a pagina controle o scroll
+// programaticamente (ex: botoes de "rolar pra esquerda/direita" em tabelas largas).
+export const Table = forwardRef<HTMLDivElement, TableProps>(function Table({ children, className, tableClassName }, ref) {
   return (
-    <div className={cn('overflow-x-auto', className)}>
+    <div ref={ref} className={cn('overflow-x-auto', className)}>
       <table className={cn('w-full text-sm', tableClassName)}>{children}</table>
     </div>
   );
-}
+});
 
 interface TableHeadProps {
   children: ReactNode;

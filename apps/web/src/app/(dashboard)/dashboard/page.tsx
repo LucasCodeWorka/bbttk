@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
@@ -72,6 +72,11 @@ export default function DashboardPage() {
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const comparativoScrollRef = useRef<HTMLDivElement>(null);
+
+  function rolarComparativo(direcao: 'esquerda' | 'direita') {
+    comparativoScrollRef.current?.scrollBy({ left: direcao === 'esquerda' ? -320 : 320, behavior: 'smooth' });
+  }
 
   // Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
   const [classificacoes, setClassificacoes] = useState<ClassificacaoDimensao[]>([]);
@@ -194,26 +199,29 @@ export default function DashboardPage() {
         { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
         { header: 'Meta', value: (f: LinhaComparativo) => f.meta.valor },
         { header: 'Faturamento', value: (f: LinhaComparativo) => f.atual.faturamento },
-        { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta ?? '' },
+        { header: '% Meta', value: (f: LinhaComparativo) => f.meta.pct },
         { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => f.ano_anterior.faturamento },
         { header: 'Var % Faturamento', value: (f: LinhaComparativo) => f.variacao.faturamento },
         { header: '%TT Faturamento', value: (f: LinhaComparativo) => f.atual.pct_tt_faturamento },
+        { header: 'Projecao', value: (f: LinhaComparativo) => f.proj?.projecao ?? '' },
+        { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
+        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa },
+        { header: 'Var % PA', value: (f: LinhaComparativo) => f.variacao.pa },
+        { header: 'TM', value: (f: LinhaComparativo) => f.atual.tm },
+        { header: 'TM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm },
+        { header: 'Var % TM', value: (f: LinhaComparativo) => f.variacao.tm },
+        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.meta.meta_dia },
         { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
-        { header: '%TT Pecas', value: (f: LinhaComparativo) => f.atual.pct_tt_pecas },
         { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas },
+        { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta ?? '' },
+        { header: '%TT Pecas', value: (f: LinhaComparativo) => f.atual.pct_tt_pecas },
         { header: 'Var % Pecas', value: (f: LinhaComparativo) => f.variacao.pecas },
         { header: 'PM', value: (f: LinhaComparativo) => f.atual.pm },
         { header: 'PM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pm },
         { header: 'Var % PM', value: (f: LinhaComparativo) => f.variacao.pm },
-        { header: 'TM', value: (f: LinhaComparativo) => f.atual.tm },
-        { header: 'TM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm },
-        { header: 'Var % TM', value: (f: LinhaComparativo) => f.variacao.tm },
         { header: 'TM Cliente', value: (f: LinhaComparativo) => f.atual.tm_cliente },
         { header: 'TM Cliente Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm_cliente },
         { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.variacao.tm_cliente },
-        { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
-        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa },
-        { header: 'Var % PA', value: (f: LinhaComparativo) => f.variacao.pa },
         { header: 'PAC', value: (f: LinhaComparativo) => f.atual.pac },
         { header: 'PAC Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pac },
         { header: 'Var % PAC', value: (f: LinhaComparativo) => f.variacao.pac },
@@ -229,9 +237,6 @@ export default function DashboardPage() {
         { header: '% CN', value: (f: LinhaComparativo) => f.clientes_novos.pct },
         { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
         { header: 'Faturamento CN', value: (f: LinhaComparativo) => f.clientes_novos.faturamento },
-        { header: '% Meta', value: (f: LinhaComparativo) => f.meta.pct },
-        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.meta.meta_dia },
-        { header: 'Projecao', value: (f: LinhaComparativo) => f.proj?.projecao ?? '' },
         { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj?.variacao_vs_ano_anterior ?? '' },
         { header: 'Bate Meta', value: (f: LinhaComparativo) => f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
       ],
@@ -394,32 +399,52 @@ export default function DashboardPage() {
           </Button>
         </CardHeader>
         <LoadingOverlay active={isLoading}>
-        <Table>
+        <div className="relative">
+        <button
+          type="button"
+          aria-label="Rolar tabela para a esquerda"
+          onClick={() => rolarComparativo('esquerda')}
+          className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          aria-label="Rolar tabela para a direita"
+          onClick={() => rolarComparativo('direita')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
+        >
+          ›
+        </button>
+        <Table ref={comparativoScrollRef}>
           <TableHead>
             <TableRow>
               <ThSort label="Filial" sortKeyName="branch_name" align="left" />
               <ThSort label="Meta" sortKeyName="meta" />
               <ThSort label="Faturamento" sortKeyName="faturamento" />
-              <ThSort label="Debito p/ Meta" sortKeyName="debito_meta" />
+              <ThSort label="% Meta" sortKeyName="pct_meta" align="center" />
               <ThSort label="Fat. Ant." sortKeyName="fat_ant" />
               <ThSort label="Var %" sortKeyName="var_faturamento" align="center" />
               <ThSort label="%TT" sortKeyName="pct_tt_faturamento" align="center" />
+              <ThSort label="Projecao" sortKeyName="projecao" />
+              <ThSort label="PA" sortKeyName="pa" />
+              <ThSort label="PA Ant." sortKeyName="pa_ant" />
+              <ThSort label="Var %" sortKeyName="var_pa" align="center" />
+              <ThSort label="TM" sortKeyName="tm" />
+              <ThSort label="TM Ant." sortKeyName="tm_ant" />
+              <ThSort label="Var %" sortKeyName="var_tm" align="center" />
+              <ThSort label="Meta Dia" sortKeyName="meta_dia" />
               <ThSort label="Pecas" sortKeyName="pecas" />
-              <ThSort label="%TT" sortKeyName="pct_tt_pecas" align="center" />
               <ThSort label="Pecas Ant." sortKeyName="pecas_ant" />
+              <ThSort label="Debito p/ Meta" sortKeyName="debito_meta" />
+              <ThSort label="%TT" sortKeyName="pct_tt_pecas" align="center" />
               <ThSort label="Var %" sortKeyName="var_pecas" align="center" />
               <ThSort label="PM" sortKeyName="pm" />
               <ThSort label="PM Ant." sortKeyName="pm_ant" />
               <ThSort label="Var %" sortKeyName="var_pm" align="center" />
-              <ThSort label="TM" sortKeyName="tm" />
-              <ThSort label="TM Ant." sortKeyName="tm_ant" />
-              <ThSort label="Var %" sortKeyName="var_tm" align="center" />
               <ThSort label="TM Cliente" sortKeyName="tm_cliente" />
               <ThSort label="TM Cliente Ant." sortKeyName="tm_cliente_ant" />
               <ThSort label="Var %" sortKeyName="var_tm_cliente" align="center" />
-              <ThSort label="PA" sortKeyName="pa" />
-              <ThSort label="PA Ant." sortKeyName="pa_ant" />
-              <ThSort label="Var %" sortKeyName="var_pa" align="center" />
               <ThSort label="PAC" sortKeyName="pac" />
               <ThSort label="PAC Ant." sortKeyName="pac_ant" />
               <ThSort label="Var %" sortKeyName="var_pac" align="center" />
@@ -435,9 +460,6 @@ export default function DashboardPage() {
               <ThSort label="% CN" sortKeyName="pct_cn" align="center" />
               <ThSort label="Clientes Novos" sortKeyName="clientes_novos" />
               <ThSort label="Faturamento CN" sortKeyName="faturamento_cn" />
-              <ThSort label="% Meta" sortKeyName="pct_meta" align="center" />
-              <ThSort label="Meta Dia" sortKeyName="meta_dia" />
-              <ThSort label="Projecao" sortKeyName="projecao" />
               <ThSort label="Vs Ano Ant." sortKeyName="vs_ano_ant" align="center" />
               <TableCell isHeader align="center" className="whitespace-nowrap">Bate Meta</TableCell>
             </TableRow>
@@ -454,26 +476,31 @@ export default function DashboardPage() {
                   <TableCell className="font-medium whitespace-nowrap sticky left-0 bg-white">{f.branch_name}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.valor) : '-'}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.faturamento)}</TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{f.debitoMeta === null ? '-' : formatMoney(f.debitoMeta)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap">
+                    {f.meta.valor > 0 ? <VariationBadge value={f.meta.pct - 100} /> : '-'}
+                  </TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.faturamento)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.faturamento} /></TableCell>
                   <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_faturamento.toFixed(1)}%</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{proj ? formatMoney(proj.projecao) : '-'}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.atual.pa.toFixed(2)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{f.ano_anterior.pa.toFixed(2)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pa} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm} /></TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.meta_dia) : '-'}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.pecas)}</TableCell>
-                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_pecas.toFixed(1)}%</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.pecas)}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.debitoMeta === null ? '-' : formatMoney(f.debitoMeta)}</TableCell>
+                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_pecas.toFixed(1)}%</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pecas} /></TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.pm)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.pm)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pm} /></TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm)}</TableCell>
-                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm)}</TableCell>
-                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm} /></TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm_cliente)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm_cliente)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm_cliente} /></TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{f.atual.pa.toFixed(2)}</TableCell>
-                  <TableCell align="right" className="whitespace-nowrap text-gray-500">{f.ano_anterior.pa.toFixed(2)}</TableCell>
-                  <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pa} /></TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{f.atual.pac.toFixed(2)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{f.ano_anterior.pac.toFixed(2)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.pac} /></TableCell>
@@ -494,11 +521,6 @@ export default function DashboardPage() {
                   <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.clientes_novos.qtde)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.clientes_novos.faturamento)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap">
-                    {f.meta.valor > 0 ? <VariationBadge value={f.meta.pct - 100} /> : '-'}
-                  </TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.meta_dia) : '-'}</TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{proj ? formatMoney(proj.projecao) : '-'}</TableCell>
-                  <TableCell align="center" className="whitespace-nowrap">
                     {proj ? <VariationBadge value={proj.variacao_vs_ano_anterior} /> : '-'}
                   </TableCell>
                   <TableCell align="center" className="whitespace-nowrap">
@@ -517,27 +539,32 @@ export default function DashboardPage() {
                   {formatMoney(comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0))}
                 </TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.faturamento)}</TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">
-                  {formatMoney(linhas.reduce((s, f) => s + (f.debitoMeta || 0), 0))}
-                </TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.faturamento)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.faturamento.percentual} /></TableCell>
                 <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.pecas)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
-                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.pecas)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pecas.percentual} /></TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.pm)}</TableCell>
-                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.pm)}</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {projecao ? formatMoney(projecao.total.projecao) : '-'}
+                </TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pa.toFixed(2)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pa.toFixed(2)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.tm)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.tm)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.pecas)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.pecas)}</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(linhas.reduce((s, f) => s + (f.debitoMeta || 0), 0))}
+                </TableCell>
+                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pecas.percentual} /></TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.pm)}</TableCell>
+                <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.pm)}</TableCell>
+                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.tm_cliente)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.tm_cliente)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pa.toFixed(2)}</TableCell>
-                <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pa.toFixed(2)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pac.toFixed(2)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pac.toFixed(2)}</TableCell>
@@ -562,11 +589,6 @@ export default function DashboardPage() {
                 <TableCell align="right" className="font-bold whitespace-nowrap">
                   {formatMoney(comparativo.filiais.reduce((s, f) => s + f.clientes_novos.faturamento, 0))}
                 </TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
-                <TableCell align="right" className="whitespace-nowrap">-</TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">
-                  {projecao ? formatMoney(projecao.total.projecao) : '-'}
-                </TableCell>
                 <TableCell align="center" className="whitespace-nowrap">
                   {projecao ? <VariationBadge value={projecao.total.variacao_vs_ano_anterior} /> : '-'}
                 </TableCell>
@@ -575,6 +597,7 @@ export default function DashboardPage() {
             )}
           </TableBody>
         </Table>
+        </div>
         </LoadingOverlay>
       </Card>
 
