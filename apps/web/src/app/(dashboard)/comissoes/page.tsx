@@ -121,6 +121,7 @@ export default function ComissoesPage() {
 
   function getSortValueLinha(l: LinhaComissao, key: string): number | string {
     if (key === 'seller_name') return l.seller_name;
+    if (key === 'branch_name') return l.branch_code;
     return (l[key as keyof LinhaComissao] as number) ?? 0;
   }
 
