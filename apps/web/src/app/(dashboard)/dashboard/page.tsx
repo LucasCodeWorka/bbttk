@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { LineChart } from '@/components/charts/LineChart';
@@ -17,7 +18,7 @@ import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
 
-type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null };
+type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
 
 // Valor numerico de cada coluna ordenavel, usado tanto pro clique no cabecalho quanto pro export
 const SORT_GETTERS: Record<string, (f: LinhaComparativo) => number> = {
@@ -72,10 +73,20 @@ export default function DashboardPage() {
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
+  const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
+  const [comparativoScrollWidth, setComparativoScrollWidth] = useState(0);
 
   function rolarComparativo(direcao: 'esquerda' | 'direita') {
     comparativoScrollRef.current?.scrollBy({ left: direcao === 'esquerda' ? -320 : 320, behavior: 'smooth' });
+  }
+
+  function sincronizarComparativoPeloTopo() {
+    const topo = comparativoTopScrollRef.current;
+    const tabela = comparativoScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
   }
 
   // Filtro de classificacao de produto (categoria, genero, grupo, linha, colecao, tecido)
@@ -190,6 +201,46 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comparativo, projecao, sortKey, sortDir]);
 
+  const vendedoresRanking = useMemo(() => {
+    const lista = vendedores?.vendedores || [];
+    if (limiteRankingVendedores === 'todos') return lista;
+    return lista.slice(0, Number(limiteRankingVendedores));
+  }, [vendedores, limiteRankingVendedores]);
+  useEffect(() => {
+    const tabela = comparativoScrollRef.current;
+    const topo = comparativoTopScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setComparativoScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    const tableElement = tabela.querySelector('table');
+    if (tableElement) resizeObserver?.observe(tableElement);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [linhas.length, isLoading]);
+
   function handleSort(key: string) {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -199,25 +250,79 @@ export default function DashboardPage() {
     }
   }
 
+  function criarLinhaTotalComparativo(): LinhaComparativo | null {
+    if (!comparativo) return null;
+
+    const metaTotal = comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0);
+    const debitoMetaTotal = linhas.reduce((s, f) => s + (f.debitoMeta || 0), 0);
+    const devolucoesValorTotal = comparativo.filiais.reduce((s, f) => s + f.devolucoes.valor, 0);
+    const devolucoesQtdeTotal = comparativo.filiais.reduce((s, f) => s + f.devolucoes.qtde, 0);
+    const clientesNovosTotal = comparativo.filiais.reduce((s, f) => s + f.clientes_novos.qtde, 0);
+    const faturamentoClientesNovosTotal = comparativo.filiais.reduce((s, f) => s + f.clientes_novos.faturamento, 0);
+
+    return {
+      branch_code: 0,
+      branch_name: 'TOTAL',
+      atual: {
+        ...comparativo.total.atual,
+        pct_tt_faturamento: 100,
+        pct_tt_pecas: 100,
+      },
+      ano_anterior: comparativo.total.ano_anterior,
+      variacao: {
+        faturamento: comparativo.total.variacao.faturamento.percentual,
+        pecas: comparativo.total.variacao.pecas.percentual,
+        transacoes: comparativo.total.variacao.transacoes.percentual,
+        clientes: comparativo.total.variacao.clientes.percentual,
+        pm: comparativo.total.variacao.pm.percentual,
+        tm: comparativo.total.variacao.tm.percentual,
+        tm_cliente: 0,
+        pa: comparativo.total.variacao.pa.percentual,
+        pac: 0,
+      },
+      devolucoes: { valor: devolucoesValorTotal, qtde: devolucoesQtdeTotal, pct: 0 },
+      clientes_novos: { qtde: clientesNovosTotal, faturamento: faturamentoClientesNovosTotal, pct: 0 },
+      meta: { valor: metaTotal, pct: 0, meta_dia: 0 },
+      proj: projecao
+        ? {
+            branch_code: 0,
+            branch_name: 'TOTAL',
+            realizado: projecao.total.realizado,
+            caminhada: 0,
+            projecao: projecao.total.projecao,
+            falta: projecao.total.falta,
+            ano_anterior_completo: projecao.total.ano_anterior_completo,
+            variacao_vs_ano_anterior: projecao.total.variacao_vs_ano_anterior,
+          }
+        : undefined,
+      bateMeta: null,
+      debitoMeta: debitoMetaTotal,
+      isTotal: true,
+    };
+  }
+
   function exportarComparativo() {
+    const linhaTotal = criarLinhaTotalComparativo();
+    const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
+
     exportToCsv(
       `comparativo-filiais-${dataInicio}-a-${dataFim}`,
       [
         { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
         { header: 'Meta', value: (f: LinhaComparativo) => f.meta.valor },
         { header: 'Faturamento', value: (f: LinhaComparativo) => f.atual.faturamento },
-        { header: '% Meta', value: (f: LinhaComparativo) => f.meta.pct },
+        { header: '% Meta', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.meta.pct },
         { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => f.ano_anterior.faturamento },
         { header: 'Var % Faturamento', value: (f: LinhaComparativo) => f.variacao.faturamento },
         { header: '%TT Faturamento', value: (f: LinhaComparativo) => f.atual.pct_tt_faturamento },
         { header: 'Projecao', value: (f: LinhaComparativo) => f.proj?.projecao ?? '' },
         { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
         { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa },
-        { header: 'Var % PA', value: (f: LinhaComparativo) => f.variacao.pa },
+        { header: 'Var % PA', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.variacao.pa },
         { header: 'TM', value: (f: LinhaComparativo) => f.atual.tm },
         { header: 'TM Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm },
-        { header: 'Var % TM', value: (f: LinhaComparativo) => f.variacao.tm },
-        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.meta.meta_dia },
+        { header: 'Var % TM', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.variacao.tm },
+        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.meta.meta_dia },
         { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
         { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas },
         { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta ?? '' },
@@ -228,26 +333,26 @@ export default function DashboardPage() {
         { header: 'Var % PM', value: (f: LinhaComparativo) => f.variacao.pm },
         { header: 'TM Cliente', value: (f: LinhaComparativo) => f.atual.tm_cliente },
         { header: 'TM Cliente Ant.', value: (f: LinhaComparativo) => f.ano_anterior.tm_cliente },
-        { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.variacao.tm_cliente },
+        { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.variacao.tm_cliente },
         { header: 'PAC', value: (f: LinhaComparativo) => f.atual.pac },
         { header: 'PAC Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pac },
-        { header: 'Var % PAC', value: (f: LinhaComparativo) => f.variacao.pac },
+        { header: 'Var % PAC', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.variacao.pac },
         { header: 'Clientes', value: (f: LinhaComparativo) => f.atual.clientes },
         { header: 'Clientes Ant.', value: (f: LinhaComparativo) => f.ano_anterior.clientes },
-        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.variacao.clientes },
+        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.variacao.clientes },
         { header: 'Atendimento', value: (f: LinhaComparativo) => f.atual.transacoes },
         { header: 'Atend. Ant.', value: (f: LinhaComparativo) => f.ano_anterior.transacoes },
         { header: 'Var % Atendimento', value: (f: LinhaComparativo) => f.variacao.transacoes },
         { header: 'Devolucoes', value: (f: LinhaComparativo) => f.devolucoes.valor },
         { header: 'Qtde Dev', value: (f: LinhaComparativo) => f.devolucoes.qtde },
-        { header: '% Dev', value: (f: LinhaComparativo) => f.devolucoes.pct },
-        { header: '% CN', value: (f: LinhaComparativo) => f.clientes_novos.pct },
+        { header: '% Dev', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.devolucoes.pct },
+        { header: '% CN', value: (f: LinhaComparativo) => f.isTotal ? '-' : f.clientes_novos.pct },
         { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
         { header: 'Faturamento CN', value: (f: LinhaComparativo) => f.clientes_novos.faturamento },
         { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj?.variacao_vs_ano_anterior ?? '' },
-        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
+        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
       ],
-      linhas
+      linhasExportacao
     );
   }
 
@@ -423,7 +528,14 @@ export default function DashboardPage() {
         >
           ›
         </button>
-        <Table ref={comparativoScrollRef}>
+        <div
+          ref={comparativoTopScrollRef}
+          onScroll={sincronizarComparativoPeloTopo}
+          className="mb-2 overflow-x-auto overflow-y-hidden"
+        >
+          <div style={{ width: comparativoScrollWidth || '100%', height: 1 }} />
+        </div>
+        <Table ref={comparativoScrollRef} className="[scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TableHead>
             <TableRow>
               <ThSort label="Filial" sortKeyName="branch_name" align="left" />
@@ -614,6 +726,17 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Ranking Vendedores</CardTitle>
+            <Select
+              aria-label="Quantidade de vendedores no ranking"
+              value={limiteRankingVendedores}
+              onChange={(e) => setLimiteRankingVendedores(e.target.value as '10' | '20' | 'todos')}
+              options={[
+                { value: '10', label: 'TOP 10' },
+                { value: '20', label: 'TOP 20' },
+                { value: 'todos', label: 'TODOS' },
+              ]}
+              className="w-32"
+            />
           </CardHeader>
           <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
             <Table>
@@ -627,7 +750,7 @@ export default function DashboardPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {vendedores?.vendedores.slice(0, 15).map((v, i) => (
+                {vendedoresRanking.map((v, i) => (
                   <TableRow key={v.seller_code}>
                     <TableCell>
                       {i < 3 ? (
