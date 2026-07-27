@@ -217,6 +217,80 @@ Login do admin (`admin@bebetenkite.com`) já existia no banco antes de qualquer 
 com Claude — a senha está com hash bcrypt, **não há como recuperar**, só resetar via
 tela de Usuários (que já tem botão "Redefinir Senha", só funciona logado como admin).
 
+## Dashboard Comercial — Comparativo por Filial e Comissões (27/07/2026)
+
+Ajustes pontuais pedidos pelo usuário na tabela "Comparativo por Filial"
+(`apps/web/src/app/(dashboard)/dashboard/page.tsx`) e na tela de Comissões
+(`apps/web/src/app/(dashboard)/comissoes/page.tsx`). Nenhum desses commits mexe no
+módulo PCP.
+
+### Ordem de colunas do Comparativo por Filial
+
+Sequência pedida explicitamente pelo usuário (cabeçalho, linhas, linha de TOTAL e
+export CSV têm que ficar sempre sincronizados nessa mesma ordem — os 4 lugares têm 43
+colunas cada, contar depois de qualquer mudança pra conferir que bateu):
+
+```
+Filial, Meta, Faturamento, % Meta, Fat. Ant., Var % Faturamento, %TT, Projeção, PA,
+PA Ant., Var % PA, TM, TM Ant., Var % TM, Meta Dia, Peças, Peças Ant., Débito p/ Meta,
+%TT Peças, Var % Peças, PM, PM Ant., Var % PM, TM Cliente, TM Cliente Ant.,
+Var % TM Cliente, PAC, PAC Ant., Var % PAC, Clientes, Clientes Ant., Var % Clientes,
+Atendimento, Atend. Ant., Var % Atendimento, Devoluções, Qtde Dev, % Dev, % CN,
+Clientes Novos, Faturamento CN, Vs Ano Ant., Bate Meta
+```
+
+"Débito p/ Meta" é uma coluna nova (não existia antes) — quanto falta em R$ pra bater a
+meta (`meta.valor - atual.faturamento`, nunca negativo), calculada no frontend
+(`debitoMeta` em `LinhaComparativo`), não vem da API.
+
+### Ordenação por Filial/Loja usa o código, não o nome
+
+Clicar no cabeçalho "Filial" (Dashboard) ou "Loja" (Comissões) ordena por `branch_code`
+(ID da loja), não mais alfabeticamente pelo nome — pedido explícito do usuário. Se
+algum dia adicionar um terceiro lugar com uma coluna de filial ordenável, seguir o
+mesmo padrão (`getSortValueLinha`/equivalente retornando `branch_code` em vez do nome
+quando a chave de ordenação for a de filial).
+
+### Botões de rolagem horizontal
+
+A tabela Comparativo por Filial tem 43 colunas — scroll horizontal é obrigatório.
+Adicionamos duas setas (‹ ›) sobre o card, fora da área da tabela em si (no padding do
+`Card`, não em cima de nenhuma coluna), que chamam `scrollBy` num container cujo `ref`
+é exposto pelo componente `Table` (`apps/web/src/components/ui/Table.tsx`, agora usa
+`forwardRef` no wrapper com `overflow-x-auto`). Botões simples: só a setinha em cinza
+claro, sem fundo/borda — já tentamos com fundo circular preto e o usuário achou muito
+chamativo/em cima das colunas.
+
+### Fábrica dividida em 3 linhas — meta e débito usam o faturamento combinado
+
+A Fábrica (`branch_code=2`) já era dividida em 3 linhas por canal de operação antes
+dessa sessão (`getVendasFabricaDividida` em `apps/api/src/services/vendas.service.ts`):
+"FABRICA" (código sintético `2`), "FABRICA - DELIVERY" (`2.1`) e "FABRICA - ATACADO"
+(`2.3`), classificadas via `classificacao_operacoes.description ILIKE '%DELIVERY%'` /
+`'%ATACADO%'`. Isso já era assim, não é código novo.
+
+**O que não funcionava**: só existe UMA meta cadastrada no banco pra Fábrica (presa no
+`branch_code=2` puro, a tabela `metas` não tem infraestrutura pra separar meta por
+operação/canal). Antes desse fix, a linha "FABRICA" sozinha comparava seu faturamento
+parcial (só a fatia que não foi classificada como Delivery/Atacado) contra a meta
+inteira, o que fazia o %Meta parecer catastrófico (ex: -99,8%), enquanto as linhas
+DELIVERY/ATACADO — que concentram a maior parte do faturamento real — ficavam sem meta
+nenhuma (`%Meta = "-"`).
+
+**Fix** (`apps/api/src/routes/vendas.routes.ts`, rota `/comparativo-ano`): pra essas 3
+linhas especificamente (`FABRICA_DIVIDIDA_CODES = [2, 2.1, 2.3]`), `meta.valor`,
+`meta.pct` e `meta.meta_dia` passam a ser calculados sobre o **faturamento somado das
+3 linhas** e **repetidos igualmente nas 3** — representa melhor a realidade (é uma
+meta só, da fábrica inteira, só exibida em 3 linhas por canal). O "Débito p/ Meta" do
+frontend segue a mesma lógica (usa o faturamento combinado pras 3 linhas, não o
+faturamento individual de cada uma). Todas as outras filiais continuam com o cálculo
+de sempre (meta individual contra faturamento individual).
+
+**Não mexemos ainda**: "Bate Meta" e "Vs Ano Ant." (que vêm de `getProjecaoFiliais`,
+uma fonte de dado separada da meta) continuam usando a projeção individual de cada
+linha — não sabemos se a projeção também precisa desse mesmo tratamento combinado, não
+foi pedido ainda.
+
 ## Fase 3 — Módulo PCP (em andamento, 27/07/2026)
 
 Depois do "Estoque Sem Giro" (`/pcp-novo`, feito pelo Marcelo), esta fase adicionou 4
