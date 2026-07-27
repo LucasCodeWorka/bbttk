@@ -167,11 +167,7 @@ export default function DashboardPage() {
     });
 
     if (sortKey === 'branch_name' || !sortKey) {
-      base.sort((a, b) =>
-        sortKey === 'branch_name'
-          ? a.branch_name.localeCompare(b.branch_name) * (sortDir === 'asc' ? 1 : -1)
-          : a.branch_code - b.branch_code
-      );
+      base.sort((a, b) => (a.branch_code - b.branch_code) * (sortKey === 'branch_name' && sortDir === 'desc' ? -1 : 1));
       return base;
     }
 
@@ -404,7 +400,7 @@ export default function DashboardPage() {
           type="button"
           aria-label="Rolar tabela para a esquerda"
           onClick={() => rolarComparativo('esquerda')}
-          className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
+          className="absolute -left-4 top-1/2 -translate-y-1/2 z-20 text-gray-300 hover:text-gray-600 text-2xl leading-none transition-colors"
         >
           ‹
         </button>
@@ -412,7 +408,7 @@ export default function DashboardPage() {
           type="button"
           aria-label="Rolar tabela para a direita"
           onClick={() => rolarComparativo('direita')}
-          className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
+          className="absolute -right-4 top-1/2 -translate-y-1/2 z-20 text-gray-300 hover:text-gray-600 text-2xl leading-none transition-colors"
         >
           ›
         </button>
