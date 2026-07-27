@@ -49,9 +49,12 @@ export interface VendedorComissao {
   celulas: ComissaoCelula[];
 }
 
-export async function getRelatorioComissao(ano: number, mes: number, branchCodes?: number[]) {
-  const startDate = new Date(ano, mes - 1, 1);
-  const endDate = new Date(ano, mes, 0);
+export async function getRelatorioComissao(ano: number, mes: number, branchCodes?: number[], diaInicio?: number, diaFim?: number) {
+  const ultimoDiaMes = new Date(ano, mes, 0).getDate();
+  const inicio = Math.min(Math.max(diaInicio || 1, 1), ultimoDiaMes);
+  const fim = Math.min(Math.max(diaFim || ultimoDiaMes, inicio), ultimoDiaMes);
+  const startDate = new Date(ano, mes - 1, inicio);
+  const endDate = new Date(ano, mes - 1, fim);
 
   const todasFiliais = Object.keys(FILIAIS).map(Number);
   const filiaisEscopo = branchCodes && branchCodes.length > 0 ? branchCodes : todasFiliais;
@@ -176,7 +179,7 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
   vendedores.sort((a, b) => b.faturamento - a.faturamento);
 
   return {
-    periodo: { ano, mes },
+    periodo: { ano, mes, dia_inicio: inicio, dia_fim: fim },
     resumo: {
       realizado: round(realizadoTotal),
       meta: round(metaTotal),

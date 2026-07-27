@@ -262,9 +262,9 @@ export const metasApi = {
       `/api/metas/distribuicoes?ano=${ano}&mes=${mes}`
     ),
 
-  getComissoes: (ano: number, mes: number, branchCodes?: number[]) =>
+  getComissoes: (ano: number, mes: number, branchCodes?: number[], diaInicio?: number, diaFim?: number) =>
     fetchApi<ComissoesResponse>(
-      `/api/metas/comissoes${joinQuery(`ano=${ano}`, `mes=${mes}`, branchesQuery(branchCodes))}`
+      `/api/metas/comissoes${joinQuery(`ano=${ano}`, `mes=${mes}`, branchesQuery(branchCodes), diaInicio ? `dia_inicio=${diaInicio}` : '', diaFim ? `dia_fim=${diaFim}` : '')}`
     ),
 };
 
@@ -333,6 +333,10 @@ export interface Vendedor {
   faturamento: number;
   pa: number;
   tm: number;
+  meta: number;
+  pct_meta: number;
+  projecao: number;
+  pct_proj: number;
 }
 
 export interface VendedoresResponse {
@@ -597,7 +601,7 @@ export interface CanalComissao {
 }
 
 export interface ComissoesResponse {
-  periodo: { ano: number; mes: number };
+  periodo: { ano: number; mes: number; dia_inicio?: number; dia_fim?: number };
   resumo: { realizado: number; meta: number; resultado_pct: number };
   canal: CanalComissao[];
   niveis: MetaNivel[];

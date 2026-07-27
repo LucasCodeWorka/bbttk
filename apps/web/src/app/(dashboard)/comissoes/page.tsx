@@ -19,6 +19,8 @@ export default function ComissoesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
+  const [diaInicio, setDiaInicio] = useState(1);
+  const [diaFim, setDiaFim] = useState(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate());
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [vendedoresSelecionados, setVendedoresSelecionados] = useState<string[]>([]);
   const [dados, setDados] = useState<ComissoesResponse | null>(null);
@@ -29,14 +31,14 @@ export default function ComissoesPage() {
     setIsLoading(true);
     try {
       const branchCodes = filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined;
-      const res = await metasApi.getComissoes(ano, mes, branchCodes);
+      const res = await metasApi.getComissoes(ano, mes, branchCodes, diaInicio, diaFim);
       setDados(res);
     } catch (error) {
       console.error('Erro ao carregar comissoes:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [ano, mes, filiaisSelecionadas]);
+  }, [ano, mes, diaInicio, diaFim, filiaisSelecionadas]);
 
   useEffect(() => {
     carregarDados();
@@ -54,6 +56,13 @@ export default function ComissoesPage() {
     return { value: year, label: String(year) };
   });
   const mesOptions = MESES.slice(1).map((m, i) => ({ value: i + 1, label: m }));
+  const ultimoDiaMesSelecionado = useMemo(() => new Date(ano, mes, 0).getDate(), [ano, mes]);
+  const diaOptions = useMemo(() => Array.from({ length: ultimoDiaMesSelecionado }, (_, i) => ({ value: i + 1, label: String(i + 1) })), [ultimoDiaMesSelecionado]);
+
+  useEffect(() => {
+    setDiaInicio((prev) => Math.min(prev, ultimoDiaMesSelecionado));
+    setDiaFim((prev) => Math.min(Math.max(prev, diaInicio), ultimoDiaMesSelecionado));
+  }, [ultimoDiaMesSelecionado, diaInicio]);
 
   const niveis = dados?.niveis || [];
 
@@ -182,7 +191,7 @@ export default function ComissoesPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Comissoes</h1>
           <p className="text-gray-500 text-sm mt-1">
-            {MESES[mes]} de {ano}
+            {MESES[mes]} de {ano} - dias {diaInicio} a {diaFim}
           </p>
         </div>
 
@@ -200,6 +209,24 @@ export default function ComissoesPage() {
             options={mesOptions}
             label="Mes"
             className="w-32"
+          />
+          <Select
+            value={diaInicio}
+            onChange={(e) => {
+              const value = parseInt(e.target.value);
+              setDiaInicio(value);
+              setDiaFim((prev) => Math.max(prev, value));
+            }}
+            options={diaOptions}
+            label="Dia inicio"
+            className="w-28"
+          />
+          <Select
+            value={diaFim}
+            onChange={(e) => setDiaFim(Math.max(parseInt(e.target.value), diaInicio))}
+            options={diaOptions}
+            label="Dia fim"
+            className="w-24"
           />
           <FilialMultiSelect
             selected={filiaisSelecionadas}
