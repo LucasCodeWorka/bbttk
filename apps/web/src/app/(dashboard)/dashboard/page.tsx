@@ -15,7 +15,7 @@ import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
-import { exportToXlsx } from '@/lib/exportXlsx';
+import { exportToXlsx, XlsxCellStyle } from '@/lib/exportXlsx';
 import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
@@ -316,6 +316,26 @@ export default function DashboardPage() {
       </Badge>
     );
   }
+  function estiloAtingimentoMeta(pct: number): XlsxCellStyle {
+    const atingimento = Math.max(0, pct);
+    return atingimento >= 100 ? 'success' : atingimento > 90 ? 'warning' : 'danger';
+  }
+
+  function estiloVariacao(value: number): XlsxCellStyle {
+    return value > 0 ? 'success' : value < 0 ? 'danger' : 'neutral';
+  }
+
+  function estiloDevolucao(pct: number): XlsxCellStyle {
+    return pct > 10 ? 'danger' : pct > 5 ? 'warning' : 'neutral';
+  }
+
+  function estiloLinhaTotal(f: LinhaComparativo): XlsxCellStyle | undefined {
+    return f.isTotal ? 'total' : undefined;
+  }
+
+  function estiloAntigo(f: LinhaComparativo): XlsxCellStyle {
+    return f.isTotal ? 'totalMuted' : 'muted';
+  }
   function exportarComparativo() {
     const linhaTotal = criarLinhaTotalComparativo();
     const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
@@ -323,52 +343,52 @@ export default function DashboardPage() {
     exportToXlsx(
       `comparativo-filiais-${dataInicio}-a-${dataFim}`,
       [
-        { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
+        { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name, style: estiloLinhaTotal },
         { header: 'Meta', value: (f: LinhaComparativo) => formatMoney(f.meta.valor) },
         { header: 'Faturamento', value: (f: LinhaComparativo) => formatMoney(f.atual.faturamento) },
-        { header: '% Meta', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(Math.max(0, f.meta.pct)) },
-        { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.faturamento) },
-        { header: 'Var % Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.faturamento) },
-        { header: '%TT Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_faturamento) },
+        { header: '% Meta', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(Math.max(0, f.meta.pct)), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloAtingimentoMeta(f.meta.pct) },
+        { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.faturamento), style: estiloAntigo },
+        { header: 'Var % Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.faturamento), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.faturamento) },
+        { header: '%TT Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_faturamento), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
         { header: 'Projecao', value: (f: LinhaComparativo) => f.proj ? formatMoney(f.proj.projecao) : '' },
         { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
-        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa },
-        { header: 'Var % PA', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.pa) },
+        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa, style: estiloAntigo },
+        { header: 'Var % PA', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.pa), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.pa) },
         { header: 'TM', value: (f: LinhaComparativo) => formatMoney(f.atual.tm) },
-        { header: 'TM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.tm) },
-        { header: 'Var % TM', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.tm) },
+        { header: 'TM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.tm), style: estiloAntigo },
+        { header: 'Var % TM', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.tm), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.tm) },
         { header: 'Meta Dia', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatMoney(f.meta.meta_dia) },
         { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
-        { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas },
+        { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas, style: estiloAntigo },
         { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta === null ? '' : formatMoney(f.debitoMeta) },
-        { header: '%TT Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_pecas) },
-        { header: 'Var % Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pecas) },
+        { header: '%TT Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_pecas), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
+        { header: 'Var % Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pecas), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.pecas) },
         { header: 'PM', value: (f: LinhaComparativo) => formatMoney(f.atual.pm) },
-        { header: 'PM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.pm) },
-        { header: 'Var % PM', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pm) },
+        { header: 'PM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.pm), style: estiloAntigo },
+        { header: 'Var % PM', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pm), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.pm) },
         { header: 'TM Cliente', value: (f: LinhaComparativo) => formatMoney(f.atual.tm_cliente) },
-        { header: 'TM Cliente Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.tm_cliente) },
-        { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.tm_cliente) },
+        { header: 'TM Cliente Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.tm_cliente), style: estiloAntigo },
+        { header: 'Var % TM Cliente', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.tm_cliente), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.tm_cliente) },
         { header: 'PAC', value: (f: LinhaComparativo) => f.atual.pac },
-        { header: 'PAC Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pac },
-        { header: 'Var % PAC', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.pac) },
+        { header: 'PAC Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pac, style: estiloAntigo },
+        { header: 'Var % PAC', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.pac), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.pac) },
         { header: 'Clientes', value: (f: LinhaComparativo) => f.atual.clientes },
-        { header: 'Clientes Ant.', value: (f: LinhaComparativo) => f.ano_anterior.clientes },
-        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.clientes) },
+        { header: 'Clientes Ant.', value: (f: LinhaComparativo) => f.ano_anterior.clientes, style: estiloAntigo },
+        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.clientes), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.clientes) },
         { header: 'Atendimento', value: (f: LinhaComparativo) => f.atual.transacoes },
-        { header: 'Atend. Ant.', value: (f: LinhaComparativo) => f.ano_anterior.transacoes },
-        { header: 'Var % Atendimento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.transacoes) },
+        { header: 'Atend. Ant.', value: (f: LinhaComparativo) => f.ano_anterior.transacoes, style: estiloAntigo },
+        { header: 'Var % Atendimento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.transacoes), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.transacoes) },
         { header: 'Devolucoes', value: (f: LinhaComparativo) => formatMoney(f.devolucoes.valor) },
         { header: 'Qtde Dev', value: (f: LinhaComparativo) => f.devolucoes.qtde },
-        { header: '% Dev', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.devolucoes.pct) },
-        { header: '% CN', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.clientes_novos.pct) },
+        { header: '% Dev', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.devolucoes.pct), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloDevolucao(f.devolucoes.pct) },
+        { header: '% CN', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.clientes_novos.pct), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
         { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
         { header: 'Faturamento CN', value: (f: LinhaComparativo) => formatMoney(f.clientes_novos.faturamento) },
-        { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj ? formatarPercentualExportacao(f.proj.variacao_vs_ano_anterior) : '' },
-        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao' },
+        { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj ? formatarPercentualExportacao(f.proj.variacao_vs_ano_anterior) : '', style: (f: LinhaComparativo) => f.proj ? estiloVariacao(f.proj.variacao_vs_ano_anterior) : estiloLinhaTotal(f) },
+        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao', style: (f: LinhaComparativo) => f.isTotal ? 'total' : f.bateMeta === null ? undefined : f.bateMeta ? 'success' : 'danger' },
       ],
       linhasExportacao,
-      'Comparativo por filial'
+      { sheetName: 'Comparativo por filial', rowStyle: estiloLinhaTotal }
     );
   }
   function exportarRankingVendedores() {
@@ -377,7 +397,7 @@ export default function DashboardPage() {
     exportToXlsx(
       `ranking-vendedores-${dataInicio}-a-${dataFim}`,
       [
-        { header: '#', value: (v: typeof linhasExportacao[number]) => v.posicao },
+        { header: '#', value: (v: typeof linhasExportacao[number]) => v.posicao, style: (v: typeof linhasExportacao[number]) => v.posicao === 1 ? 'rankGold' : v.posicao === 2 ? 'rankSilver' : v.posicao === 3 ? 'rankBronze' : undefined },
         { header: 'Vendedor', value: (v: typeof linhasExportacao[number]) => v.seller_name },
         { header: 'Faturamento', value: (v: typeof linhasExportacao[number]) => formatMoney(v.faturamento) },
         { header: 'Pecas', value: (v: typeof linhasExportacao[number]) => v.pecas },
