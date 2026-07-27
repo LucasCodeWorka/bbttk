@@ -341,6 +341,18 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const totalFaturamentoAtual = filiaisAtual.reduce((sum, f) => sum + f.faturamento, 0);
     const totalPecasAtual = filiaisAtual.reduce((sum, f) => sum + f.pecas, 0);
 
+    // A meta so existe cadastrada na linha "2 - FABRICA" (sem infraestrutura pra
+    // separar por operacao, ver comentario acima) - mas as 3 linhas (2/2.1/2.3) sao a
+    // mesma filial fisica vendendo em canais diferentes. Sem isso, a linha "2" sozinha
+    // parece bater so uma fracao da meta (o resto do faturamento foi pras linhas
+    // 2.1/2.3), e as outras duas ficam sem meta nenhuma. Repete a mesma meta/percentual
+    // nas 3 linhas, calculado sobre o faturamento COMBINADO das 3.
+    const FABRICA_DIVIDIDA_CODES = [2, 2.1, 2.3];
+    const metaFabrica = metasMap.get(2) || 0;
+    const faturamentoFabricaCombinado = filiaisAtual
+      .filter(f => FABRICA_DIVIDIDA_CODES.includes(f.branch_code))
+      .reduce((sum, f) => sum + f.faturamento, 0);
+
     const filiaisComparativo = filiaisAtual.map(f => {
       const ant = anteriorDict.get(f.branch_code) || {
         faturamento: 0,
@@ -366,7 +378,9 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
 
       const devolucao = devolucoesMap.get(f.branch_code) || { valor: 0, qtde: 0 };
       const clientesNovos = clientesNovosMap.get(f.branch_code) || { qtde: 0, faturamento: 0 };
-      const metaValor = metasMap.get(f.branch_code) || 0;
+      const ehFabricaDividida = FABRICA_DIVIDIDA_CODES.includes(f.branch_code);
+      const metaValor = ehFabricaDividida ? metaFabrica : (metasMap.get(f.branch_code) || 0);
+      const faturamentoParaMeta = ehFabricaDividida ? faturamentoFabricaCombinado : f.faturamento;
 
       return {
         branch_code: f.branch_code,
@@ -420,9 +434,9 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
         },
         meta: {
           valor: metaValor,
-          pct: metaValor > 0 ? Math.round((f.faturamento / metaValor) * 1000) / 10 : 0,
+          pct: metaValor > 0 ? Math.round((faturamentoParaMeta / metaValor) * 1000) / 10 : 0,
           meta_dia: metaValor > 0 && diasRestantes > 0
-            ? Math.round(((metaValor - f.faturamento) / diasRestantes) * 100) / 100
+            ? Math.round(((metaValor - faturamentoParaMeta) / diasRestantes) * 100) / 100
             : 0,
         },
       };
