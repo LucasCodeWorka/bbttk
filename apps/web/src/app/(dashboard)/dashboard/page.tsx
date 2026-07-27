@@ -17,10 +17,11 @@ import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
 
-type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null };
+type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null };
 
 // Valor numerico de cada coluna ordenavel, usado tanto pro clique no cabecalho quanto pro export
 const SORT_GETTERS: Record<string, (f: LinhaComparativo) => number> = {
+  debito_meta: (f) => f.debitoMeta ?? -Infinity,
   faturamento: (f) => f.atual.faturamento,
   pct_tt_faturamento: (f) => f.atual.pct_tt_faturamento,
   fat_ant: (f) => f.ano_anterior.faturamento,
@@ -156,7 +157,8 @@ export default function DashboardPage() {
     const base = (comparativo?.filiais || []).map((f) => {
       const proj = projecaoMap.get(f.branch_code);
       const bateMeta = f.meta.valor > 0 && proj ? proj.projecao >= f.meta.valor : null;
-      return { ...f, proj, bateMeta };
+      const debitoMeta = f.meta.valor > 0 ? Math.max(0, f.meta.valor - f.atual.faturamento) : null;
+      return { ...f, proj, bateMeta, debitoMeta };
     });
 
     if (sortKey === 'branch_name' || !sortKey) {
@@ -190,10 +192,12 @@ export default function DashboardPage() {
       `comparativo-filiais-${dataInicio}-a-${dataFim}`,
       [
         { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name },
+        { header: 'Meta', value: (f: LinhaComparativo) => f.meta.valor },
         { header: 'Faturamento', value: (f: LinhaComparativo) => f.atual.faturamento },
-        { header: '%TT Faturamento', value: (f: LinhaComparativo) => f.atual.pct_tt_faturamento },
+        { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta ?? '' },
         { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => f.ano_anterior.faturamento },
         { header: 'Var % Faturamento', value: (f: LinhaComparativo) => f.variacao.faturamento },
+        { header: '%TT Faturamento', value: (f: LinhaComparativo) => f.atual.pct_tt_faturamento },
         { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
         { header: '%TT Pecas', value: (f: LinhaComparativo) => f.atual.pct_tt_pecas },
         { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas },
@@ -225,7 +229,6 @@ export default function DashboardPage() {
         { header: '% CN', value: (f: LinhaComparativo) => f.clientes_novos.pct },
         { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
         { header: 'Faturamento CN', value: (f: LinhaComparativo) => f.clientes_novos.faturamento },
-        { header: 'Meta', value: (f: LinhaComparativo) => f.meta.valor },
         { header: '% Meta', value: (f: LinhaComparativo) => f.meta.pct },
         { header: 'Meta Dia', value: (f: LinhaComparativo) => f.meta.meta_dia },
         { header: 'Projecao', value: (f: LinhaComparativo) => f.proj?.projecao ?? '' },
@@ -395,10 +398,12 @@ export default function DashboardPage() {
           <TableHead>
             <TableRow>
               <ThSort label="Filial" sortKeyName="branch_name" align="left" />
+              <ThSort label="Meta" sortKeyName="meta" />
               <ThSort label="Faturamento" sortKeyName="faturamento" />
-              <ThSort label="%TT" sortKeyName="pct_tt_faturamento" align="center" />
+              <ThSort label="Debito p/ Meta" sortKeyName="debito_meta" />
               <ThSort label="Fat. Ant." sortKeyName="fat_ant" />
               <ThSort label="Var %" sortKeyName="var_faturamento" align="center" />
+              <ThSort label="%TT" sortKeyName="pct_tt_faturamento" align="center" />
               <ThSort label="Pecas" sortKeyName="pecas" />
               <ThSort label="%TT" sortKeyName="pct_tt_pecas" align="center" />
               <ThSort label="Pecas Ant." sortKeyName="pecas_ant" />
@@ -430,7 +435,6 @@ export default function DashboardPage() {
               <ThSort label="% CN" sortKeyName="pct_cn" align="center" />
               <ThSort label="Clientes Novos" sortKeyName="clientes_novos" />
               <ThSort label="Faturamento CN" sortKeyName="faturamento_cn" />
-              <ThSort label="Meta" sortKeyName="meta" />
               <ThSort label="% Meta" sortKeyName="pct_meta" align="center" />
               <ThSort label="Meta Dia" sortKeyName="meta_dia" />
               <ThSort label="Projecao" sortKeyName="projecao" />
@@ -448,10 +452,12 @@ export default function DashboardPage() {
                   onClick={() => setFiliaisSelecionadas([f.branch_code])}
                 >
                   <TableCell className="font-medium whitespace-nowrap sticky left-0 bg-white">{f.branch_name}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.valor) : '-'}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.faturamento)}</TableCell>
-                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_faturamento.toFixed(1)}%</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.debitoMeta === null ? '-' : formatMoney(f.debitoMeta)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.faturamento)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.faturamento} /></TableCell>
+                  <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_faturamento.toFixed(1)}%</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.pecas)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.atual.pct_tt_pecas.toFixed(1)}%</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.pecas)}</TableCell>
@@ -487,7 +493,6 @@ export default function DashboardPage() {
                   <TableCell align="center" className="whitespace-nowrap text-gray-500">{f.clientes_novos.pct.toFixed(1)}%</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.clientes_novos.qtde)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.clientes_novos.faturamento)}</TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.valor) : '-'}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap">
                     {f.meta.valor > 0 ? <VariationBadge value={f.meta.pct - 100} /> : '-'}
                   </TableCell>
@@ -508,10 +513,16 @@ export default function DashboardPage() {
             {comparativo && (
               <TableRow isHighlighted>
                 <TableCell className="font-bold whitespace-nowrap sticky left-0 bg-yellow-50">TOTAL</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0))}
+                </TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.faturamento)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
+                <TableCell align="right" className="font-bold whitespace-nowrap">
+                  {formatMoney(linhas.reduce((s, f) => s + (f.debitoMeta || 0), 0))}
+                </TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.faturamento)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.faturamento.percentual} /></TableCell>
+                <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.pecas)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap">100%</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.pecas)}</TableCell>
@@ -550,9 +561,6 @@ export default function DashboardPage() {
                 </TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">
                   {formatMoney(comparativo.filiais.reduce((s, f) => s + f.clientes_novos.faturamento, 0))}
-                </TableCell>
-                <TableCell align="right" className="font-bold whitespace-nowrap">
-                  {formatMoney(comparativo.filiais.reduce((s, f) => s + f.meta.valor, 0))}
                 </TableCell>
                 <TableCell align="center" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="whitespace-nowrap">-</TableCell>
