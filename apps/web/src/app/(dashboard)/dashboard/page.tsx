@@ -159,10 +159,21 @@ export default function DashboardPage() {
   // Linhas da tabela Comparativo, ja com projecao/bateMeta anexados e ordenadas
   // pela coluna clicada (default: numero da filial, crescente)
   const linhas: LinhaComparativo[] = useMemo(() => {
+    // A Fabrica (branch_code 2) vende em 3 canais/linhas (2/2.1/2.3 - varejo/delivery/
+    // atacado, ver vendas.routes.ts) mas so tem UMA meta cadastrada, ja repetida pelo
+    // backend nas 3 linhas com base no faturamento COMBINADO delas - o debito precisa
+    // usar a mesma base combinada, senao cada linha calcularia o debito contra o alvo
+    // inteiro usando so a fatia dela do faturamento (numero gigante e enganoso).
+    const FABRICA_DIVIDIDA_CODES = [2, 2.1, 2.3];
+    const faturamentoFabricaCombinado = (comparativo?.filiais || [])
+      .filter((f) => FABRICA_DIVIDIDA_CODES.includes(f.branch_code))
+      .reduce((s, f) => s + f.atual.faturamento, 0);
+
     const base = (comparativo?.filiais || []).map((f) => {
       const proj = projecaoMap.get(f.branch_code);
       const bateMeta = f.meta.valor > 0 && proj ? proj.projecao >= f.meta.valor : null;
-      const debitoMeta = f.meta.valor > 0 ? Math.max(0, f.meta.valor - f.atual.faturamento) : null;
+      const faturamentoParaDebito = FABRICA_DIVIDIDA_CODES.includes(f.branch_code) ? faturamentoFabricaCombinado : f.atual.faturamento;
+      const debitoMeta = f.meta.valor > 0 ? Math.max(0, f.meta.valor - faturamentoParaDebito) : null;
       return { ...f, proj, bateMeta, debitoMeta };
     });
 
