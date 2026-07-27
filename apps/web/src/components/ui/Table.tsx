@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { CSSProperties, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TableProps {
@@ -70,9 +70,10 @@ interface TableCellProps {
   isHeader?: boolean;
   onClick?: () => void;
   colSpan?: number;
+  style?: CSSProperties;
 }
 
-export function TableCell({ children, className, title, align = 'left', isHeader, onClick, colSpan }: TableCellProps) {
+export function TableCell({ children, className, title, align = 'left', isHeader, onClick, colSpan, style }: TableCellProps) {
   const alignments = {
     left: 'text-left',
     center: 'text-center',
@@ -86,6 +87,7 @@ export function TableCell({ children, className, title, align = 'left', isHeader
       title={title}
       onClick={onClick}
       colSpan={colSpan}
+      style={style}
       className={cn(
         'px-4 py-3',
         alignments[align],

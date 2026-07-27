@@ -1,0 +1,223 @@
+import { prisma } from '../config/database.js';
+
+const ATACADO_COBERTURA_BASES = ['fabrica_total', 'atacado_only'];
+
+export interface UpdateConfigInput {
+  relatorio: string;
+  giroDias: number;
+  coberturaMeses: number;
+  atacadoCoberturaBase: string;
+  custoCode: number;
+  pdvVarejoCode: number;
+  pdvAtacadoCode: number;
+  precoCustoBranchCode: number;
+}
+
+export interface CoberturaIdealItem {
+  branchCode: number;
+  coberturaIdealMeses: number;
+}
+
+export interface UpdateMetaVisaoGeralInput {
+  relatorio: string;
+  metaCoberturaGeralMeses: number;
+  metaGiroAnualizado: number;
+  metaEstoqueMortoPercent: number;
+  metaCoberturaBasicoMeses: number;
+  metaCoberturaColecaoMeses: number;
+  estoqueMortoDias: number;
+}
+
+// Busca a config do relatorio, criando com os defaults se ainda nao existir
+// (upsert-on-read - nao precisa de seed manual).
+export async function getConfig(relatorio: string) {
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+}
+
+export async function updateConfig(input: UpdateConfigInput, userId?: number) {
+  if (!Number.isInteger(input.giroDias) || input.giroDias <= 0) {
+    throw new Error('giroDias precisa ser um numero inteiro positivo');
+  }
+  if (!Number.isInteger(input.coberturaMeses) || input.coberturaMeses <= 0) {
+    throw new Error('coberturaMeses precisa ser um numero inteiro positivo');
+  }
+  if (!ATACADO_COBERTURA_BASES.includes(input.atacadoCoberturaBase)) {
+    throw new Error(`atacadoCoberturaBase precisa ser um de: ${ATACADO_COBERTURA_BASES.join(', ')}`);
+  }
+  if (!Number.isInteger(input.custoCode)) throw new Error('custoCode invalido');
+  if (!Number.isInteger(input.pdvVarejoCode)) throw new Error('pdvVarejoCode invalido');
+  if (!Number.isInteger(input.pdvAtacadoCode)) throw new Error('pdvAtacadoCode invalido');
+  if (!Number.isInteger(input.precoCustoBranchCode)) throw new Error('precoCustoBranchCode invalido');
+
+  const dados = {
+    giroDias: input.giroDias,
+    coberturaMeses: input.coberturaMeses,
+    atacadoCoberturaBase: input.atacadoCoberturaBase,
+    custoCode: input.custoCode,
+    pdvVarejoCode: input.pdvVarejoCode,
+    pdvAtacadoCode: input.pdvAtacadoCode,
+    precoCustoBranchCode: input.precoCustoBranchCode,
+  };
+
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+}
+
+// Lista os codigos de custo/preco que ja foram sincronizados (nome + codigo), pra
+// popular os selects do Configurador do PCP sem precisar de chamada nova na API do
+// TOTVS toda vez que a tela abre.
+export async function getCodigosDisponiveis() {
+  const [custos, precos] = await Promise.all([
+    prisma.produtoCusto.findMany({
+      distinct: ['costCode'],
+      select: { costCode: true, costName: true },
+      orderBy: { costCode: 'asc' },
+    }),
+    prisma.produtoPreco.findMany({
+      distinct: ['priceCode'],
+      select: { priceCode: true, priceName: true },
+      orderBy: { priceCode: 'asc' },
+    }),
+  ]);
+
+  return {
+    custos: custos.map((c) => ({ code: c.costCode, name: c.costName || `Codigo ${c.costCode}` })),
+    precos: precos.map((p) => ({ code: p.priceCode, name: p.priceName || `Codigo ${p.priceCode}` })),
+  };
+}
+
+// Retorna so os overrides ja salvos (lista esparsa) - a tela (que ja tem a lista fixa
+// das 13 colunas) mescla isso com o default efetivo (coberturaMeses global) pra exibir
+// sempre as 13 linhas, mesmo sem override em nenhuma.
+export async function getCoberturaIdeal(relatorio: string) {
+  return prisma.pcpCoberturaIdealFilial.findMany({
+    where: { relatorio },
+    orderBy: { branchCode: 'asc' },
+  });
+}
+
+export async function upsertCoberturaIdeal(relatorio: string, items: CoberturaIdealItem[], userId?: number) {
+  for (const item of items) {
+    if (!Number.isInteger(item.branchCode)) {
+      throw new Error('branchCode invalido em um dos itens');
+    }
+    if (typeof item.coberturaIdealMeses !== 'number' || item.coberturaIdealMeses <= 0) {
+      throw new Error('coberturaIdealMeses precisa ser um numero positivo em todos os itens');
+    }
+  }
+
+  return prisma.$transaction(
+    items.map((item) =>
+      prisma.pcpCoberturaIdealFilial.upsert({
+        where: { relatorio_branchCode: { relatorio, branchCode: item.branchCode } },
+        create: {
+          relatorio,
+          branchCode: item.branchCode,
+          coberturaIdealMeses: item.coberturaIdealMeses,
+          createdById: userId,
+        },
+        update: { coberturaIdealMeses: item.coberturaIdealMeses },
+      })
+    )
+  );
+}
+
+// Metas da tela Visao Geral (cards com meta/gap) - upsert-on-read, defaults =
+// valores do mockup enviado pelo usuario (ja definidos no schema).
+export async function getMetaVisaoGeral(relatorio: string) {
+  return prisma.pcpMetaVisaoGeral.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+}
+
+export async function updateMetaVisaoGeral(input: UpdateMetaVisaoGeralInput, userId?: number) {
+  const campos: [string, number][] = [
+    ['metaCoberturaGeralMeses', input.metaCoberturaGeralMeses],
+    ['metaGiroAnualizado', input.metaGiroAnualizado],
+    ['metaEstoqueMortoPercent', input.metaEstoqueMortoPercent],
+    ['metaCoberturaBasicoMeses', input.metaCoberturaBasicoMeses],
+    ['metaCoberturaColecaoMeses', input.metaCoberturaColecaoMeses],
+    ['estoqueMortoDias', input.estoqueMortoDias],
+  ];
+  for (const [nome, valor] of campos) {
+    if (typeof valor !== 'number' || valor <= 0) {
+      throw new Error(`${nome} precisa ser um numero positivo`);
+    }
+  }
+  if (!Number.isInteger(input.estoqueMortoDias)) {
+    throw new Error('estoqueMortoDias precisa ser um numero inteiro');
+  }
+
+  const dados = {
+    metaCoberturaGeralMeses: input.metaCoberturaGeralMeses,
+    metaGiroAnualizado: input.metaGiroAnualizado,
+    metaEstoqueMortoPercent: input.metaEstoqueMortoPercent,
+    metaCoberturaBasicoMeses: input.metaCoberturaBasicoMeses,
+    metaCoberturaColecaoMeses: input.metaCoberturaColecaoMeses,
+    estoqueMortoDias: input.estoqueMortoDias,
+  };
+
+  return prisma.pcpMetaVisaoGeral.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+}
+
+export interface UpdateCurvaAbcConfigInput {
+  relatorio: string;
+  giroDias: number;
+  metaCurvaAUnidades: number;
+  curvaDPercent: number;
+  curvaCPercent: number;
+}
+
+// Limiares da Curva ABC(D) - upsert-on-read, defaults inspirados na ferramenta de
+// referencia que o usuario ja usa (ver comentario no schema.prisma).
+export async function getCurvaAbcConfig(relatorio: string) {
+  return prisma.pcpCurvaAbcConfig.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+}
+
+export async function updateCurvaAbcConfig(input: UpdateCurvaAbcConfigInput, userId?: number) {
+  if (!Number.isInteger(input.giroDias) || input.giroDias <= 0) {
+    throw new Error('giroDias precisa ser um numero inteiro positivo');
+  }
+  if (!Number.isInteger(input.metaCurvaAUnidades) || input.metaCurvaAUnidades <= 0) {
+    throw new Error('metaCurvaAUnidades precisa ser um numero inteiro positivo');
+  }
+  if (typeof input.curvaDPercent !== 'number' || input.curvaDPercent <= 0 || input.curvaDPercent >= 100) {
+    throw new Error('curvaDPercent precisa ser um numero entre 0 e 100');
+  }
+  if (typeof input.curvaCPercent !== 'number' || input.curvaCPercent <= 0 || input.curvaCPercent >= 100) {
+    throw new Error('curvaCPercent precisa ser um numero entre 0 e 100');
+  }
+  if (input.curvaDPercent + input.curvaCPercent >= 100) {
+    throw new Error('curvaDPercent + curvaCPercent precisa ser menor que 100 (tem que sobrar espaco pra Curva B)');
+  }
+
+  const dados = {
+    giroDias: input.giroDias,
+    metaCurvaAUnidades: input.metaCurvaAUnidades,
+    curvaDPercent: input.curvaDPercent,
+    curvaCPercent: input.curvaCPercent,
+  };
+
+  return prisma.pcpCurvaAbcConfig.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+}

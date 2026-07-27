@@ -5,6 +5,10 @@ export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/metas', module: 'comercial' },
   { prefix: '/comissoes', module: 'comercial' },
   { prefix: '/pcp-novo', module: 'pcp_servico' },
+  { prefix: '/pcp-relatorio-base', module: 'pcp_servico' },
+  { prefix: '/pcp-visao-geral', module: 'pcp_servico' },
+  { prefix: '/pcp-analise-grade', module: 'pcp_servico' },
+  { prefix: '/pcp-curva-abc', module: 'pcp_servico' },
   { prefix: '/pcp', module: 'pcp' },
 ];
 
@@ -14,7 +18,7 @@ export function getModuleForPath(pathname: string): string | null {
 }
 
 // Rotas que exigem admin, independente de modulo
-export const ADMIN_ONLY_PREFIXES = ['/usuarios'];
+export const ADMIN_ONLY_PREFIXES = ['/usuarios', '/pcp/relatorio-base-config'];
 
 export function isAdminOnlyPath(pathname: string): boolean {
   return ADMIN_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
