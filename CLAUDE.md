@@ -216,3 +216,110 @@ inflou o número de novo até a gente perceber e corrigir).
 Login do admin (`admin@bebetenkite.com`) já existia no banco antes de qualquer sessão
 com Claude — a senha está com hash bcrypt, **não há como recuperar**, só resetar via
 tela de Usuários (que já tem botão "Redefinir Senha", só funciona logado como admin).
+
+## Fase 3 — Módulo PCP (em andamento, 27/07/2026)
+
+Depois do "Estoque Sem Giro" (`/pcp-novo`, feito pelo Marcelo), esta fase adicionou 4
+telas novas dentro do módulo PCP (`moduleAccess('pcp_servico')`, **nenhuma linkada no
+Dashboard Comercial**). Commit de referência: `feat: modulo PCP - Relatorio Base,
+Configurador, Visao Geral, Analise de Grade e Curva ABCD` (foi só pro `origin`, pessoal
+do Lucas — **ainda não subiu pro `limes`**, o remote compartilhado, porque o usuário
+ainda quer validar visualmente antes).
+
+### Telas
+
+- **`/pcp-relatorio-base`** — tabela SKU × filial (giro/estoque/cobertura/custo/PDV
+  real/markup/lançamento/última entrada), sticky columns, export CSV. Backend em
+  `apps/pcp-api/src/services/relatorioBase.service.ts`.
+- **`/pcp/relatorio-base-config`** (admin only) — Configurador do PCP: janelas de
+  giro/cobertura, cobertura ideal por filial, e qual código de custo/preço do TOTVS usar
+  (com botão pra sincronizar). Backend em `apps/api/src/services/pcpConfig.service.ts` +
+  `apps/api/src/services/totvs.service.ts` (`syncCustosEPrecos`).
+- **`/pcp-visao-geral`** — KPI cards com meta/gap (cobertura geral, giro anualizado,
+  valor em estoque, % estoque morto, cobertura Básico/Coleção), matriz cobertura por
+  linha×canal (com toggle categoria/gênero). Metas editáveis inline (admin). Backend em
+  `apps/pcp-api/src/services/visaoGeral.service.ts`.
+- **`/pcp-analise-grade`** — heatmap estoque por referência×tamanho (paleta de status
+  validada pela skill `dataviz`, não a paleta da marca), curva ABC de tamanhos,
+  indicadores de ruptura. Backend em `apps/pcp-api/src/services/analiseGrade.service.ts`.
+- **`/pcp-curva-abc`** — Curva ABCD por referência, inspirada numa ferramenta de
+  referência que o usuário já usa (`planodeproducao-web.onrender.com`): cards de resumo
+  por curva (A/B/C/D), "última referência" de cada curva, regras de classificação
+  **configuráveis** (admin, botão "Editar regras de classificação"), drill-down por SKU
+  ao clicar numa linha. Backend em `apps/pcp-api/src/services/curvaAbc.service.ts`.
+  Classificação: Curva A = limiar fixo de unidades vendidas (`metaCurvaAUnidades`,
+  default 2500); Curva D = cauda do ranking (`curvaDPercent`% do total de referências
+  analisadas, default 15,9%); Curva C = fatia seguinte (`curvaCPercent`%, default
+  23,8%); Curva B = o resto. Os defaults replicam as proporções reais observadas na
+  ferramenta de referência do usuário (20/126 e 30/126 refs), escaladas pro nosso
+  catálogo bem maior (~800 referências analisadas vs ~126 deles) — decisão explícita do
+  usuário de escalar proporcionalmente em vez de usar contagem fixa (30/20).
+
+### Custo, preço e markup (dado real do TOTVS)
+
+`ProdutoCusto`/`ProdutoPreco` (schema) guardam custo/preço por `product_code` ×
+`branch_code` × código do TOTVS, sincronizados via `product/v2/costs|prices/search`.
+Pontos importantes se for mexer nisso de novo:
+
+- **A API do TOTVS é lenta e tem limites não documentados** descobertos na unha: (1)
+  gateway deles estoura com 502 se a página demorar mais que ~75-110s — por isso
+  `pageSize=100` fixo, não maior; (2) `filter.productCodeList` tem limite de **900
+  itens por request** (erro `ListExceeded`) — por isso o sync divide em lotes de 900;
+  (3) token OAuth do TOTVS expira antes de terminar um sync grande, por isso é buscado
+  de novo a cada página em vez de uma vez só no início.
+- **Sync é escopada pro universo do Relatório Base** (~7-8 mil produtos com estoque>0
+  ou giro nos últimos 6 meses), não o catálogo inteiro do TOTVS (66 mil+, a maioria
+  embalagem/matéria-prima que nunca aparece em relatório nenhum) — isso já cortou o
+  tempo de sync de ~16h estimadas pra ~1-2h.
+- **Estado no momento deste commit: sync incompleta.** Rodando a última verificação,
+  `produto_custos` tinha ~4.481 de ~7-8mil produtos cobertos e `produto_precos` tinha
+  ~10.030 (a sync de preço parece ter continuado sozinha mesmo depois de custo ter dado
+  erro de connection pool - `Timed out fetching a new connection from the connection
+  pool` - `DATABASE_URL` do Neon tem só 13 conexões no pool, e sync de custo+preço
+  rodando em paralelo mais o dev server mais outras queries pode estourar isso). **Se
+  for continuar o trabalho, rodar de novo `POST /api/pcp-config/sincronizar-custos-precos`
+  (admin) até completar** — é seguro re-rodar (upsert via `ON CONFLICT DO UPDATE`), só
+  demora. Enquanto não estiver completo, `CUSTO`/`PDV REAL`/`MARKUP` aparecem como `—`
+  pra SKUs ainda não sincronizados (contrato de API já é tolerante a isso, não é bug).
+- **Markup não usa o custo/preço configurado no Configurador** (esses são preço de
+  TABELA do TOTVS, ficam só nas colunas CUSTO/PDV REAL) — usa custo da **última compra**
+  (costCode=2, fixo) vs. preço da **última venda real** (transação de verdade, líquida
+  de desconto), separado por canal varejo/atacado. Decisão explícita do usuário.
+
+### Pendências / pontos pra validar com o usuário (não foram fechados, só documentados)
+
+- Formatação fina dos cards da Visão Geral (ex: como mostrar "Meta: 10% · R$36,5k" de
+  estoque morto).
+- "Completude da grade" (Análise de Grade) foi definida como % dos tamanhos da própria
+  referência com estoque > 0 — não existe uma "grade ideal" separada pra comparar.
+- Filtro por **cor** (Análise de Grade) e por **família** (Curva ABC, mapeado pra
+  `class_grupo` do TOTVS, que hoje parece mais marca — BEBETENKITE/TEENKIS/MIST BRAND —
+  do que família de produto) — o backend já aceita os dois filtros, só falta UI.
+- "30d V"/"30d A" do mockup original da Curva ABC (antes da reescrita pra ABCD) foram
+  interpretados como janelas de 30 dias comparativas - a Curva ABCD atual não usa mais
+  isso, mas fica registrado caso volte a aparecer em outro contexto.
+- Sem série histórica mensal em lugar nenhum (Visão Geral, Curva ABC) - só o valor
+  atual. O rascunho do usuário pedia "inserir histórico dos últimos 12 meses" - fica
+  fora de escopo até decidir como guardar isso (snapshot mensal? tabela nova?).
+
+### Pra continuar em outra máquina
+
+`npm install` na raiz, `apps/api/.env` + `apps/pcp-api/.env` (mesma `DATABASE_URL` do
+Neon, `JWT_SECRET` igual) + `apps/web/.env.local` com `NEXT_PUBLIC_PCP_API_URL=
+http://localhost:3002` — nenhum desses `.env` vai pro git, precisa recriar na mão.
+`npm run dev` sobe os 3 processos (api:3001, web:3000, pcp-api:3002). Pra testar rotas
+autenticadas sem saber a senha do admin, mintar um JWT direto (script não versionado,
+recriar se precisar):
+```ts
+// apps/api/scripts/mint-test-token.ts
+import 'dotenv/config';
+import jwt from 'jsonwebtoken';
+import { prisma } from '../src/config/database.js';
+const admin = await prisma.user.findFirst({ where: { role: 'admin' } });
+const token = jwt.sign(
+  { userId: admin.id, email: admin.email, role: admin.role, branchCodes: admin.branchCodes, moduleAccess: admin.moduleAccess },
+  process.env.JWT_SECRET || 'bebetenkite-dashboard-secret-2024',
+  { expiresIn: '2h' }
+);
+console.log(token);
+```
