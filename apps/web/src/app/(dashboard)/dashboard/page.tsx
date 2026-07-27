@@ -308,8 +308,10 @@ export default function DashboardPage() {
 
   function renderBadgeAtingimentoMeta(pct: number) {
     const atingimento = Math.max(0, pct);
+    const variant = atingimento >= 100 ? 'success' : atingimento > 90 ? 'warning' : 'danger';
+
     return (
-      <Badge variant={atingimento >= 100 ? 'success' : 'danger'}>
+      <Badge variant={variant}>
         {formatarPercentualExportacao(atingimento)}
       </Badge>
     );
@@ -380,6 +382,7 @@ export default function DashboardPage() {
         { header: 'Faturamento', value: (v: typeof linhasExportacao[number]) => formatMoney(v.faturamento) },
         { header: 'Pecas', value: (v: typeof linhasExportacao[number]) => v.pecas },
         { header: 'PA', value: (v: typeof linhasExportacao[number]) => v.pa },
+        { header: 'TM', value: (v: typeof linhasExportacao[number]) => formatMoney(v.tm) },
       ],
       linhasExportacao,
       'Ranking vendedores'
@@ -787,6 +790,7 @@ export default function DashboardPage() {
                   <TableCell isHeader align="right">Fat.</TableCell>
                   <TableCell isHeader align="right">Pcs</TableCell>
                   <TableCell isHeader align="right">PA</TableCell>
+                  <TableCell isHeader align="right">TM</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -807,6 +811,7 @@ export default function DashboardPage() {
                     <TableCell align="right">{formatMoney(v.faturamento)}</TableCell>
                     <TableCell align="right">{formatNumber(v.pecas)}</TableCell>
                     <TableCell align="right">{v.pa.toFixed(2)}</TableCell>
+                    <TableCell align="right">{formatMoney(v.tm)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
