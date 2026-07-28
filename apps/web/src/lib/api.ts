@@ -107,6 +107,11 @@ export const vendasApi = {
       `/api/vendas/horarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
+  getDiaSemana: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+    fetchApi<VendasDiariasResponse>(
+      `/api/vendas/dia-semana/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+    ),
+
   getMensais: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendasDiariasResponse>(
       `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`

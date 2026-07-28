@@ -346,7 +346,7 @@ export async function getVendasDiarias(
   }));
 }
 
-// Vendas por hora no periodo selecionado (agregado por hora do dia)
+// Vendas por hora no periodo selecionado, preenchendo 0h-23h com media diaria.
 export async function getVendasHorarias(
   startDate: Date,
   endDate: Date,
@@ -358,35 +358,117 @@ export async function getVendasHorarias(
 
   const results = await prisma.$queryRaw<Array<{
     hora: number;
-    transacoes: bigint;
+    transacoes: Decimal;
     pecas: Decimal;
     faturamento: Decimal;
   }>>`
+    WITH periodo AS (
+      SELECT GREATEST((${endDate}::date - ${startDate}::date + 1), 1)::numeric as dias
+    ), horas AS (
+      SELECT generate_series(0, 23)::int as hora
+    ), vendas_hora AS (
+      SELECT
+        EXTRACT(HOUR FROM COALESCE(t.last_change_date, t.created_at, t.transaction_date::timestamp))::int as hora,
+        COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (t.branch_code, t.transaction_code) END) as transacoes,
+        COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+        COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
+      FROM transacoes t
+      LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+        AND t.transaction_code = ti.transaction_code
+        AND ti.seller_code != 1
+      ${OPERACAO_JOIN}
+      ${PRODUTO_ANALITICO_JOIN}
+      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+        AND t.status = 4
+        AND ${SALE_OPERATION_FILTER}
+        AND ${STORE_BRANCH_FILTER}
+        ${branchFilter}
+        ${produtoFilter}
+      GROUP BY EXTRACT(HOUR FROM COALESCE(t.last_change_date, t.created_at, t.transaction_date::timestamp))::int
+    )
     SELECT
-      EXTRACT(HOUR FROM t.transaction_date)::int as hora,
-      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
-      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
-      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
-    FROM transacoes t
-    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
-      AND t.transaction_code = ti.transaction_code
-      AND ti.seller_code != 1
-    ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-      AND t.status = 4
-      AND ${SALE_OPERATION_FILTER}
-      AND ${STORE_BRANCH_FILTER}
-      ${branchFilter}
-      ${produtoFilter}
-    GROUP BY EXTRACT(HOUR FROM t.transaction_date)::int
-    ORDER BY hora
+      h.hora,
+      COALESCE(v.transacoes, 0) / p.dias as transacoes,
+      COALESCE(v.pecas, 0) / p.dias as pecas,
+      COALESCE(v.faturamento, 0) / p.dias as faturamento
+    FROM horas h
+    CROSS JOIN periodo p
+    LEFT JOIN vendas_hora v ON v.hora = h.hora
+    ORDER BY h.hora
   `;
 
   return results.map(row => ({
     data: `${String(row.hora).padStart(2, '0')}h`,
-    transacoes: Number(row.transacoes),
-    pecas: Math.round(decimalToNumber(row.pecas)),
+    transacoes: round(decimalToNumber(row.transacoes), 1),
+    pecas: round(decimalToNumber(row.pecas), 1),
+    faturamento: round(decimalToNumber(row.faturamento)),
+  }));
+}
+
+// Media de vendas por dia da semana no periodo selecionado, de DOM a SAB.
+export async function getVendasDiaSemana(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
+): Promise<VendasDiarias[]> {
+  const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    dia_semana: number;
+    label: string;
+    transacoes: Decimal;
+    pecas: Decimal;
+    faturamento: Decimal;
+  }>>`
+    WITH calendario AS (
+      SELECT dia::date, EXTRACT(DOW FROM dia)::int as dia_semana
+      FROM generate_series(${startDate}::date, ${endDate}::date, interval '1 day') dia
+    ), vendas_dia AS (
+      SELECT
+        t.transaction_date::date as dia,
+        COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (t.branch_code, t.transaction_code) END) as transacoes,
+        COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+        COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
+      FROM transacoes t
+      LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+        AND t.transaction_code = ti.transaction_code
+        AND ti.seller_code != 1
+      ${OPERACAO_JOIN}
+      ${PRODUTO_ANALITICO_JOIN}
+      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+        AND t.status = 4
+        AND ${SALE_OPERATION_FILTER}
+        AND ${STORE_BRANCH_FILTER}
+        ${branchFilter}
+        ${produtoFilter}
+      GROUP BY t.transaction_date::date
+    )
+    SELECT
+      c.dia_semana,
+      CASE c.dia_semana
+        WHEN 0 THEN 'DOM'
+        WHEN 1 THEN 'SEG'
+        WHEN 2 THEN 'TER'
+        WHEN 3 THEN 'QUA'
+        WHEN 4 THEN 'QUI'
+        WHEN 5 THEN 'SEX'
+        ELSE 'SAB'
+      END as label,
+      AVG(COALESCE(v.transacoes, 0)) as transacoes,
+      AVG(COALESCE(v.pecas, 0)) as pecas,
+      AVG(COALESCE(v.faturamento, 0)) as faturamento
+    FROM calendario c
+    LEFT JOIN vendas_dia v ON v.dia = c.dia
+    GROUP BY c.dia_semana
+    ORDER BY c.dia_semana
+  `;
+
+  return results.map(row => ({
+    data: row.label,
+    transacoes: round(decimalToNumber(row.transacoes), 1),
+    pecas: round(decimalToNumber(row.pecas), 1),
     faturamento: round(decimalToNumber(row.faturamento)),
   }));
 }

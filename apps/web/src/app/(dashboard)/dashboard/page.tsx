@@ -69,7 +69,7 @@ export default function DashboardPage() {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
-  const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'hora'>('dia');
+  const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'hora' | 'semana'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
   const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
   const [comparativoScrollWidth, setComparativoScrollWidth] = useState(0);
@@ -109,9 +109,11 @@ export default function DashboardPage() {
         vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro),
         graficoVendasModo === 'hora'
           ? vendasApi.getHorarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-          : granularidade === 'diario'
-            ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-            : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
+          : graficoVendasModo === 'semana'
+            ? vendasApi.getDiaSemana(dataInicio, dataFim, branchCodes, produtoFiltro)
+            : granularidade === 'diario'
+              ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
+              : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
@@ -556,17 +558,35 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>{graficoVendasModo === 'hora' ? 'Vendas por Hora' : 'Vendas Diarias'}</CardTitle>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setGraficoVendasModo((modo) => (modo === 'dia' ? 'hora' : 'dia'))}
-            >
-              {graficoVendasModo === 'hora' ? 'Ver por dia' : 'Ver por hora'}
-            </Button>
+            <CardTitle>
+              {graficoVendasModo === 'hora'
+                ? 'Media por Hora'
+                : graficoVendasModo === 'semana'
+                  ? 'Media por Dia da Semana'
+                  : 'Vendas Diarias'}
+            </CardTitle>
+            <div className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1">
+              {[
+                { value: 'dia', label: 'Dia' },
+                { value: 'hora', label: 'Hora' },
+                { value: 'semana', label: 'Semana' },
+              ].map((modo) => (
+                <Button
+                  key={modo.value}
+                  variant={graficoVendasModo === modo.value ? 'primary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setGraficoVendasModo(modo.value as 'dia' | 'hora' | 'semana')}
+                >
+                  {modo.label}
+                </Button>
+              ))}
+            </div>
           </CardHeader>
           <LoadingOverlay active={isLoading}>
-            <LineChart data={vendasDiarias?.dados || []} granularidade={graficoVendasModo === 'hora' ? 'horario' : mesUnico ? 'diario' : 'mensal'} />
+            <LineChart
+              data={vendasDiarias?.dados || []}
+              granularidade={graficoVendasModo === 'hora' || graficoVendasModo === 'semana' ? 'horario' : mesUnico ? 'diario' : 'mensal'}
+            />
           </LoadingOverlay>
         </Card>
 
@@ -896,6 +916,7 @@ export default function DashboardPage() {
                   <TableCell isHeader>Produto</TableCell>
                   <TableCell isHeader align="right">Qtd</TableCell>
                   <TableCell isHeader align="right">Valor</TableCell>
+                  <TableCell isHeader align="right">% Total</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -920,6 +941,9 @@ export default function DashboardPage() {
                     </TableCell>
                     <TableCell align="right">{formatNumber(p.quantidade)}</TableCell>
                     <TableCell align="right">{formatMoney(p.valor)}</TableCell>
+                    <TableCell align="right">
+                      {vendas?.total?.faturamento ? `${((p.valor / vendas.total.faturamento) * 100).toFixed(1)}%` : '-'}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

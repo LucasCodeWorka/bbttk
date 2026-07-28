@@ -153,6 +153,27 @@ router.get('/vendas/horarias/periodo/:start/:end/:branchCode?', async (req: Requ
   }
 });
 
+// Media de vendas por dia da semana no periodo
+router.get('/vendas/dia-semana/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const dados = await vendasService.getVendasDiaSemana(startDate, endDate, branchCodes, produtoFiltro);
+
+    res.json({
+      periodo: { inicio: start, fim: end },
+      dados,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // Vendas mensais por periodo (usado quando o periodo filtrado passa de 1 mes)
 router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {
