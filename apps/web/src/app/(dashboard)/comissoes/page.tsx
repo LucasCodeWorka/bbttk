@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
@@ -14,29 +14,39 @@ import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 import { useAuth } from '@/contexts/AuthContext';
 
+function nomeFilialComissao(code: number, fallback?: string) {
+  if (code === 2) return 'ATACADO';
+  return fallback || FILIAIS[code] || `Filial ${code}`;
+}
+
 export default function ComissoesPage() {
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
+  const [diaInicio, setDiaInicio] = useState(1);
+  const [diaFim, setDiaFim] = useState(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate());
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [vendedoresSelecionados, setVendedoresSelecionados] = useState<string[]>([]);
   const [dados, setDados] = useState<ComissoesResponse | null>(null);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const comissoesScrollRef = useRef<HTMLDivElement>(null);
+  const comissoesTopScrollRef = useRef<HTMLDivElement>(null);
+  const [comissoesScrollWidth, setComissoesScrollWidth] = useState(0);
 
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
     try {
       const branchCodes = filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined;
-      const res = await metasApi.getComissoes(ano, mes, branchCodes);
+      const res = await metasApi.getComissoes(ano, mes, branchCodes, diaInicio, diaFim);
       setDados(res);
     } catch (error) {
       console.error('Erro ao carregar comissoes:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [ano, mes, filiaisSelecionadas]);
+  }, [ano, mes, diaInicio, diaFim, filiaisSelecionadas]);
 
   useEffect(() => {
     carregarDados();
@@ -47,20 +57,27 @@ export default function ComissoesPage() {
       if (user?.role === 'admin') return true;
       return user?.branchCodes.includes(parseInt(code));
     })
-    .map(([code, name]) => ({ value: parseInt(code), label: name }));
+    .map(([code, name]) => ({ value: parseInt(code), label: nomeFilialComissao(parseInt(code), name) }));
 
   const anoOptions = Array.from({ length: 4 }, (_, i) => {
     const year = new Date().getFullYear() + 1 - i;
     return { value: year, label: String(year) };
   });
   const mesOptions = MESES.slice(1).map((m, i) => ({ value: i + 1, label: m }));
+  const ultimoDiaMesSelecionado = useMemo(() => new Date(ano, mes, 0).getDate(), [ano, mes]);
+  const diaOptions = useMemo(() => Array.from({ length: ultimoDiaMesSelecionado }, (_, i) => ({ value: i + 1, label: String(i + 1) })), [ultimoDiaMesSelecionado]);
+
+  useEffect(() => {
+    setDiaInicio((prev) => Math.min(prev, ultimoDiaMesSelecionado));
+    setDiaFim((prev) => Math.min(Math.max(prev, diaInicio), ultimoDiaMesSelecionado));
+  }, [ultimoDiaMesSelecionado, diaInicio]);
 
   const niveis = dados?.niveis || [];
 
   const filiaisMatriz = useMemo(() => {
     const codes = new Set<number>();
     (dados?.vendedores || []).forEach((v) => v.filiais.forEach((c) => codes.add(c)));
-    return Array.from(codes).sort((a, b) => (FILIAIS[a] || '').localeCompare(FILIAIS[b] || ''));
+    return Array.from(codes).sort((a, b) => nomeFilialComissao(a).localeCompare(nomeFilialComissao(b)));
   }, [dados]);
 
   const vendedorOptions = useMemo(() => {
@@ -150,13 +167,56 @@ export default function ComissoesPage() {
     );
   }
 
+
+  function sincronizarComissoesPeloTopo() {
+    const topo = comissoesTopScrollRef.current;
+    const tabela = comissoesScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
+  }
+
+  useEffect(() => {
+    const tabela = comissoesScrollRef.current;
+    const topo = comissoesTopScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setComissoesScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    const tableElement = tabela.querySelector('table');
+    if (tableElement) resizeObserver?.observe(tableElement);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [linhasOrdenadas.length, niveis.length, isLoading]);
+
   function exportarExcel() {
     if (!dados) return;
     exportToCsv(
       `comissoes-${ano}-${String(mes).padStart(2, '0')}`,
       [
         { header: 'Vendedor', value: (l: LinhaComissao) => l.seller_name },
-        { header: 'Loja', value: (l: LinhaComissao) => l.branch_name },
+        { header: 'Loja', value: (l: LinhaComissao) => nomeFilialComissao(l.branch_code, l.branch_name) },
         { header: 'Faturamento', value: (l: LinhaComissao) => l.faturamento },
         ...niveis.map((n) => ({
           header: n.nivel_nome,
@@ -182,7 +242,7 @@ export default function ComissoesPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Comissoes</h1>
           <p className="text-gray-500 text-sm mt-1">
-            {MESES[mes]} de {ano}
+            {MESES[mes]} de {ano} - dias {diaInicio} a {diaFim}
           </p>
         </div>
 
@@ -200,6 +260,24 @@ export default function ComissoesPage() {
             options={mesOptions}
             label="Mes"
             className="w-32"
+          />
+          <Select
+            value={diaInicio}
+            onChange={(e) => {
+              const value = parseInt(e.target.value);
+              setDiaInicio(value);
+              setDiaFim((prev) => Math.max(prev, value));
+            }}
+            options={diaOptions}
+            label="Dia inicio"
+            className="w-28"
+          />
+          <Select
+            value={diaFim}
+            onChange={(e) => setDiaFim(Math.max(parseInt(e.target.value), diaInicio))}
+            options={diaOptions}
+            label="Dia fim"
+            className="w-24"
           />
           <FilialMultiSelect
             selected={filiaisSelecionadas}
@@ -295,7 +373,14 @@ export default function ComissoesPage() {
           <div className="py-10 text-center text-gray-500">Nenhum vendedor com vendas nesse periodo</div>
         ) : (
           <LoadingOverlay active={isLoading}>
-          <Table>
+          <div
+            ref={comissoesTopScrollRef}
+            onScroll={sincronizarComissoesPeloTopo}
+            className="print:hidden overflow-x-auto overflow-y-hidden h-4 mb-1"
+          >
+            <div style={{ width: comissoesScrollWidth, height: 1 }} />
+          </div>
+          <Table ref={comissoesScrollRef} className="[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <TableHead>
               <TableRow>
                 <TableCell isHeader>#</TableCell>
@@ -329,7 +414,7 @@ export default function ComissoesPage() {
                   <TableRow key={`${l.seller_code}-${l.branch_code}`}>
                     <TableCell>{i + 1}</TableCell>
                     <TableCell className="font-medium whitespace-nowrap">{l.seller_name}</TableCell>
-                    <TableCell className="whitespace-nowrap">{l.branch_name}</TableCell>
+                    <TableCell className="whitespace-nowrap">{nomeFilialComissao(l.branch_code, l.branch_name)}</TableCell>
                     <TableCell align="right" className="whitespace-nowrap">{formatMoney(l.faturamento)}</TableCell>
                     {niveis.map((n) => {
                       const alvo = l[`nivel_${n.nivel_ordem}` as keyof typeof l] as number;
@@ -407,7 +492,7 @@ export default function ComissoesPage() {
                   <TableCell isHeader align="left">Vendedor</TableCell>
                   {filiaisMatriz.map((code) => (
                     <TableCell key={code} isHeader align="right" className="whitespace-nowrap">
-                      {FILIAIS[code] || `Filial ${code}`}
+                      {nomeFilialComissao(code)}
                     </TableCell>
                   ))}
                   <TableCell isHeader align="right">Total</TableCell>

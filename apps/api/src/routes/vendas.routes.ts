@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
+import * as metasService from '../services/metas.service.js';
 import { syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
@@ -131,7 +132,49 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
   }
 });
 
-// Vendas mensais por período (usado quando o periodo filtrado passa de 1 mes)
+// Vendas por hora no periodo
+router.get('/vendas/horarias/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const dados = await vendasService.getVendasHorarias(startDate, endDate, branchCodes, produtoFiltro);
+
+    res.json({
+      periodo: { inicio: start, fim: end },
+      dados,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Media de vendas por dia da semana no periodo
+router.get('/vendas/dia-semana/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const dados = await vendasService.getVendasDiaSemana(startDate, endDate, branchCodes, produtoFiltro);
+
+    res.json({
+      periodo: { inicio: start, fim: end },
+      dados,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Vendas mensais por periodo (usado quando o periodo filtrado passa de 1 mes)
 router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {
     const { start, end } = req.params;
@@ -209,12 +252,34 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
 
     const nomes = await vendasService.getVendedoresMap();
+    const anoMeta = endDate.getFullYear();
+    const mesMeta = endDate.getMonth() + 1;
+    const metas = await metasService.getMetas(anoMeta, mesMeta);
+    const metaPorVendedor = new Map<number, number>();
+    for (const meta of metas) {
+      if (meta.seller_code === null) continue;
+      if (branchCodes && !branchCodes.includes(meta.branch_code)) continue;
+      metaPorVendedor.set(meta.seller_code, (metaPorVendedor.get(meta.seller_code) || 0) + meta.nivel_3);
+    }
 
-    // Adicionar nomes
-    const vendedoresComNomes = vendedores.map(v => ({
-      ...v,
-      seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
-    }));
+    const ultimoDiaMes = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0).getDate();
+    const diasDecorridos = Math.max(endDate.getDate(), 1);
+
+    // Adicionar nomes e indicadores de meta/projecao.
+    const vendedoresComNomes = vendedores.map(v => {
+      const meta = metaPorVendedor.get(v.seller_code) || 0;
+      const projecao = Math.round(((v.faturamento / diasDecorridos) * ultimoDiaMes) * 100) / 100;
+
+      return {
+        ...v,
+        seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
+        meta,
+        debito_meta: Math.max(0, meta - v.faturamento),
+        pct_meta: meta > 0 ? Math.round((v.faturamento / meta) * 1000) / 10 : 0,
+        projecao,
+        pct_proj: meta > 0 ? Math.round((projecao / meta) * 1000) / 10 : 0,
+      };
+    });
 
     res.json({
       periodo: {
@@ -341,18 +406,12 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const totalFaturamentoAtual = filiaisAtual.reduce((sum, f) => sum + f.faturamento, 0);
     const totalPecasAtual = filiaisAtual.reduce((sum, f) => sum + f.pecas, 0);
 
-    // A meta so existe cadastrada na linha "2 - FABRICA" (sem infraestrutura pra
-    // separar por operacao, ver comentario acima) - mas as 3 linhas (2/2.1/2.3) sao a
-    // mesma filial fisica vendendo em canais diferentes. Sem isso, a linha "2" sozinha
-    // parece bater so uma fracao da meta (o resto do faturamento foi pras linhas
-    // 2.1/2.3), e as outras duas ficam sem meta nenhuma. Repete a mesma meta/percentual
-    // nas 3 linhas, calculado sobre o faturamento COMBINADO das 3.
-    const FABRICA_DIVIDIDA_CODES = [2, 2.1, 2.3];
-    const metaFabrica = metasMap.get(2) || 0;
-    const faturamentoFabricaCombinado = filiaisAtual
-      .filter(f => FABRICA_DIVIDIDA_CODES.includes(f.branch_code))
-      .reduce((sum, f) => sum + f.faturamento, 0);
-
+    // A meta da Fabrica fica cadastrada no branch_code 2, mas na visualizacao dividida
+    // ela deve contar apenas na linha de Atacado. As linhas FABRICA e DELIVERY ficam
+    // sem meta para nao duplicar o alvo no total.
+    const FABRICA_META_ATACADO_CODE = 2.3;
+    const FABRICA_DIVIDIDA_CODES = [2, 2.1, FABRICA_META_ATACADO_CODE];
+    const metaFabricaAtacado = metasMap.get(2) || 0;
     const filiaisComparativo = filiaisAtual.map(f => {
       const ant = anteriorDict.get(f.branch_code) || {
         faturamento: 0,
@@ -379,8 +438,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       const devolucao = devolucoesMap.get(f.branch_code) || { valor: 0, qtde: 0 };
       const clientesNovos = clientesNovosMap.get(f.branch_code) || { qtde: 0, faturamento: 0 };
       const ehFabricaDividida = FABRICA_DIVIDIDA_CODES.includes(f.branch_code);
-      const metaValor = ehFabricaDividida ? metaFabrica : (metasMap.get(f.branch_code) || 0);
-      const faturamentoParaMeta = ehFabricaDividida ? faturamentoFabricaCombinado : f.faturamento;
+      const metaValor = ehFabricaDividida
+        ? (f.branch_code === FABRICA_META_ATACADO_CODE ? metaFabricaAtacado : 0)
+        : (metasMap.get(f.branch_code) || 0);
+      const faturamentoParaMeta = f.faturamento;
 
       return {
         branch_code: f.branch_code,

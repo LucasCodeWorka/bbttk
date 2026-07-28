@@ -289,6 +289,7 @@ export default function PcpNovoPage() {
           dias: option.value,
           label: option.value > 90 ? '> 90 dias' : `${option.value} dias`,
           sku_count: 0,
+          referencia_count: 0,
           quantidade: 0,
           valor: 0,
           pct_total: 0,
@@ -312,8 +313,9 @@ export default function PcpNovoPage() {
                   {isLoading ? '-' : `${formatNumber(item.sku_count)} SKUs`}
                 </CardValue>
                 <p className="text-sm text-gray-600 mt-1">
-                  {formatNumber(item.quantidade)} pc - {formatMoney(item.valor)}
+                  {formatNumber(item.referencia_count || 0)} refs - {formatNumber(item.quantidade)} pc
                 </p>
+                <p className="text-sm text-gray-600">{formatMoney(item.valor)}</p>
                 <p className="text-sm text-gray-600">{item.pct_total.toFixed(1)}% do total</p>
               </button>
             </Card>

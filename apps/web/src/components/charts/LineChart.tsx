@@ -31,7 +31,7 @@ interface LineChartProps {
   color?: string;
   showGrid?: boolean;
   formatValue?: (value: number) => string;
-  granularidade?: 'diario' | 'mensal';
+  granularidade?: 'diario' | 'mensal' | 'horario';
 }
 
 export function LineChart({
@@ -42,7 +42,11 @@ export function LineChart({
   formatValue = formatMoney,
   granularidade = 'diario',
 }: LineChartProps) {
-  const formatEixo = granularidade === 'mensal' ? formatMonthShort : formatDateShort;
+  const formatEixo = granularidade === 'mensal'
+    ? formatMonthShort
+    : granularidade === 'horario'
+      ? (value: string) => value
+      : formatDateShort;
   if (!data || data.length === 0) {
     return (
       <div className="h-[300px] flex items-center justify-center text-gray-500">

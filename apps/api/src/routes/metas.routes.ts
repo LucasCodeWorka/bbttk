@@ -137,8 +137,10 @@ router.get('/metas/comissoes', async (req: Request, res: Response) => {
     const branchCodes = branchesQuery
       ? branchesQuery.split(',').map((c) => parseInt(c.trim())).filter((c) => !isNaN(c))
       : undefined;
+    const diaInicio = req.query.dia_inicio ? parseInt(req.query.dia_inicio as string) : undefined;
+    const diaFim = req.query.dia_fim ? parseInt(req.query.dia_fim as string) : undefined;
 
-    const relatorio = await comissoesService.getRelatorioComissao(ano, mes, branchCodes);
+    const relatorio = await comissoesService.getRelatorioComissao(ano, mes, branchCodes, diaInicio, diaFim);
     const nomes = await vendasService.getVendedoresMap();
 
     const comNomes = {
