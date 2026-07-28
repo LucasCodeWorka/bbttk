@@ -69,6 +69,7 @@ export default function DashboardPage() {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
+  const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'hora'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
   const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
   const [comparativoScrollWidth, setComparativoScrollWidth] = useState(0);
@@ -106,9 +107,11 @@ export default function DashboardPage() {
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
         vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro),
-        granularidade === 'diario'
-          ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-          : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
+        graficoVendasModo === 'hora'
+          ? vendasApi.getHorarias(dataInicio, dataFim, branchCodes, produtoFiltro)
+          : granularidade === 'diario'
+            ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
+            : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
@@ -126,7 +129,7 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataInicio, dataFim, filiaisSelecionadas, produtoFiltro]);
+  }, [dataInicio, dataFim, filiaisSelecionadas, produtoFiltro, graficoVendasModo]);
 
   useEffect(() => {
     carregarDados();
@@ -190,6 +193,25 @@ export default function DashboardPage() {
     if (limiteRankingVendedores === 'todos') return lista;
     return lista.slice(0, Number(limiteRankingVendedores));
   }, [vendedores, limiteRankingVendedores]);
+
+  const totaisVendedoresRanking = useMemo(() => {
+    const faturamento = vendedoresRanking.reduce((sum, v) => sum + v.faturamento, 0);
+    const meta = vendedoresRanking.reduce((sum, v) => sum + v.meta, 0);
+    const debitoMeta = vendedoresRanking.reduce((sum, v) => sum + v.debito_meta, 0);
+    const projecaoTotal = vendedoresRanking.reduce((sum, v) => sum + v.projecao, 0);
+    const pecas = vendedoresRanking.reduce((sum, v) => sum + v.pecas, 0);
+    const transacoes = vendedoresRanking.reduce((sum, v) => sum + v.transacoes, 0);
+
+    return {
+      faturamento,
+      meta,
+      debitoMeta,
+      pctMeta: meta > 0 ? (faturamento / meta) * 100 : 0,
+      pctProj: meta > 0 ? (projecaoTotal / meta) * 100 : 0,
+      pa: transacoes > 0 ? pecas / transacoes : 0,
+      tm: transacoes > 0 ? faturamento / transacoes : 0,
+    };
+  }, [vendedoresRanking]);
   useEffect(() => {
     const tabela = comparativoScrollRef.current;
     const topo = comparativoTopScrollRef.current;
@@ -375,22 +397,38 @@ export default function DashboardPage() {
     );
   }
   function exportarRankingVendedores() {
-    const linhasExportacao = vendedoresRanking.map((v, i) => ({ ...v, posicao: i + 1 }));
+    const linhasExportacao = vendedoresRanking.map((v, i) => ({ ...v, posicao: i + 1, isTotal: false }));
+    const linhasComTotal = [
+      ...linhasExportacao,
+      {
+        posicao: 'TOTAL',
+        seller_name: 'TOTAL',
+        faturamento: totaisVendedoresRanking.faturamento,
+        meta: totaisVendedoresRanking.meta,
+        debito_meta: totaisVendedoresRanking.debitoMeta,
+        pct_meta: totaisVendedoresRanking.pctMeta,
+        pct_proj: totaisVendedoresRanking.pctProj,
+        pa: totaisVendedoresRanking.pa,
+        tm: totaisVendedoresRanking.tm,
+        isTotal: true,
+      },
+    ];
 
     exportToXlsx(
       `ranking-vendedores-${dataInicio}-a-${dataFim}`,
       [
-        { header: '#', value: (v: typeof linhasExportacao[number]) => v.posicao, style: (v: typeof linhasExportacao[number]) => v.posicao === 1 ? 'rankGold' : v.posicao === 2 ? 'rankSilver' : v.posicao === 3 ? 'rankBronze' : undefined },
-        { header: 'Vendedor', value: (v: typeof linhasExportacao[number]) => v.seller_name },
-        { header: 'Faturamento', value: (v: typeof linhasExportacao[number]) => formatMoney(v.faturamento) },
-        { header: '% Meta', value: (v: typeof linhasExportacao[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_meta) : '', style: (v: typeof linhasExportacao[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_meta) : undefined },
-        { header: '% Proj', value: (v: typeof linhasExportacao[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_proj) : '', style: (v: typeof linhasExportacao[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_proj) : undefined },
-        { header: 'Pecas', value: (v: typeof linhasExportacao[number]) => v.pecas },
-        { header: 'PA', value: (v: typeof linhasExportacao[number]) => v.pa },
-        { header: 'TM', value: (v: typeof linhasExportacao[number]) => formatMoney(v.tm) },
+        { header: '#', value: (v: typeof linhasComTotal[number]) => v.posicao, style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : v.posicao === 1 ? 'rankGold' : v.posicao === 2 ? 'rankSilver' : v.posicao === 3 ? 'rankBronze' : undefined },
+        { header: 'Vendedor', value: (v: typeof linhasComTotal[number]) => v.seller_name, style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
+        { header: 'Faturamento', value: (v: typeof linhasComTotal[number]) => formatMoney(v.faturamento), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
+        { header: 'Meta', value: (v: typeof linhasComTotal[number]) => formatMoney(v.meta), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
+        { header: 'Debito', value: (v: typeof linhasComTotal[number]) => formatMoney(v.debito_meta), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
+        { header: '% Meta', value: (v: typeof linhasComTotal[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_meta) : '', style: (v: typeof linhasComTotal[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_meta) : v.isTotal ? 'total' : undefined },
+        { header: '% Proj', value: (v: typeof linhasComTotal[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_proj) : '', style: (v: typeof linhasComTotal[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_proj) : v.isTotal ? 'total' : undefined },
+        { header: 'PA', value: (v: typeof linhasComTotal[number]) => v.pa.toFixed(2), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
+        { header: 'TM', value: (v: typeof linhasComTotal[number]) => formatMoney(v.tm), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
       ],
-      linhasExportacao,
-      'Ranking vendedores'
+      linhasComTotal,
+      { sheetName: 'Ranking vendedores', rowStyle: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined }
     );
   }
   function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
@@ -518,10 +556,17 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Vendas Diarias</CardTitle>
+            <CardTitle>{graficoVendasModo === 'hora' ? 'Vendas por Hora' : 'Vendas Diarias'}</CardTitle>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setGraficoVendasModo((modo) => (modo === 'dia' ? 'hora' : 'dia'))}
+            >
+              {graficoVendasModo === 'hora' ? 'Ver por dia' : 'Ver por hora'}
+            </Button>
           </CardHeader>
           <LoadingOverlay active={isLoading}>
-            <LineChart data={vendasDiarias?.dados || []} granularidade={mesUnico ? 'diario' : 'mensal'} />
+            <LineChart data={vendasDiarias?.dados || []} granularidade={graficoVendasModo === 'hora' ? 'horario' : mesUnico ? 'diario' : 'mensal'} />
           </LoadingOverlay>
         </Card>
 
@@ -760,7 +805,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* Vendedores e Produtos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(260px,0.75fr)] gap-6">
         {/* Ranking Vendedores */}
         <Card>
           <CardHeader>
@@ -789,9 +834,10 @@ export default function DashboardPage() {
                   <TableCell isHeader>#</TableCell>
                   <TableCell isHeader>Vendedor</TableCell>
                   <TableCell isHeader align="right">Fat.</TableCell>
+                  <TableCell isHeader align="right">Meta</TableCell>
+                  <TableCell isHeader align="right">Debito</TableCell>
                   <TableCell isHeader align="center">% Meta</TableCell>
                   <TableCell isHeader align="center">% Proj</TableCell>
-                  <TableCell isHeader align="right">Pcs</TableCell>
                   <TableCell isHeader align="right">PA</TableCell>
                   <TableCell isHeader align="right">TM</TableCell>
                 </TableRow>
@@ -812,13 +858,26 @@ export default function DashboardPage() {
                     </TableCell>
                     <TableCell className="font-medium">{v.seller_name}</TableCell>
                     <TableCell align="right">{formatMoney(v.faturamento)}</TableCell>
+                    <TableCell align="right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</TableCell>
+                    <TableCell align="right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</TableCell>
                     <TableCell align="center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</TableCell>
                     <TableCell align="center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</TableCell>
-                    <TableCell align="right">{formatNumber(v.pecas)}</TableCell>
                     <TableCell align="right">{v.pa.toFixed(2)}</TableCell>
                     <TableCell align="right">{formatMoney(v.tm)}</TableCell>
                   </TableRow>
                 ))}
+                {vendedoresRanking.length > 0 && (
+                  <TableRow isHighlighted>
+                    <TableCell className="font-bold" colSpan={2}>TOTAL</TableCell>
+                    <TableCell align="right" className="font-bold">{formatMoney(totaisVendedoresRanking.faturamento)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatMoney(totaisVendedoresRanking.meta)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatMoney(totaisVendedoresRanking.debitoMeta)}</TableCell>
+                    <TableCell align="center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctMeta) : '-'}</TableCell>
+                    <TableCell align="center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctProj) : '-'}</TableCell>
+                    <TableCell align="right" className="font-bold">{totaisVendedoresRanking.pa.toFixed(2)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatMoney(totaisVendedoresRanking.tm)}</TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </LoadingOverlay>

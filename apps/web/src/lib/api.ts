@@ -102,6 +102,11 @@ export const vendasApi = {
       `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
+  getHorarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+    fetchApi<VendasDiariasResponse>(
+      `/api/vendas/horarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+    ),
+
   getMensais: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
     fetchApi<VendasDiariasResponse>(
       `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
@@ -334,6 +339,7 @@ export interface Vendedor {
   pa: number;
   tm: number;
   meta: number;
+  debito_meta: number;
   pct_meta: number;
   projecao: number;
   pct_proj: number;

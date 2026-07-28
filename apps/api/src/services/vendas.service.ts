@@ -346,6 +346,51 @@ export async function getVendasDiarias(
   }));
 }
 
+// Vendas por hora no periodo selecionado (agregado por hora do dia)
+export async function getVendasHorarias(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro
+): Promise<VendasDiarias[]> {
+  const branchFilter = buildBranchFilter(branchCodes);
+  const produtoFilter = buildProdutoFilter(produtoFiltro);
+
+  const results = await prisma.$queryRaw<Array<{
+    hora: number;
+    transacoes: bigint;
+    pecas: Decimal;
+    faturamento: Decimal;
+  }>>`
+    SELECT
+      EXTRACT(HOUR FROM t.transaction_date)::int as hora,
+      COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
+      COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
+      COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
+    FROM transacoes t
+    LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+      AND t.transaction_code = ti.transaction_code
+      AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    ${PRODUTO_ANALITICO_JOIN}
+    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      AND t.status = 4
+      AND ${SALE_OPERATION_FILTER}
+      AND ${STORE_BRANCH_FILTER}
+      ${branchFilter}
+      ${produtoFilter}
+    GROUP BY EXTRACT(HOUR FROM t.transaction_date)::int
+    ORDER BY hora
+  `;
+
+  return results.map(row => ({
+    data: `${String(row.hora).padStart(2, '0')}h`,
+    transacoes: Number(row.transacoes),
+    pecas: Math.round(decimalToNumber(row.pecas)),
+    faturamento: round(decimalToNumber(row.faturamento)),
+  }));
+}
+
 // Vendas mensais (mesmo formato de getVendasDiarias, mas agregado por mes -
 // usado quando o periodo filtrado passa de 1 mes, pra nao poluir o grafico com dias)
 export async function getVendasMensais(

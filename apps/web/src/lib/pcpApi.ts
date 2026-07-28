@@ -56,6 +56,7 @@ export interface EstoqueSemGiroResumoItem {
   dias: number;
   label: string;
   sku_count: number;
+  referencia_count: number;
   quantidade: number;
   valor: number;
   pct_total: number;
@@ -97,6 +98,7 @@ export interface EstoqueSemGiroResponse {
   resumo: EstoqueSemGiroResumoItem[];
   total: {
     sku_count: number;
+    referencia_count: number;
     quantidade: number;
     valor: number;
   };

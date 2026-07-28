@@ -132,7 +132,28 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
   }
 });
 
-// Vendas mensais por período (usado quando o periodo filtrado passa de 1 mes)
+// Vendas por hora no periodo
+router.get('/vendas/horarias/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const branchCodes = resolveBranchCodes(req);
+    const produtoFiltro = resolveProdutoFiltro(req);
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const dados = await vendasService.getVendasHorarias(startDate, endDate, branchCodes, produtoFiltro);
+
+    res.json({
+      periodo: { inicio: start, fim: end },
+      dados,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Vendas mensais por periodo (usado quando o periodo filtrado passa de 1 mes)
 router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {
     const { start, end } = req.params;
@@ -232,6 +253,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
         ...v,
         seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
         meta,
+        debito_meta: Math.max(0, meta - v.faturamento),
         pct_meta: meta > 0 ? Math.round((v.faturamento / meta) * 1000) / 10 : 0,
         projecao,
         pct_proj: meta > 0 ? Math.round((projecao / meta) * 1000) / 10 : 0,

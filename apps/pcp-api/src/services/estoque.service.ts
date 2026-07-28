@@ -23,6 +23,7 @@ export interface EstoqueSemGiroResumoItem {
   dias: number;
   label: string;
   sku_count: number;
+  referencia_count: number;
   quantidade: number;
   valor: number;
   pct_total: number;
@@ -64,6 +65,7 @@ export interface EstoqueSemGiroResponse {
   resumo: EstoqueSemGiroResumoItem[];
   total: {
     sku_count: number;
+    referencia_count: number;
     quantidade: number;
     valor: number;
   };
@@ -288,6 +290,7 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
       dias,
       label: labelDias(dias),
       sku_count: bucketSkus.length,
+      referencia_count: new Set(bucketSkus.map((sku) => sku.referencia)).size,
       quantidade,
       valor,
     };
@@ -363,6 +366,7 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     resumo,
     total: {
       sku_count: selectedSkus.length,
+      referencia_count: new Set(selectedSkus.map((sku) => sku.referencia)).size,
       quantidade: round(totalQuantidade, 0),
       valor: round(totalValor),
     },
