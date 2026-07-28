@@ -565,21 +565,26 @@ export default function DashboardPage() {
                   ? 'Media por Dia da Semana'
                   : 'Vendas Diarias'}
             </CardTitle>
-            <div className="flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1">
+            <div className="inline-grid grid-cols-3 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
               {[
-                { value: 'dia', label: 'Dia' },
-                { value: 'hora', label: 'Hora' },
-                { value: 'semana', label: 'Semana' },
-              ].map((modo) => (
-                <Button
-                  key={modo.value}
-                  variant={graficoVendasModo === modo.value ? 'primary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setGraficoVendasModo(modo.value as 'dia' | 'hora' | 'semana')}
-                >
-                  {modo.label}
-                </Button>
-              ))}
+                { value: 'dia', label: 'DIA' },
+                { value: 'hora', label: 'HORA' },
+                { value: 'semana', label: 'SEMANA' },
+              ].map((modo) => {
+                const ativo = graficoVendasModo === modo.value;
+                return (
+                  <button
+                    key={modo.value}
+                    type="button"
+                    onClick={() => setGraficoVendasModo(modo.value as 'dia' | 'hora' | 'semana')}
+                    className={ativo
+                      ? 'min-w-20 bg-[var(--bbtk-red)] px-3 py-2 text-xs font-bold text-white'
+                      : 'min-w-20 px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50'}
+                  >
+                    {modo.label}
+                  </button>
+                );
+              })}
             </div>
           </CardHeader>
           <LoadingOverlay active={isLoading}>
@@ -946,6 +951,22 @@ export default function DashboardPage() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {(produtos?.produtos.length || 0) > 0 && (
+                  <TableRow isHighlighted>
+                    <TableCell className="font-bold" colSpan={2}>TOTAL</TableCell>
+                    <TableCell align="right" className="font-bold">
+                      {formatNumber(produtos?.produtos.reduce((sum, p) => sum + p.quantidade, 0) || 0)}
+                    </TableCell>
+                    <TableCell align="right" className="font-bold">
+                      {formatMoney(produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0)}
+                    </TableCell>
+                    <TableCell align="right" className="font-bold">
+                      {vendas?.total?.faturamento
+                        ? `${(((produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0) / vendas.total.faturamento) * 100).toFixed(1)}%`
+                        : '-'}
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </LoadingOverlay>

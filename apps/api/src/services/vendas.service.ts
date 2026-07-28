@@ -366,25 +366,38 @@ export async function getVendasHorarias(
       SELECT GREATEST((${endDate}::date - ${startDate}::date + 1), 1)::numeric as dias
     ), horas AS (
       SELECT generate_series(0, 23)::int as hora
+    ), transacoes_com_hora AS (
+      SELECT
+        t.branch_code,
+        t.transaction_code,
+        CASE
+          WHEN t.additional_information ~* '(hora|horario|time)[^0-9]*[0-2]?[0-9]\s*(:|h)'
+            THEN (regexp_match(LOWER(t.additional_information), '(hora|horario|time)[^0-9]*([0-2]?[0-9])\s*(:|h)'))[2]::int
+          ELSE NULL
+        END as hora
+      FROM transacoes t
+      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+        AND t.status = 4
+        AND ${STORE_BRANCH_FILTER}
+        ${branchFilter}
     ), vendas_hora AS (
       SELECT
-        EXTRACT(HOUR FROM COALESCE(t.last_change_date, t.created_at, t.transaction_date::timestamp))::int as hora,
+        th.hora,
         COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (t.branch_code, t.transaction_code) END) as transacoes,
         COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
         COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
-      FROM transacoes t
+      FROM transacoes_com_hora th
+      JOIN transacoes t ON t.branch_code = th.branch_code
+        AND t.transaction_code = th.transaction_code
       LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
         AND t.transaction_code = ti.transaction_code
         AND ti.seller_code != 1
       ${OPERACAO_JOIN}
       ${PRODUTO_ANALITICO_JOIN}
-      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
-        AND t.status = 4
+      WHERE th.hora BETWEEN 0 AND 23
         AND ${SALE_OPERATION_FILTER}
-        AND ${STORE_BRANCH_FILTER}
-        ${branchFilter}
         ${produtoFilter}
-      GROUP BY EXTRACT(HOUR FROM COALESCE(t.last_change_date, t.created_at, t.transaction_date::timestamp))::int
+      GROUP BY th.hora
     )
     SELECT
       h.hora,
