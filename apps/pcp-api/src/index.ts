@@ -4,6 +4,10 @@ import cors from 'cors';
 import { prisma } from './config/database.js';
 import { authMiddleware, moduleAccess } from './middleware/auth.middleware.js';
 import estoqueRoutes from './routes/estoque.routes.js';
+import relatorioBaseRoutes from './routes/relatorioBase.routes.js';
+import visaoGeralRoutes from './routes/visaoGeral.routes.js';
+import analiseGradeRoutes from './routes/analiseGrade.routes.js';
+import curvaAbcRoutes from './routes/curvaAbc.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -16,6 +20,10 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), estoqueRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), relatorioBaseRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), visaoGeralRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
 
 async function start() {
   try {

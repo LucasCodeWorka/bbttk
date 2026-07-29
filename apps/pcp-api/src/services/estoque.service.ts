@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { nomeFilial } from '../config/constants.js';
+import { FILIAIS } from '../config/constants.js';
 
 export interface ProdutoFiltro {
   categoria?: string[];
@@ -23,7 +23,6 @@ export interface EstoqueSemGiroResumoItem {
   dias: number;
   label: string;
   sku_count: number;
-  referencia_count: number;
   quantidade: number;
   valor: number;
   pct_total: number;
@@ -65,7 +64,6 @@ export interface EstoqueSemGiroResponse {
   resumo: EstoqueSemGiroResumoItem[];
   total: {
     sku_count: number;
-    referencia_count: number;
     quantidade: number;
     valor: number;
   };
@@ -151,7 +149,7 @@ function labelDias(dias: number): string {
 }
 
 function rowBranchName(branchCode: number, branchName?: string | null): string {
-  return nomeFilial(branchCode, branchName);
+  return branchName || FILIAIS[branchCode] || `Filial ${branchCode}`;
 }
 
 function buildGrade(cor?: string | null, tamanho?: string | null): string | null {
@@ -175,7 +173,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       NULLIF(TRIM(p.size), '') as tamanho,
       NULLIF(TRIM(ag.nome), '') as cor_de_para,
       a.branch_code,
-      COALESCE(NULLIF(TRIM(b.branch_name), ''), NULLIF(TRIM(a.branch_name), '')) as branch_name,
+      COALESCE(NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
       a.ultima_venda,
       COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
       COALESCE(a.quantidade_estoque, 0) as quantidade,
@@ -290,7 +288,6 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
       dias,
       label: labelDias(dias),
       sku_count: bucketSkus.length,
-      referencia_count: new Set(bucketSkus.map((sku) => sku.referencia)).size,
       quantidade,
       valor,
     };
@@ -366,7 +363,6 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     resumo,
     total: {
       sku_count: selectedSkus.length,
-      referencia_count: new Set(selectedSkus.map((sku) => sku.referencia)).size,
       quantidade: round(totalQuantidade, 0),
       valor: round(totalValor),
     },
@@ -404,7 +400,7 @@ export async function getFiltrosEstoqueSemGiro() {
   const lojas = await prisma.$queryRaw<Array<{ branch_code: number; branch_name: string | null }>>`
     SELECT
       a.branch_code,
-      COALESCE(MAX(NULLIF(TRIM(b.branch_name), '')), MAX(NULLIF(TRIM(a.branch_name), ''))) as branch_name
+      COALESCE(MAX(NULLIF(TRIM(b.description), '')), MAX(NULLIF(TRIM(b.fantasy_name), '')), MAX(NULLIF(TRIM(a.branch_name), '')), MAX(NULLIF(TRIM(b.branch_name), ''))) as branch_name
     FROM pcp_estoque_sem_giro_analitico a
     LEFT JOIN branches b ON b.branch_code = a.branch_code
     WHERE a.branch_code IS NOT NULL

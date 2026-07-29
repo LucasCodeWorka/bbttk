@@ -1,0 +1,369 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { KPICard } from '@/components/dashboard/KPICard';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
+import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/components/ui/Toast';
+import {
+  analiseGradeApi,
+  relatorioBaseApi,
+  AnaliseGradeResponse,
+  PcpClassificacaoDimensao,
+  PcpGradeReferencia,
+  PcpGradeDetalheSku,
+} from '@/lib/pcpApi';
+import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
+import { cn, formatMoney, formatNumber } from '@/lib/utils';
+
+const STATUS_STYLE = {
+  saudavel: 'bg-green-100 text-green-700',
+  atencao: 'bg-yellow-100 text-yellow-700',
+  critica: 'bg-red-100 text-red-700',
+  ok: 'bg-green-100 text-green-700',
+  risco: 'bg-red-100 text-red-700',
+};
+
+const STATUS_LABEL = {
+  saudavel: 'Saudavel',
+  atencao: 'Atencao',
+  critica: 'Critica',
+  ok: 'OK',
+  risco: 'Risco',
+};
+
+const CURVA_STYLE = {
+  A: 'bg-green-100 text-green-700',
+  B: 'bg-gray-200 text-gray-700',
+  C: 'bg-red-100 text-red-700',
+  D: 'bg-yellow-100 text-yellow-700',
+};
+
+function Badge({ value, className }: { value: string; className: string }) {
+  return <span className={cn('inline-flex px-2 py-0.5 rounded-full text-xs font-semibold', className)}>{value}</span>;
+}
+
+function coberturaLabel(value: number | null) {
+  return value === null ? '-' : `${value.toFixed(2)} m`;
+}
+
+function buildMatriz(detalhes: PcpGradeDetalheSku[]) {
+  const cores = [...new Set(detalhes.map((d) => d.cor))].sort((a, b) => a.localeCompare(b));
+  const tamanhos = [...new Set(detalhes.map((d) => d.tamanho))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const mapa = new Map<string, PcpGradeDetalheSku>();
+  for (const detalhe of detalhes) mapa.set(`${detalhe.cor}|||${detalhe.tamanho}`, detalhe);
+  return { cores, tamanhos, mapa };
+}
+
+function DetalheReferencia({ referencia }: { referencia: PcpGradeReferencia }) {
+  const { cores, tamanhos, mapa } = useMemo(() => buildMatriz(referencia.detalhes), [referencia.detalhes]);
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <Card>
+          <p className="text-xs text-gray-400 uppercase">Curva</p>
+          <Badge value={referencia.curva} className={CURVA_STYLE[referencia.curva]} />
+        </Card>
+        <Card>
+          <p className="text-xs text-gray-400 uppercase">Cobertura geral</p>
+          <p className="text-lg font-semibold">{coberturaLabel(referencia.coberturaGeral)}</p>
+        </Card>
+        <Card>
+          <p className="text-xs text-gray-400 uppercase">Estoque</p>
+          <p className="text-lg font-semibold">{formatNumber(referencia.estoqueTotal)}</p>
+        </Card>
+        <Card>
+          <p className="text-xs text-gray-400 uppercase">Media mensal</p>
+          <p className="text-lg font-semibold">{formatNumber(referencia.mediaMensal)}</p>
+        </Card>
+        <Card>
+          <p className="text-xs text-gray-400 uppercase">SKUs em risco</p>
+          <p className="text-lg font-semibold">{referencia.skusEmRisco} de {referencia.totalSkus}</p>
+        </Card>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Matriz por cor e tamanho</h3>
+        <Table className="max-h-[440px]">
+          <TableHead>
+            <TableRow>
+              <TableCell isHeader>Cor</TableCell>
+              {tamanhos.map((tamanho) => (
+                <TableCell key={tamanho} isHeader align="center">{tamanho}</TableCell>
+              ))}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {cores.map((cor) => (
+              <TableRow key={cor}>
+                <TableCell className="font-medium">{cor}</TableCell>
+                {tamanhos.map((tamanho) => {
+                  const celula = mapa.get(`${cor}|||${tamanho}`);
+                  if (!celula) return <TableCell key={tamanho} align="center" className="text-gray-300">-</TableCell>;
+                  return (
+                    <TableCell
+                      key={tamanho}
+                      align="center"
+                      className={cn(
+                        'min-w-36 text-xs align-top',
+                        celula.status === 'risco' ? 'bg-red-50 text-red-800' : 'bg-green-50 text-green-800'
+                      )}
+                    >
+                      <div className="font-semibold">{STATUS_LABEL[celula.status]}</div>
+                      <div>Est: {formatNumber(celula.estoque)}</div>
+                      <div>V: {formatNumber(celula.vendaMes1)} / {formatNumber(celula.vendaMes2)} / {formatNumber(celula.vendaMes3)}</div>
+                      <div>Med: {formatNumber(celula.mediaMensal)}</div>
+                      <div>Cob: {coberturaLabel(celula.cobertura)}</div>
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Detalhamento por SKU</h3>
+        <Table className="max-h-[440px]">
+          <TableHead>
+            <TableRow>
+              <TableCell isHeader>Ref-Cor-Tam</TableCell>
+              <TableCell isHeader>SKU</TableCell>
+              <TableCell isHeader>Cor</TableCell>
+              <TableCell isHeader>Tamanho</TableCell>
+              <TableCell isHeader align="right">Estoque</TableCell>
+              <TableCell isHeader align="right">Mes 1</TableCell>
+              <TableCell isHeader align="right">Mes 2</TableCell>
+              <TableCell isHeader align="right">Mes 3</TableCell>
+              <TableCell isHeader align="right">Media</TableCell>
+              <TableCell isHeader align="right">Cobertura</TableCell>
+              <TableCell isHeader align="center">Status</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {referencia.detalhes.map((d) => (
+              <TableRow key={d.sku}>
+                <TableCell className="font-medium">{d.refCorTam}</TableCell>
+                <TableCell className="text-xs text-gray-400">{d.sku}</TableCell>
+                <TableCell>{d.cor}</TableCell>
+                <TableCell>{d.tamanho}</TableCell>
+                <TableCell align="right">{formatNumber(d.estoque)}</TableCell>
+                <TableCell align="right">{formatNumber(d.vendaMes1)}</TableCell>
+                <TableCell align="right">{formatNumber(d.vendaMes2)}</TableCell>
+                <TableCell align="right">{formatNumber(d.vendaMes3)}</TableCell>
+                <TableCell align="right">{formatNumber(d.mediaMensal)}</TableCell>
+                <TableCell align="right">{coberturaLabel(d.cobertura)}</TableCell>
+                <TableCell align="center">
+                  <Badge value={STATUS_LABEL[d.status]} className={STATUS_STYLE[d.status]} />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+export default function PcpAnaliseGradePage() {
+  const { token } = useAuth();
+  const { showToast } = useToast();
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState<AnaliseGradeResponse | null>(null);
+  const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
+  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
+  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  const [referenciaBusca, setReferenciaBusca] = useState('');
+  const [referenciaModal, setReferenciaModal] = useState<PcpGradeReferencia | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    relatorioBaseApi
+      .getFiltrosRelatorioBase(token)
+      .then((res) => setClassificacoes(res.classificacoes.filter((d) => d.chave !== 'status')))
+      .catch((error) => console.error('Erro ao carregar filtros:', error));
+  }, [token]);
+
+  const carregarDados = useCallback(async () => {
+    if (!token) return;
+    setIsLoading(true);
+    try {
+      const filtro = {
+        referencia: referenciaBusca.trim() || undefined,
+        categoria: produtoFiltro.categoria,
+        linha: produtoFiltro.linha,
+        genero: produtoFiltro.genero,
+        branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+      };
+      const gradeRes = await analiseGradeApi.getGrade(token, filtro);
+      setData(gradeRes);
+    } catch (error) {
+      showToast('Erro ao carregar Analise de Grade', 'error');
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, produtoFiltro, filiaisSelecionadas, referenciaBusca]);
+
+  useEffect(() => {
+    carregarDados();
+  }, [carregarDados]);
+
+  function atualizarProdutoFiltro(chave: string, valores: string[]) {
+    setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
+  }
+
+  const meses = data?.config.meses || ['Mes 1', 'Mes 2', 'Mes 3'];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">PCP</p>
+        <h1 className="text-2xl font-bold text-gray-900">Analise de Grade</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Risco de ruptura por referencia, cor e tamanho com cobertura menor que 1 mes.
+        </p>
+      </div>
+
+      <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
+        <p className="text-sm font-medium text-gray-800">Regra de risco</p>
+        <p className="text-xs text-gray-600 mt-1">
+          Risco = cobertura menor que {data?.config.riscoCoberturaMeses ?? 1} mes. A cobertura usa a media mensal de venda dos ultimos 3 meses fechados.
+        </p>
+      </Card>
+
+      <div className="flex flex-wrap items-end gap-3">
+        {classificacoes.map((dim) => (
+          <ClassificacaoMultiSelect
+            key={dim.chave}
+            label={dim.label}
+            options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
+            selected={produtoFiltro[dim.chave] || []}
+            onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
+            className="w-44"
+          />
+        ))}
+        <FilialMultiSelect
+          selected={filiaisSelecionadas}
+          onChange={setFiliaisSelecionadas}
+          options={RELATORIO_BASE_BRANCH_ORDER.map((b) => ({ value: b.branchCode, label: b.label }))}
+          label="Loja"
+          className="w-52"
+        />
+        <Input
+          label="Buscar referencia"
+          value={referenciaBusca}
+          onChange={(e) => setReferenciaBusca(e.target.value)}
+          className="w-48"
+          placeholder="Codigo da referencia"
+        />
+        <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <KPICard
+          title="Referencias analisadas"
+          value={isLoading || !data ? '-' : formatNumber(data.indicadores.referenciasTotal)}
+          color="blue"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Referencias criticas"
+          value={isLoading || !data ? '-' : formatNumber(data.indicadores.referenciasCriticas)}
+          color="red"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="SKUs em risco"
+          value={isLoading || !data ? '-' : `${formatNumber(data.indicadores.skusEmRupturaTotal)} de ${formatNumber(data.indicadores.totalSkus)}`}
+          color="yellow"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="% SKUs em risco"
+          value={isLoading || !data ? '-' : `${data.indicadores.percentSkusEmRisco.toFixed(1)}%`}
+          color="green"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{data?.referencias.length || 0} referencias</CardTitle>
+        </CardHeader>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell isHeader>Referencia</TableCell>
+              <TableCell isHeader align="center">Curva</TableCell>
+              <TableCell isHeader align="right">Estoque</TableCell>
+              <TableCell isHeader align="right">{meses[0]}</TableCell>
+              <TableCell isHeader align="right">{meses[1]}</TableCell>
+              <TableCell isHeader align="right">{meses[2]}</TableCell>
+              <TableCell isHeader align="right">Media mensal</TableCell>
+              <TableCell isHeader align="right">Cobertura</TableCell>
+              <TableCell isHeader align="right">SKUs</TableCell>
+              <TableCell isHeader align="right">SKUs risco</TableCell>
+              <TableCell isHeader align="right">% risco</TableCell>
+              <TableCell isHeader align="center">Status</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
+              </TableRow>
+            ) : (data?.referencias || []).length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
+              </TableRow>
+            ) : (
+              data?.referencias.map((r) => (
+                <TableRow key={r.referenceCode} onClick={() => setReferenciaModal(r)}>
+                  <TableCell>
+                    <span className="font-medium text-gray-800">{r.referenceCode}</span>
+                    <span className="block text-xs text-gray-400 truncate max-w-[260px]" title={r.referenceName}>{r.referenceName}</span>
+                  </TableCell>
+                  <TableCell align="center"><Badge value={r.curva} className={CURVA_STYLE[r.curva]} /></TableCell>
+                  <TableCell align="right">{formatNumber(r.estoqueTotal)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.vendaMes1)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.vendaMes2)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.vendaMes3)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.mediaMensal)}</TableCell>
+                  <TableCell align="right">{coberturaLabel(r.coberturaGeral)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.totalSkus)}</TableCell>
+                  <TableCell align="right">{formatNumber(r.skusEmRisco)}</TableCell>
+                  <TableCell align="right">{r.percentGradeEmRisco.toFixed(1)}%</TableCell>
+                  <TableCell align="center"><Badge value={STATUS_LABEL[r.status]} className={STATUS_STYLE[r.status]} /></TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Modal
+        isOpen={!!referenciaModal}
+        onClose={() => setReferenciaModal(null)}
+        title={referenciaModal ? `${referenciaModal.referenceCode} - ${referenciaModal.referenceName}` : ''}
+        size="xl"
+      >
+        {referenciaModal && <DetalheReferencia referencia={referenciaModal} />}
+      </Modal>
+    </div>
+  );
+}
