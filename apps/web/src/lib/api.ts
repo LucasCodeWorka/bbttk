@@ -230,6 +230,104 @@ export const agrupamentosApi = {
     uploadFile<{ cores: CorProduto[]; total_linhas: number }>('/api/agrupamentos/cores/csv', token, file),
 };
 
+// Configurador PCP (dias de giro, meses de cobertura, cobertura ideal por loja, e qual
+// codigo de custo/preco do TOTVS usar em cada contexto do Relatorio Base)
+export interface PcpRelatorioConfig {
+  relatorio: string;
+  giroDias: number;
+  coberturaMeses: number;
+  riscoCoberturaMeses: number;
+  atacadoCoberturaBase: string;
+  custoCode: number;
+  pdvVarejoCode: number;
+  pdvAtacadoCode: number;
+  precoCustoBranchCode: number;
+}
+
+export interface PcpCoberturaIdealItem {
+  branchCode: number;
+  coberturaIdealMeses: number;
+}
+
+export interface PcpCodigoOpcao {
+  code: number;
+  name: string;
+}
+
+export interface PcpCodigosDisponiveis {
+  custos: PcpCodigoOpcao[];
+  precos: PcpCodigoOpcao[];
+}
+
+export interface PcpCurvaAbcConfig {
+  relatorio: string;
+  giroDias: number;
+  curvaALimitePercent: number;
+  curvaBLimitePercent: number;
+  curvaCLimitePercent: number;
+}
+
+export interface PcpMetaVisaoGeral {
+  relatorio: string;
+  metaCoberturaGeralMeses: number;
+  metaGiroAnualizado: number;
+  metaEstoqueMortoPercent: number;
+  metaCoberturaBasicoMeses: number;
+  metaCoberturaColecaoMeses: number;
+  estoqueMortoDias: number;
+}
+
+export const pcpConfigApi = {
+  getConfig: (token: string, relatorio = 'relatorio_base') =>
+    fetchApi<{ config: PcpRelatorioConfig }>(`/api/pcp-config?relatorio=${relatorio}`, { token }),
+
+  updateConfig: (token: string, data: PcpRelatorioConfig) =>
+    fetchApi<{ config: PcpRelatorioConfig }>('/api/pcp-config', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getCodigosDisponiveis: (token: string) =>
+    fetchApi<PcpCodigosDisponiveis>('/api/pcp-config/codigos', { token }),
+
+  sincronizarCustosPrecos: (token: string) =>
+    fetchApi<{ custos: { produtos: number; linhas: number }; precos: { produtos: number; linhas: number } }>(
+      '/api/pcp-config/sincronizar-custos-precos',
+      { token, method: 'POST' }
+    ),
+
+  getCoberturaIdeal: (token: string, relatorio = 'relatorio_base') =>
+    fetchApi<{ items: PcpCoberturaIdealItem[] }>(`/api/pcp-config/cobertura-ideal?relatorio=${relatorio}`, { token }),
+
+  updateCoberturaIdeal: (token: string, relatorio: string, items: PcpCoberturaIdealItem[]) =>
+    fetchApi<{ items: PcpCoberturaIdealItem[] }>('/api/pcp-config/cobertura-ideal', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({ relatorio, items }),
+    }),
+
+  getMetaVisaoGeral: (token: string, relatorio = 'visao_geral') =>
+    fetchApi<{ meta: PcpMetaVisaoGeral }>(`/api/pcp-config/meta-visao-geral?relatorio=${relatorio}`, { token }),
+
+  updateMetaVisaoGeral: (token: string, data: PcpMetaVisaoGeral) =>
+    fetchApi<{ meta: PcpMetaVisaoGeral }>('/api/pcp-config/meta-visao-geral', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getCurvaAbcConfig: (token: string, relatorio = 'curva_abc') =>
+    fetchApi<{ config: PcpCurvaAbcConfig }>(`/api/pcp-config/curva-abc?relatorio=${relatorio}`, { token }),
+
+  updateCurvaAbcConfig: (token: string, data: PcpCurvaAbcConfig) =>
+    fetchApi<{ config: PcpCurvaAbcConfig }>('/api/pcp-config/curva-abc', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+};
+
 // Metas
 export const metasApi = {
   getNiveis: () =>
