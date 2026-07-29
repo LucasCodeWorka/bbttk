@@ -150,6 +150,12 @@ export const vendasApi = {
 
   getClassificacoes: () =>
     fetchApi<{ dimensoes: ClassificacaoDimensao[] }>('/api/produtos/classificacoes'),
+
+  getHistoricoLojas: (ano: number, mes: number) =>
+    fetchApi<{ lojas: HistoricoLoja[] }>(`/api/historico-lojas/${ano}/${mes}`),
+
+  getHistoricoVendedores: (ano: number, mes: number) =>
+    fetchApi<{ vendedores: HistoricoVendedor[] }>(`/api/vendedores-historico/${ano}/${mes}`),
 };
 
 // Entregas
@@ -276,6 +282,13 @@ export const metasApi = {
     fetchApi<ComissoesResponse>(
       `/api/metas/comissoes${joinQuery(`ano=${ano}`, `mes=${mes}`, branchesQuery(branchCodes), diaInicio ? `dia_inicio=${diaInicio}` : '', diaFim ? `dia_fim=${diaFim}` : '')}`
     ),
+
+  salvarDistribuicao: (token: string, data: SalvarDistribuicaoData) =>
+    fetchApi<{ success: boolean; distribution: MetaDistribution }>('/api/metas/salvar-distribuicao', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };
 
 // Types
@@ -364,6 +377,18 @@ export interface VendedorPorFilial {
 export interface VendedoresPorFilialResponse {
   periodo: { inicio: string; fim: string };
   vendedores: VendedorPorFilial[];
+}
+
+export interface HistoricoLoja {
+  branch_code: number;
+  branch_name: string;
+  faturamento_3m: number;
+}
+
+export interface HistoricoVendedor {
+  seller_code: number;
+  seller_name: string;
+  faturamento_3m: number;
 }
 
 export interface Produto {
@@ -668,6 +693,36 @@ export interface DistribuicaoData {
   totalValue: number;
   distributionType: 'manual' | 'igual' | 'proporcional';
   items: DistribuicaoItem[];
+}
+
+export interface ComissaoOverrideData {
+  nivel1?: number | null;
+  nivel2?: number | null;
+  nivel3?: number | null;
+  nivel4?: number | null;
+  nivel5?: number | null;
+}
+
+export interface SalvarDistribuicaoVendedor {
+  sellerCode: number;
+  valor: number;
+  comissaoOverride?: ComissaoOverrideData | null;
+  isGerente?: boolean;
+}
+
+export interface SalvarDistribuicaoLoja {
+  branchCode: number;
+  valor: number;
+  comissaoOverride?: ComissaoOverrideData | null;
+  vendedores: SalvarDistribuicaoVendedor[];
+}
+
+export interface SalvarDistribuicaoData {
+  ano: number;
+  mes: number;
+  totalValue: number;
+  distributionType: 'manual' | 'igual' | 'proporcional';
+  lojas: SalvarDistribuicaoLoja[];
 }
 
 export interface MetaDistribution {

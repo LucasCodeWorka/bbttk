@@ -104,6 +104,27 @@ router.post('/metas/distribuir', authMiddleware, async (req: Request, res: Respo
   }
 });
 
+// Cadastro/distribuicao de metas unificado - o modal "Cadastrar Metas" do frontend
+// manda tudo ja calculado (lojas + vendedores em R$) numa chamada so.
+router.post('/metas/salvar-distribuicao', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { ano, mes, totalValue, distributionType, lojas } = req.body;
+
+    const distribution = await metasService.salvarDistribuicaoCompleta({
+      ano,
+      mes,
+      totalValue,
+      distributionType,
+      lojas,
+      createdById: req.user?.userId,
+    });
+
+    res.json({ success: true, distribution });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // Buscar distribuições
 router.get('/metas/distribuicoes', async (req: Request, res: Response) => {
   try {

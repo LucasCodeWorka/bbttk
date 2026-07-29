@@ -228,6 +228,59 @@ export async function getVendasPeriodo(
   });
 }
 
+export interface FaturamentoHistoricoLoja {
+  branch_code: number;
+  branch_name: string;
+  faturamento_3m: number;
+}
+
+// Faturamento por filial nos 3 meses calendario completos imediatamente antes do mes da
+// meta (mesma janela de getVendasVendedor/rota vendedores-por-filial - ex: meta de
+// julho/2026 considera abril, maio e junho/2026) - usado pra pesar a distribuicao
+// "por historico de vendas" no cadastro de metas. branch_code=2 (Fabrica) entra como
+// uma linha so, sem o split de canal usado em getVendasFabricaDividida - a tabela
+// metas guarda por branch_code real, nao por canal.
+export async function getFaturamentoHistoricoLojas(ano: number, mes: number): Promise<FaturamentoHistoricoLoja[]> {
+  const startDate = new Date(ano, mes - 4, 1);
+  const endDate = new Date(ano, mes - 1, 0);
+
+  const filiais = await getVendasPeriodo(startDate, endDate);
+
+  return filiais.map(f => ({
+    branch_code: f.branch_code,
+    branch_name: f.branch_name,
+    faturamento_3m: f.faturamento,
+  }));
+}
+
+export interface FaturamentoHistoricoVendedor {
+  seller_code: number;
+  seller_name: string;
+  faturamento_3m: number;
+}
+
+// Faturamento de cada vendedor somado em TODAS as lojas (sem quebrar por filial) nos 3
+// meses calendario completos antes do mes da meta - mesma janela de
+// getFaturamentoHistoricoLojas/vendedores-por-filial. Usado pra pesar a distribuicao "por
+// historico de vendas" entre vendedoras VOLANTE (sem loja fixa) no cadastro de metas.
+export async function getFaturamentoHistoricoVendedores(ano: number, mes: number): Promise<FaturamentoHistoricoVendedor[]> {
+  const startDate = new Date(ano, mes - 4, 1);
+  const endDate = new Date(ano, mes - 1, 0);
+
+  const [vendedores, nomes] = await Promise.all([
+    getVendasVendedor(startDate, endDate),
+    getVendedoresMap(),
+  ]);
+
+  return vendedores
+    .map(v => ({
+      seller_code: v.seller_code,
+      seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
+      faturamento_3m: v.faturamento,
+    }))
+    .sort((a, b) => b.faturamento_3m - a.faturamento_3m);
+}
+
 // Divide a Fabrica (branch_code=2) em 3 linhas por operacao, igual o relatorio nativo
 // do TOTVS mostra (2-FABRICA / 2.1-DELIVERY / 2.3-ATACADO) - a Fabrica vende nos tres
 // canais dentro da mesma filial, e antes tudo virava uma linha so misturada. So cobre

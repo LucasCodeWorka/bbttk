@@ -22,6 +22,13 @@ export const FILIAIS: Record<number, string> = {
 // Filiais que não são lojas de venda - hoje nenhuma (Fabrica/2 passou a vender como Atacado)
 export const EXCLUDED_BRANCH_CODES = new Set<number>([]);
 
+// branch_code sintetico (nao existe na tabela `branches` do TOTVS) usado so na tabela
+// `metas` pra representar vendedoras "volante" - sem loja fixa, meta calculada sobre o
+// faturamento somado de TODAS as lojas onde ela vendeu no mes. Nao entra em FILIAIS de
+// proposito: nao deve aparecer em filtro de loja nenhum (dashboard, vendas, etc), so nos
+// pontos que tratam meta/comissao explicitamente.
+export const VOLANTE_BRANCH_CODE = 0;
+
 // A classificacao de venda/devolucao NAO usa mais lista de operation_code fixa aqui -
 // isso ja causou faturamento inflado mais de uma vez porque o TOTVS cria operacao nova
 // (compra, consignacao, remessa, brinde) sem avisar, e ela caia como "venda" por padrao

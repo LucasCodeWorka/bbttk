@@ -1,6 +1,6 @@
 import * as vendasService from './vendas.service.js';
 import * as metasService from './metas.service.js';
-import { FILIAIS } from '../config/constants.js';
+import { FILIAIS, VOLANTE_BRANCH_CODE } from '../config/constants.js';
 
 function round(value: number, decimals: number = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
@@ -73,8 +73,24 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
     comissao_nivel_1: number | null; comissao_nivel_2: number | null; comissao_nivel_3: number | null;
     comissao_nivel_4: number | null; comissao_nivel_5: number | null;
   }>();
+  // Meta das vendedoras VOLANTE (sem loja fixa, branch_code sintetico) - fica de fora do
+  // filtro de filiaisEscopo de proposito, porque VOLANTE_BRANCH_CODE nunca e uma filial
+  // real selecionavel no filtro do relatorio.
+  const metaVolantePorVendedor = new Map<number, {
+    nivel_1: number; nivel_2: number; nivel_3: number; nivel_4: number; nivel_5: number;
+    comissao_nivel_1: number | null; comissao_nivel_2: number | null; comissao_nivel_3: number | null;
+    comissao_nivel_4: number | null; comissao_nivel_5: number | null;
+  }>();
   for (const m of metasDoMes) {
     if (m.seller_code === null) continue;
+    if (m.branch_code === VOLANTE_BRANCH_CODE) {
+      metaVolantePorVendedor.set(m.seller_code, {
+        nivel_1: m.nivel_1, nivel_2: m.nivel_2, nivel_3: m.nivel_3, nivel_4: m.nivel_4, nivel_5: m.nivel_5,
+        comissao_nivel_1: m.comissao_nivel_1, comissao_nivel_2: m.comissao_nivel_2, comissao_nivel_3: m.comissao_nivel_3,
+        comissao_nivel_4: m.comissao_nivel_4, comissao_nivel_5: m.comissao_nivel_5,
+      });
+      continue;
+    }
     if (!filiaisEscopo.includes(m.branch_code)) continue;
     metaPorVendedorFilial.set(`${m.seller_code}-${m.branch_code}`, {
       nivel_1: m.nivel_1, nivel_2: m.nivel_2, nivel_3: m.nivel_3, nivel_4: m.nivel_4, nivel_5: m.nivel_5,
@@ -122,15 +138,64 @@ export async function getRelatorioComissao(ano: number, mes: number, branchCodes
     porVendedor.set(v.seller_code, atual);
   }
 
+  // Unifica nivel/percentual de comissao entre todas as lojas onde a mesma vendedora
+  // vendeu no mes, pra ela nao perder comissao sobre venda feita numa loja secundaria:
+  // - Se ela tem meta VOLANTE (sem loja fixa): o nivel e calculado contra o faturamento
+  //   TOTAL somado em todas as lojas, comparado com os alvos da meta volante - e a meta
+  //   "de verdade" dela, definida explicitamente pra nao depender de loja nenhuma.
+  // - Senao, se ela vendeu em mais de uma loja: a loja onde ela mais faturou ("loja
+  //   principal") define o nivel/percentual, normalmente e onde ela realmente trabalha.
+  // Nos dois casos, o percentual resultante e aplicado sobre o faturamento de CADA loja
+  // (nao so a principal/volante), garantindo que nenhuma venda fique de fora da comissao.
+  for (const [seller_code, celulas] of porVendedor.entries()) {
+    const metaVolante = metaVolantePorVendedor.get(seller_code);
+
+    let nivelUnificado: number;
+    let comissaoPctUnificado: number;
+    let alvosUnificados: { nivel_1: number; nivel_2: number; nivel_3: number; nivel_4: number; nivel_5: number } | null = null;
+
+    if (metaVolante) {
+      const totalFat = celulas.reduce((s, c) => s + c.faturamento, 0);
+      nivelUnificado = nivelAtingido(totalFat, metaVolante);
+      comissaoPctUnificado = comissaoDoNivel(nivelUnificado, metaVolante);
+      alvosUnificados = metaVolante;
+    } else if (celulas.length > 1) {
+      const principal = celulas.reduce((max, c) => (c.faturamento > max.faturamento ? c : max), celulas[0]);
+      nivelUnificado = principal.nivel_atingido;
+      comissaoPctUnificado = principal.comissao_pct;
+      alvosUnificados = { nivel_1: principal.nivel_1, nivel_2: principal.nivel_2, nivel_3: principal.nivel_3, nivel_4: principal.nivel_4, nivel_5: principal.nivel_5 };
+    } else {
+      continue;
+    }
+
+    for (const c of celulas) {
+      c.nivel_atingido = nivelUnificado;
+      c.comissao_pct = comissaoPctUnificado;
+      c.comissao_valor = round((c.faturamento * comissaoPctUnificado) / 100);
+      if (alvosUnificados) {
+        c.nivel_1 = alvosUnificados.nivel_1;
+        c.nivel_2 = alvosUnificados.nivel_2;
+        c.nivel_3 = alvosUnificados.nivel_3;
+        c.nivel_4 = alvosUnificados.nivel_4;
+        c.nivel_5 = alvosUnificados.nivel_5;
+        c.resultado_pct = alvosUnificados.nivel_3 > 0 ? round((c.faturamento / alvosUnificados.nivel_3) * 100, 1) : 0;
+      }
+    }
+  }
+
   const vendedores: VendedorComissao[] = Array.from(porVendedor.entries()).map(([seller_code, celulas]) => {
     const faturamento = round(celulas.reduce((sum, c) => sum + c.faturamento, 0));
     const comissao_valor = round(celulas.reduce((sum, c) => sum + c.comissao_valor, 0));
-    const nivel_1 = celulas.reduce((sum, c) => sum + c.nivel_1, 0);
-    const nivel_2 = celulas.reduce((sum, c) => sum + c.nivel_2, 0);
-    const nivel_3 = celulas.reduce((sum, c) => sum + c.nivel_3, 0);
-    const nivel_4 = celulas.reduce((sum, c) => sum + c.nivel_4, 0);
-    const nivel_5 = celulas.reduce((sum, c) => sum + c.nivel_5, 0);
-    const nivel_atingido = celulas.reduce((max, c) => Math.max(max, c.nivel_atingido), 0);
+    // Os alvos (nivel_1..5) e o nivel atingido ja saem IGUAIS em todas as celulas da mesma
+    // vendedora (unificados no loop acima, pela loja principal ou pela meta volante) -
+    // somar contaria o mesmo alvo em dobro/triplo pra quem vendeu em varias lojas, entao
+    // so pegamos de uma celula (a primeira, todas tem o mesmo valor).
+    const nivel_1 = celulas[0].nivel_1;
+    const nivel_2 = celulas[0].nivel_2;
+    const nivel_3 = celulas[0].nivel_3;
+    const nivel_4 = celulas[0].nivel_4;
+    const nivel_5 = celulas[0].nivel_5;
+    const nivel_atingido = celulas[0].nivel_atingido;
 
     return {
       seller_code,

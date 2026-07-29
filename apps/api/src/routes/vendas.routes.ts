@@ -342,6 +342,38 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
   }
 });
 
+// Faturamento de cada vendedor somado em todas as filiais nos 3 meses anteriores ao mes
+// de referencia - usado pra pesar a distribuicao "por historico de vendas" entre
+// vendedoras volante (sem loja fixa) no cadastro de metas.
+router.get('/vendedores-historico/:ano/:mes', async (req: Request, res: Response) => {
+  try {
+    const ano = parseInt(req.params.ano);
+    const mes = parseInt(req.params.mes);
+
+    const vendedores = await vendasService.getFaturamentoHistoricoVendedores(ano, mes);
+
+    res.json({ vendedores });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Faturamento de todas as filiais nos 3 meses anteriores ao mes de referencia (mesma
+// janela de /vendedores-por-filial) - usado pra pesar a distribuicao "por historico de
+// vendas" entre lojas no cadastro de metas.
+router.get('/historico-lojas/:ano/:mes', async (req: Request, res: Response) => {
+  try {
+    const ano = parseInt(req.params.ano);
+    const mes = parseInt(req.params.mes);
+
+    const lojas = await vendasService.getFaturamentoHistoricoLojas(ano, mes);
+
+    res.json({ lojas });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // Comparativo ano
 router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response) => {
   try {

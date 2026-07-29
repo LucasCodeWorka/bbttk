@@ -9,6 +9,10 @@ function decimalToNumber(value: Decimal | number | null): number {
   return Number(value);
 }
 
+function round(value: number, decimals: number = 2): number {
+  return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
 // Buscar níveis de meta
 export async function getMetaNiveis() {
   const niveis = await prisma.$queryRaw<Array<{
@@ -250,4 +254,163 @@ export async function deleteDistribution(id: number) {
   return prisma.metaDistribution.delete({
     where: { id },
   });
+}
+
+export interface ComissaoOverride {
+  nivel1?: number | null;
+  nivel2?: number | null;
+  nivel3?: number | null;
+  nivel4?: number | null;
+  nivel5?: number | null;
+}
+
+interface LinhaDistribuicao {
+  branchCode: number;
+  valor: number;
+  comissaoOverride?: ComissaoOverride | null;
+  vendedores: Array<{
+    sellerCode: number;
+    valor: number;
+    comissaoOverride?: ComissaoOverride | null;
+    isGerente?: boolean;
+  }>;
+}
+
+function calcularNiveis(valor: number) {
+  return {
+    nivel1: valor * NIVEL_PERCENTUAIS[1],
+    nivel2: valor * NIVEL_PERCENTUAIS[2],
+    nivel3: valor * NIVEL_PERCENTUAIS[3],
+    nivel4: valor * NIVEL_PERCENTUAIS[4],
+    nivel5: valor * NIVEL_PERCENTUAIS[5],
+  };
+}
+
+// Salva o cadastro/distribuicao de metas inteiro numa chamada so - modal unico
+// "Cadastrar Metas" do frontend ja manda os valores em R$ de cada loja e de cada
+// vendedor dentro dela, ja calculados e conferidos no client (distribuicao
+// igual/historico/manual, arredondamento com soma exata). Aqui so valida de novo (defesa
+// em profundidade - nunca confiar so no client) e grava: 1 linha de Meta por loja
+// (seller_code=null, é o alvo da loja inteira lido pelo Comparativo do Dashboard) + 1
+// linha de Meta por vendedor dentro dela, mais o registro de auditoria
+// MetaDistribution/DistributionItem (mesmo padrao de createDistribution).
+export async function salvarDistribuicaoCompleta(data: {
+  ano: number;
+  mes: number;
+  totalValue: number;
+  distributionType: 'manual' | 'igual' | 'proporcional';
+  lojas: LinhaDistribuicao[];
+  createdById?: number;
+}) {
+  if (!(data.totalValue > 0)) {
+    throw new Error('Valor total da meta precisa ser maior que zero');
+  }
+  if (data.lojas.length === 0) {
+    throw new Error('Selecione ao menos uma loja');
+  }
+
+  const TOLERANCIA = 0.02;
+  const somaLojas = data.lojas.reduce((s, l) => s + l.valor, 0);
+  if (Math.abs(somaLojas - data.totalValue) > TOLERANCIA) {
+    throw new Error(
+      `A soma das metas das lojas (${somaLojas.toFixed(2)}) nao bate com o valor total da meta (${data.totalValue.toFixed(2)})`
+    );
+  }
+
+  for (const loja of data.lojas) {
+    if (loja.valor < 0) {
+      throw new Error(`Valor da loja ${loja.branchCode} nao pode ser negativo`);
+    }
+    // A gerente da loja (no maximo uma por loja) fica de fora dessa soma de proposito -
+    // a meta dela e o valor CHEIO da loja (reflete o papel de lideranca), nao uma fatia,
+    // entao nao teria como a soma com as demais vendedoras bater com loja.valor.
+    const vendedoresRegulares = loja.vendedores.filter((v) => !v.isGerente);
+    if (vendedoresRegulares.length > 0) {
+      const somaVendedores = vendedoresRegulares.reduce((s, v) => s + v.valor, 0);
+      if (Math.abs(somaVendedores - loja.valor) > TOLERANCIA) {
+        throw new Error(
+          `A soma dos vendedores da loja ${loja.branchCode} (${somaVendedores.toFixed(2)}) nao bate com a meta da loja (${loja.valor.toFixed(2)})`
+        );
+      }
+    }
+    for (const v of loja.vendedores) {
+      if (v.valor < 0) {
+        throw new Error(`Valor do vendedor ${v.sellerCode} na loja ${loja.branchCode} nao pode ser negativo`);
+      }
+    }
+  }
+
+  const distribution = await prisma.metaDistribution.create({
+    data: {
+      ano: data.ano,
+      mes: data.mes,
+      totalValue: data.totalValue,
+      distributionType: data.distributionType,
+      createdById: data.createdById,
+    },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    async function upsertMeta(
+      branchCode: number,
+      sellerCode: number | null,
+      valor: number,
+      override: ComissaoOverride | null | undefined
+    ) {
+      const niveis = calcularNiveis(valor);
+      await tx.$executeRaw`
+        INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
+          comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
+        VALUES (${data.ano}, ${data.mes}, ${branchCode}, ${sellerCode},
+                ${niveis.nivel1}, ${niveis.nivel2}, ${niveis.nivel3}, ${niveis.nivel4}, ${niveis.nivel5},
+                ${override?.nivel1 ?? null}, ${override?.nivel2 ?? null}, ${override?.nivel3 ?? null},
+                ${override?.nivel4 ?? null}, ${override?.nivel5 ?? null})
+        ON CONFLICT (ano, mes, branch_code, seller_code) DO UPDATE SET
+          nivel_1 = EXCLUDED.nivel_1, nivel_2 = EXCLUDED.nivel_2, nivel_3 = EXCLUDED.nivel_3,
+          nivel_4 = EXCLUDED.nivel_4, nivel_5 = EXCLUDED.nivel_5,
+          comissao_nivel_1 = EXCLUDED.comissao_nivel_1, comissao_nivel_2 = EXCLUDED.comissao_nivel_2,
+          comissao_nivel_3 = EXCLUDED.comissao_nivel_3, comissao_nivel_4 = EXCLUDED.comissao_nivel_4,
+          comissao_nivel_5 = EXCLUDED.comissao_nivel_5, updated_at = NOW()
+      `;
+      return niveis;
+    }
+
+    for (const loja of data.lojas) {
+      const niveisLoja = await upsertMeta(loja.branchCode, null, loja.valor, loja.comissaoOverride);
+      await tx.distributionItem.create({
+        data: {
+          distributionId: distribution.id,
+          branchCode: loja.branchCode,
+          sellerCode: null,
+          percentage: data.totalValue > 0 ? round((loja.valor / data.totalValue) * 100, 2) : 0,
+          valorCalculado: loja.valor,
+          nivel1: niveisLoja.nivel1,
+          nivel2: niveisLoja.nivel2,
+          nivel3: niveisLoja.nivel3,
+          nivel4: niveisLoja.nivel4,
+          nivel5: niveisLoja.nivel5,
+        },
+      });
+
+      for (const v of loja.vendedores) {
+        const niveisVendedor = await upsertMeta(loja.branchCode, v.sellerCode, v.valor, v.comissaoOverride);
+        await tx.distributionItem.create({
+          data: {
+            distributionId: distribution.id,
+            branchCode: loja.branchCode,
+            sellerCode: v.sellerCode,
+            percentage: loja.valor > 0 ? round((v.valor / loja.valor) * 100, 2) : 0,
+            valorCalculado: v.valor,
+            nivel1: niveisVendedor.nivel1,
+            nivel2: niveisVendedor.nivel2,
+            nivel3: niveisVendedor.nivel3,
+            nivel4: niveisVendedor.nivel4,
+            nivel5: niveisVendedor.nivel5,
+          },
+        });
+      }
+    }
+  });
+
+  return distribution;
 }
