@@ -32,7 +32,7 @@ export function Modal({ isOpen, onClose, title, children, className, size = 'md'
     lg: 'max-w-3xl',
     xl: 'max-w-5xl',
     '2xl': 'max-w-7xl',
-    full: 'max-w-[95vw]',
+    full: 'max-w-[88vw]',
   };
 
   return (

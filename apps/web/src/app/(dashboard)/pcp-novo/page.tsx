@@ -10,6 +10,7 @@ import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSele
 import { useAuth } from '@/contexts/AuthContext';
 import {
   EstoqueSemGiroResponse,
+  EstoqueSemGiroSku,
   PcpClassificacaoDimensao,
   PcpLojaFiltro,
   pcpApi,
@@ -106,6 +107,34 @@ function formatDateTime(value: string | null) {
   });
 }
 
+function ThSortPcp({
+  label,
+  sortKeyName,
+  sortKey,
+  sortDir,
+  onSort,
+  align = 'left',
+  className,
+  title,
+}: {
+  label: string;
+  sortKeyName: string;
+  sortKey: string | null;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: string) => void;
+  align?: 'left' | 'center' | 'right';
+  className?: string;
+  title?: string;
+}) {
+  const active = sortKey === sortKeyName;
+  return (
+    <TableCell isHeader align={align} className={className} title={title} onClick={() => onSort(sortKeyName)}>
+      {label}
+      {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+    </TableCell>
+  );
+}
+
 function faixaDiasLabel(dias: number) {
   if (dias <= 30) return 'Ate 30 dias';
   if (dias <= 60) return '31 a 60 dias';
@@ -136,6 +165,8 @@ export default function PcpNovoPage() {
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [data, setData] = useState<EstoqueSemGiroResponse | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const carregarDados = useCallback(async () => {
     if (!token) return;
@@ -192,6 +223,45 @@ export default function PcpNovoPage() {
   const resumoSelecionado = data?.resumo.find((item) => item.dias === diasSelecionado);
   const totalColunasTabela = 6 + Math.max(lojasTabela.length, 1);
   const lojaColumnWidth = lojasTabela.length > 0 ? 49 / lojasTabela.length : 49;
+
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  function getSortValue(item: EstoqueSemGiroSku, key: string): number | string {
+    if (key === 'descricao') return item.descricao || '';
+    if (key === 'grade') return item.grade || '';
+    if (key === 'cor_de_para') return item.cor_de_para || '';
+    if (key === 'dias_sem_giro') return item.dias_sem_giro;
+    if (key === 'quantidade') return item.quantidade;
+    if (key === 'valor') return item.valor;
+    if (key.startsWith('loja-')) {
+      const branchCode = Number(key.slice('loja-'.length));
+      return item.lojas.find((loja) => loja.branch_code === branchCode)?.quantidade || 0;
+    }
+    return 0;
+  }
+
+  const skusOrdenados = useMemo(() => {
+    const base = data?.top_skus || [];
+    if (!sortKey) return base;
+    const arr = [...base];
+    arr.sort((a, b) => {
+      const va = getSortValue(a, sortKey);
+      const vb = getSortValue(b, sortKey);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        return String(va).localeCompare(String(vb)) * (sortDir === 'asc' ? 1 : -1);
+      }
+      return (va - vb) * (sortDir === 'asc' ? 1 : -1);
+    });
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, sortKey, sortDir]);
 
   const top10Totais = useMemo(() => {
     if (!data) return null;
@@ -400,12 +470,12 @@ export default function PcpNovoPage() {
           </colgroup>
           <TableHead className="sticky top-0 z-10">
             <TableRow>
-              <TableCell isHeader className="!px-1.5 !py-2">Descricao completa</TableCell>
-              <TableCell isHeader className="!px-1.5 !py-2">Grade</TableCell>
-              <TableCell isHeader className="!px-1.5 !py-2">Cor de-para</TableCell>
-              <TableCell isHeader align="right" className="!px-1.5 !py-2">Sem giro</TableCell>
-              <TableCell isHeader align="right" className="!px-1.5 !py-2">Qtd</TableCell>
-              <TableCell isHeader align="right" className="!px-1.5 !py-2">Valor</TableCell>
+              <ThSortPcp label="Descricao completa" sortKeyName="descricao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
+              <ThSortPcp label="Grade" sortKeyName="grade" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
+              <ThSortPcp label="Cor de-para" sortKeyName="cor_de_para" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
+              <ThSortPcp label="Sem giro" sortKeyName="dias_sem_giro" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
+              <ThSortPcp label="Qtd" sortKeyName="quantidade" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
+              <ThSortPcp label="Valor" sortKeyName="valor" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
               <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-1.5 !py-2">
                 Distribuicao por loja (pc)
               </TableCell>
@@ -420,9 +490,17 @@ export default function PcpNovoPage() {
               {lojasTabela.length === 0 ? (
                 <TableCell isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2">-</TableCell>
               ) : lojasTabela.map((loja) => (
-                <TableCell key={loja.branch_code} isHeader align="center" className="bg-blue-50 text-blue-800 !px-0.5 !py-2 whitespace-nowrap" title={loja.branch_name}>
-                  {shortLojaName(loja.branch_name, loja.branch_code)}
-                </TableCell>
+                <ThSortPcp
+                  key={loja.branch_code}
+                  label={shortLojaName(loja.branch_name, loja.branch_code)}
+                  sortKeyName={`loja-${loja.branch_code}`}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                  align="center"
+                  title={loja.branch_name}
+                  className="bg-blue-50 text-blue-800 !px-0.5 !py-2 whitespace-nowrap"
+                />
               ))}
             </TableRow>
           </TableHead>
@@ -439,7 +517,7 @@ export default function PcpNovoPage() {
                   Nenhum SKU encontrado para os filtros selecionados
                 </TableCell>
               </TableRow>
-            ) : data?.top_skus.map((item) => {
+            ) : skusOrdenados.map((item) => {
               const lojaMap = new Map(item.lojas.map((loja) => [loja.branch_code, loja.quantidade]));
               return (
                 <TableRow key={item.sku}>

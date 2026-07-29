@@ -22,6 +22,13 @@ export const FILIAIS: Record<number, string> = {
 // Filiais que não são lojas de venda - hoje nenhuma (Fabrica/2 passou a vender como Atacado)
 export const EXCLUDED_BRANCH_CODES = new Set<number>([]);
 
+// seller_code que não representam uma vendedora de verdade - buckets genéricos do TOTVS
+// pra venda sem vendedor especifico atribuido (1 = sem cadastro, "not_found" na API; 50 =
+// "GERAL"; 51 = "GERAL ONLINE", ja inativo). Excluidos de qualquer relatorio por
+// vendedor (nao afeta faturamento de loja - só a atribuição por pessoa) pra não aparecer
+// como candidato a meta/comissão nem poluir ranking de vendedores.
+export const EXCLUDED_SELLER_CODES = new Set<number>([1, 50, 51]);
+
 // branch_code sintetico (nao existe na tabela `branches` do TOTVS) usado so na tabela
 // `metas` pra representar vendedoras "volante" - sem loja fixa, meta calculada sobre o
 // faturamento somado de TODAS as lojas onde ela vendeu no mes. Nao entra em FILIAIS de

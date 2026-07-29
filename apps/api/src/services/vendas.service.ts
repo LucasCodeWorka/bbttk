@@ -1,10 +1,11 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
-import { FILIAIS, EXCLUDED_BRANCH_CODES } from '../config/constants.js';
+import { FILIAIS, EXCLUDED_BRANCH_CODES, EXCLUDED_SELLER_CODES } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as metasService from './metas.service.js';
 
 const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
+const EXCLUDED_SELLER_LIST = [...EXCLUDED_SELLER_CODES];
 
 // Classificacao de operacao vem do cache local (classificacao_operacoes, sincronizado
 // direto de general/v2/operations na API do TOTVS) em vez de lista de operation_code
@@ -56,6 +57,9 @@ const IS_SALE = IS_VENDA;
 const STORE_BRANCH_FILTER = EXCLUDED_BRANCH_LIST.length > 0
   ? Prisma.sql`t.branch_code NOT IN (${Prisma.join(EXCLUDED_BRANCH_LIST)})`
   : Prisma.sql`TRUE`;
+// Filtro reutilizado nos relatorios POR VENDEDOR (nao usado nos totais por loja) - tira os
+// seller_code que sao bucket generico do TOTVS, ver EXCLUDED_SELLER_CODES.
+const SELLER_FILTER = Prisma.sql`ti.seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST)})`;
 
 interface VendasFilial {
   branch_code: number;
@@ -613,7 +617,7 @@ export async function getVendasVendedor(
     ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
-      AND ti.seller_code != 1
+      AND ${SELLER_FILTER}
       AND ti.seller_code IS NOT NULL
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -668,7 +672,7 @@ export async function getVendasVendedorPorFilial(
     ${OPERACAO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
-      AND ti.seller_code != 1
+      AND ${SELLER_FILTER}
       AND ti.seller_code IS NOT NULL
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -703,7 +707,7 @@ export async function getVendedoresMap(): Promise<Map<number, string>> {
   const rows = await prisma.dim_vendedor.findMany({ select: { seller_code: true, seller_name: true } });
   const map = new Map<number, string>();
   for (const r of rows) {
-    if (r.seller_name) map.set(r.seller_code, r.seller_name);
+    if (r.seller_name && !EXCLUDED_SELLER_CODES.has(r.seller_code)) map.set(r.seller_code, r.seller_name);
   }
   return map;
 }

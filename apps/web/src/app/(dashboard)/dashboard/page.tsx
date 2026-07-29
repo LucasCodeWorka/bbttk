@@ -69,7 +69,7 @@ export default function DashboardPage() {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
-  const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'hora' | 'semana'>('dia');
+  const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'semana'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
   const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
   const [comparativoScrollWidth, setComparativoScrollWidth] = useState(0);
@@ -107,13 +107,11 @@ export default function DashboardPage() {
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
         vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro),
-        graficoVendasModo === 'hora'
-          ? vendasApi.getHorarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-          : graficoVendasModo === 'semana'
-            ? vendasApi.getDiaSemana(dataInicio, dataFim, branchCodes, produtoFiltro)
-            : granularidade === 'diario'
-              ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-              : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
+        graficoVendasModo === 'semana'
+          ? vendasApi.getDiaSemana(dataInicio, dataFim, branchCodes, produtoFiltro)
+          : granularidade === 'diario'
+            ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
+            : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
         vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
@@ -559,16 +557,13 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>
-              {graficoVendasModo === 'hora'
-                ? 'Media por Hora'
-                : graficoVendasModo === 'semana'
-                  ? 'Media por Dia da Semana'
-                  : 'Vendas Diarias'}
+              {graficoVendasModo === 'semana'
+                ? 'Media por Dia da Semana'
+                : 'Vendas Diarias'}
             </CardTitle>
-            <div className="inline-grid grid-cols-3 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+            <div className="inline-grid grid-cols-2 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
               {[
                 { value: 'dia', label: 'DIA' },
-                { value: 'hora', label: 'HORA' },
                 { value: 'semana', label: 'SEMANA' },
               ].map((modo) => {
                 const ativo = graficoVendasModo === modo.value;
@@ -576,7 +571,7 @@ export default function DashboardPage() {
                   <button
                     key={modo.value}
                     type="button"
-                    onClick={() => setGraficoVendasModo(modo.value as 'dia' | 'hora' | 'semana')}
+                    onClick={() => setGraficoVendasModo(modo.value as 'dia' | 'semana')}
                     className={ativo
                       ? 'min-w-20 bg-[var(--bbtk-red)] px-3 py-2 text-xs font-bold text-white'
                       : 'min-w-20 px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50'}
@@ -590,7 +585,7 @@ export default function DashboardPage() {
           <LoadingOverlay active={isLoading}>
             <LineChart
               data={vendasDiarias?.dados || []}
-              granularidade={graficoVendasModo === 'hora' || graficoVendasModo === 'semana' ? 'horario' : mesUnico ? 'diario' : 'mensal'}
+              granularidade={graficoVendasModo === 'semana' ? 'horario' : mesUnico ? 'diario' : 'mensal'}
             />
           </LoadingOverlay>
         </Card>
