@@ -212,25 +212,31 @@ export async function updateCurvaAbcConfig(input: UpdateCurvaAbcConfigInput, use
   if (!Number.isInteger(input.curvaALimitePercent)) {
     throw new Error('curvaALimitePercent precisa ser um numero inteiro');
   }
+  // curvaB/CLimitePercent sao Decimal no schema - a API GET ja devolve elas como string
+  // (Decimal nao tem representacao JSON nativa), entao o mesmo objeto que veio do GET e
+  // reenviado sem edicao no PUT chega aqui como string, nao number. Number(valor) aceita
+  // os dois casos sem exigir que o frontend normalize antes.
+  const curvaBLimitePercent = Number(input.curvaBLimitePercent);
+  const curvaCLimitePercent = Number(input.curvaCLimitePercent);
   const limites = [
     ['curvaALimitePercent', input.curvaALimitePercent],
-    ['curvaBLimitePercent', input.curvaBLimitePercent],
-    ['curvaCLimitePercent', input.curvaCLimitePercent],
+    ['curvaBLimitePercent', curvaBLimitePercent],
+    ['curvaCLimitePercent', curvaCLimitePercent],
   ] as const;
   for (const [nome, valor] of limites) {
-    if (typeof valor !== 'number' || valor <= 0 || valor >= 100) {
+    if (!Number.isFinite(valor) || valor <= 0 || valor >= 100) {
       throw new Error(`${nome} precisa ser um numero entre 0 e 100`);
     }
   }
-  if (!(input.curvaALimitePercent < input.curvaBLimitePercent && input.curvaBLimitePercent < input.curvaCLimitePercent)) {
+  if (!(input.curvaALimitePercent < curvaBLimitePercent && curvaBLimitePercent < curvaCLimitePercent)) {
     throw new Error('Os limites precisam estar em ordem crescente: A < B < C');
   }
 
   const dados = {
     giroDias: input.giroDias,
     curvaALimitePercent: input.curvaALimitePercent,
-    curvaBLimitePercent: input.curvaBLimitePercent,
-    curvaCLimitePercent: input.curvaCLimitePercent,
+    curvaBLimitePercent,
+    curvaCLimitePercent,
   };
 
   return prisma.pcpCurvaAbcConfig.upsert({

@@ -14,7 +14,9 @@ import {
   curvaAbcApi,
   relatorioBaseApi,
   CurvaAbcResumoResponse,
+  CurvaAbcResumoSkuResponse,
   ReferenciaAbc,
+  SkuAbc,
   CurvaLetra,
   CurvaAbcSkusResponse,
   PcpClassificacaoDimensao,
@@ -43,13 +45,86 @@ function TrendArrow({ tendencia }: { tendencia: 'up' | 'down' | 'flat' }) {
   return <span className="text-gray-400">-</span>;
 }
 
-function CurvaCard({ resumo }: { resumo: CurvaAbcResumoResponse['curvas'][number] }) {
+// Visao "por Referencia" e visao "por SKU" (ref-cor-tam) usam a mesma regra de
+// curva/rank, so que a granularidade da linha muda - normaliza os dois formatos de
+// resposta do backend num shape so pra reaproveitar tabela e cards sem duplicar.
+interface ItemCurva {
+  key: string;
+  labelPrincipal: string;
+  labelSecundaria: string;
+  curva: CurvaLetra;
+  rankValor: number;
+  rankQtd: number;
+  qtdVendida: number;
+  mediaMensal: number;
+  valorReais: number;
+  valorMedioMensal: number;
+  representatividadeValor: number;
+  representatividadeAcumulada: number;
+  totalSkus: number | null;
+  mediaPorSku: number | null;
+  tendenciaMediaSku: 'up' | 'down' | 'flat' | null;
+}
+
+function referenciaParaItem(r: ReferenciaAbc): ItemCurva {
+  return {
+    key: r.referenceCode,
+    labelPrincipal: r.referenceCode,
+    labelSecundaria: r.referenceName,
+    curva: r.curva,
+    rankValor: r.rankValor,
+    rankQtd: r.rankQtd,
+    qtdVendida: r.qtdVendida,
+    mediaMensal: r.mediaMensal,
+    valorReais: r.valorReais,
+    valorMedioMensal: r.valorMedioMensal,
+    representatividadeValor: r.representatividadeValor,
+    representatividadeAcumulada: r.representatividadeAcumulada,
+    totalSkus: r.totalSkus,
+    mediaPorSku: r.mediaPorSku,
+    tendenciaMediaSku: r.tendenciaMediaSku,
+  };
+}
+
+function skuParaItem(s: SkuAbc): ItemCurva {
+  return {
+    key: s.sku,
+    labelPrincipal: s.refCorTam,
+    labelSecundaria: s.sku,
+    curva: s.curva,
+    rankValor: s.rankValor,
+    rankQtd: s.rankQtd,
+    qtdVendida: s.qtdVendida,
+    mediaMensal: s.mediaMensal,
+    valorReais: s.valorReais,
+    valorMedioMensal: s.valorMedioMensal,
+    representatividadeValor: s.representatividadeValor,
+    representatividadeAcumulada: s.representatividadeAcumulada,
+    totalSkus: null,
+    mediaPorSku: null,
+    tendenciaMediaSku: null,
+  };
+}
+
+interface CurvaResumoItem {
+  curva: CurvaLetra;
+  totalContagem: number;
+  totalContagemLabel: string;
+  quantidade: number;
+  valorReais: number;
+  totalSkus: number | null;
+  mediaMensal: number;
+  percentDoTotal: number;
+  ultimo: ItemCurva | null;
+}
+
+function CurvaCard({ resumo }: { resumo: CurvaResumoItem }) {
   const style = CURVA_STYLE[resumo.curva];
   return (
     <Card className={cn('border-l-4', style.border, style.bg)}>
       <div className="flex items-center justify-between mb-2">
         <h3 className={cn('font-bold', style.text)}>Curva {resumo.curva}</h3>
-        <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full', style.badge)}>{resumo.totalReferencias} refs</span>
+        <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full', style.badge)}>{resumo.totalContagem} {resumo.totalContagemLabel}</span>
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
         <div>
@@ -60,10 +135,12 @@ function CurvaCard({ resumo }: { resumo: CurvaAbcResumoResponse['curvas'][number
           <p className="text-gray-400 uppercase tracking-wide">Quantidade</p>
           <p className="font-semibold text-gray-800">{formatNumber(resumo.quantidade)}</p>
         </div>
-        <div>
-          <p className="text-gray-400 uppercase tracking-wide">Total SKUs</p>
-          <p className="font-semibold text-gray-800">{formatNumber(resumo.totalSkus)}</p>
-        </div>
+        {resumo.totalSkus !== null && (
+          <div>
+            <p className="text-gray-400 uppercase tracking-wide">Total SKUs</p>
+            <p className="font-semibold text-gray-800">{formatNumber(resumo.totalSkus)}</p>
+          </div>
+        )}
         <div>
           <p className="text-gray-400 uppercase tracking-wide">Media mensal</p>
           <p className="font-semibold text-gray-800">{formatNumber(resumo.mediaMensal)}</p>
@@ -74,25 +151,25 @@ function CurvaCard({ resumo }: { resumo: CurvaAbcResumoResponse['curvas'][number
   );
 }
 
-function UltimaRefCard({ resumo }: { resumo: CurvaAbcResumoResponse['curvas'][number] }) {
+function UltimaRefCard({ resumo }: { resumo: CurvaResumoItem }) {
   const style = CURVA_STYLE[resumo.curva];
-  const ref = resumo.ultimaReferencia;
+  const item = resumo.ultimo;
   return (
     <Card className={cn('border-l-4', style.border)}>
-      <p className="text-xs text-gray-400 uppercase tracking-wide">Ultima ref. Curva {resumo.curva}</p>
-      {ref ? (
+      <p className="text-xs text-gray-400 uppercase tracking-wide">Ultimo item Curva {resumo.curva}</p>
+      {item ? (
         <>
-          <p className={cn('text-lg font-bold mt-1', style.text)}>{ref.referenceCode}</p>
-          <p className="text-xs text-gray-500 truncate" title={ref.referenceName}>{ref.referenceName}</p>
+          <p className={cn('text-lg font-bold mt-1', style.text)}>{item.labelPrincipal}</p>
+          <p className="text-xs text-gray-500 truncate" title={item.labelSecundaria}>{item.labelSecundaria}</p>
           <p className="text-xs text-gray-400 mt-1">
-            {formatMoney(ref.valorMedioMensal)} media mensal | {formatNumber(ref.qtdVendida)} unidades
+            {formatMoney(item.valorMedioMensal)} media mensal | {formatNumber(item.qtdVendida)} unidades
           </p>
           <p className="text-xs text-gray-400">
-            Rank Valor #{ref.rankValor} | Acum. {ref.representatividadeAcumulada.toFixed(2)}%
+            Rank Valor #{item.rankValor} | Acum. {item.representatividadeAcumulada.toFixed(2)}%
           </p>
         </>
       ) : (
-        <p className="text-sm text-gray-400 mt-2">Sem referencias nessa curva</p>
+        <p className="text-sm text-gray-400 mt-2">Sem itens nessa curva</p>
       )}
     </Card>
   );
@@ -104,6 +181,8 @@ export default function PcpCurvaAbcPage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<CurvaAbcResumoResponse | null>(null);
+  const [dataSku, setDataSku] = useState<CurvaAbcResumoSkuResponse | null>(null);
+  const [visao, setVisao] = useState<'referencia' | 'sku'>('referencia');
 
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
@@ -128,13 +207,17 @@ export default function PcpCurvaAbcPage() {
     if (!token) return;
     setIsLoading(true);
     try {
-      const response = await curvaAbcApi.getResumo(token, {
+      const filtro = {
         categoria: produtoFiltro.categoria,
         linha: produtoFiltro.linha,
         genero: produtoFiltro.genero,
         status: produtoFiltro.status,
-      });
-      setData(response);
+      };
+      if (visao === 'referencia') {
+        setData(await curvaAbcApi.getResumo(token, filtro));
+      } else {
+        setDataSku(await curvaAbcApi.getResumoPorSku(token, filtro));
+      }
     } catch (error) {
       showToast('Erro ao carregar Curva ABCD', 'error');
       console.error(error);
@@ -142,22 +225,28 @@ export default function PcpCurvaAbcPage() {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, produtoFiltro]);
+  }, [token, produtoFiltro, visao]);
 
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
 
+  // "Media / SKU" so existe na granularidade de referencia (media entre os SKUs dela) -
+  // no visao por SKU cada linha ja e um SKU so, entao a ordenacao nao se aplica.
+  useEffect(() => {
+    if (visao === 'sku' && ordenarPor === 'mediaPorSku') setOrdenarPor('rankValor');
+  }, [visao, ordenarPor]);
+
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
   }
 
-  async function abrirSkus(ref: ReferenciaAbc) {
+  async function abrirSkus(referenceCode: string, referenceName: string) {
     if (!token) return;
-    setSkusModal({ referencia: ref.referenceCode, nome: ref.referenceName });
+    setSkusModal({ referencia: referenceCode, nome: referenceName });
     setSkusLoading(true);
     try {
-      const res = await curvaAbcApi.getSkus(token, { referencia: ref.referenceCode, page: 1, pageSize: 200 });
+      const res = await curvaAbcApi.getSkus(token, { referencia: referenceCode, page: 1, pageSize: 200 });
       setSkusData(res);
     } catch (error) {
       showToast('Erro ao carregar SKUs da referencia', 'error');
@@ -167,18 +256,51 @@ export default function PcpCurvaAbcPage() {
     }
   }
 
-  const referenciasFiltradas = useMemo(() => {
-    let lista = data?.referencias || [];
+  const curvasNormalizadas: CurvaResumoItem[] = useMemo(() => {
+    if (visao === 'referencia') {
+      return (data?.curvas || []).map((c) => ({
+        curva: c.curva,
+        totalContagem: c.totalReferencias,
+        totalContagemLabel: 'refs',
+        quantidade: c.quantidade,
+        valorReais: c.valorReais,
+        totalSkus: c.totalSkus,
+        mediaMensal: c.mediaMensal,
+        percentDoTotal: c.percentDoTotal,
+        ultimo: c.ultimaReferencia ? referenciaParaItem(c.ultimaReferencia) : null,
+      }));
+    }
+    return (dataSku?.curvas || []).map((c) => ({
+      curva: c.curva,
+      totalContagem: c.totalItens,
+      totalContagemLabel: 'SKUs',
+      quantidade: c.quantidade,
+      valorReais: c.valorReais,
+      totalSkus: null,
+      mediaMensal: c.mediaMensal,
+      percentDoTotal: c.percentDoTotal,
+      ultimo: c.ultimoItem ? skuParaItem(c.ultimoItem) : null,
+    }));
+  }, [visao, data, dataSku]);
+
+  const itensFiltrados = useMemo(() => {
+    const base: ItemCurva[] = visao === 'referencia'
+      ? (data?.referencias || []).map(referenciaParaItem)
+      : (dataSku?.itens || []).map(skuParaItem);
+
+    let lista = base;
     if (curvaSelecionada !== 'todas') lista = lista.filter((r) => r.curva === curvaSelecionada);
     if (busca.trim()) {
       const termo = busca.trim().toLowerCase();
-      lista = lista.filter((r) => r.referenceCode.toLowerCase().includes(termo) || r.referenceName.toLowerCase().includes(termo));
+      lista = lista.filter((r) => r.labelPrincipal.toLowerCase().includes(termo) || r.labelSecundaria.toLowerCase().includes(termo));
     }
     return [...lista].sort((a, b) => {
-      if (ordenarPor === 'mediaPorSku' || ordenarPor === 'qtdVendida' || ordenarPor === 'representatividadeValor' || ordenarPor === 'valorMedioMensal') return b[ordenarPor] - a[ordenarPor];
-      return a[ordenarPor] - b[ordenarPor];
+      const va = a[ordenarPor] ?? 0;
+      const vb = b[ordenarPor] ?? 0;
+      if (ordenarPor === 'mediaPorSku' || ordenarPor === 'qtdVendida' || ordenarPor === 'representatividadeValor' || ordenarPor === 'valorMedioMensal') return vb - va;
+      return va - vb;
     });
-  }, [data, curvaSelecionada, busca, ordenarPor]);
+  }, [visao, data, dataSku, curvaSelecionada, busca, ordenarPor]);
 
   return (
     <div className="space-y-6">
@@ -187,7 +309,7 @@ export default function PcpCurvaAbcPage() {
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">PCP</p>
           <h1 className="text-2xl font-bold text-gray-900">Curva ABCD</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Referencias classificadas pela media mensal de valor dos ultimos {data?.config.mesesFechados ?? 3} meses fechados
+            {visao === 'referencia' ? 'Referencias' : 'SKUs (referencia-cor-tamanho)'} classificados pela media mensal de valor dos ultimos {(visao === 'referencia' ? data?.config.mesesFechados : dataSku?.config.mesesFechados) ?? 3} meses fechados
           </p>
         </div>
         {user?.role === 'admin' && (
@@ -197,57 +319,79 @@ export default function PcpCurvaAbcPage() {
         )}
       </div>
 
-      {data && (
+      {(visao === 'referencia' ? data : dataSku) && (
         <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
           <p className="text-sm font-medium text-gray-800">Regras de classificacao</p>
           <ul className="text-xs text-gray-600 mt-1 space-y-0.5">
-            <li><strong>Base:</strong> media mensal de valor dos ultimos {data.config.mesesFechados} meses fechados.</li>
-            <li><strong>Curva A:</strong> referencias ate {data.config.curvaALimitePercent}% do valor medio mensal acumulado.</li>
-            <li><strong>Curva B:</strong> referencias acima de {data.config.curvaALimitePercent}% e ate {data.config.curvaBLimitePercent}% do valor acumulado.</li>
-            <li><strong>Curva C:</strong> referencias acima de {data.config.curvaBLimitePercent}% e ate {data.config.curvaCLimitePercent}% do valor acumulado.</li>
-            <li><strong>Curva D:</strong> referencias restantes, acima de {data.config.curvaCLimitePercent}% do valor acumulado.</li>
+            <li><strong>Base:</strong> media mensal de valor dos ultimos {(visao === 'referencia' ? data?.config.mesesFechados : dataSku?.config.mesesFechados)} meses fechados.</li>
+            <li><strong>Curva A:</strong> ate {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% do valor medio mensal acumulado.</li>
+            <li><strong>Curva B:</strong> acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% e ate {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% do valor acumulado.</li>
+            <li><strong>Curva C:</strong> acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% e ate {(visao === 'referencia' ? data : dataSku)?.config.curvaCLimitePercent}% do valor acumulado.</li>
+            <li><strong>Curva D:</strong> restante, acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaCLimitePercent}% do valor acumulado.</li>
           </ul>
-          <p className="text-xs text-gray-400 mt-2">{data.totalAnalisadas} referencias analisadas (com venda no periodo).</p>
+          <p className="text-xs text-gray-400 mt-2">
+            {visao === 'referencia' ? data?.totalAnalisadas : dataSku?.totalAnalisadas} {visao === 'referencia' ? 'referencias' : 'SKUs'} analisados (com venda no periodo).
+          </p>
         </Card>
       )}
 
       <div>
         <h2 className="text-sm font-semibold text-gray-600 mb-2">Resumo por curva</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {isLoading || !data
+          {isLoading || curvasNormalizadas.length === 0
             ? [1, 2, 3, 4].map((i) => <Card key={i} className="h-40 animate-pulse bg-gray-50"><span /></Card>)
-            : data.curvas.map((c) => <CurvaCard key={c.curva} resumo={c} />)}
+            : curvasNormalizadas.map((c) => <CurvaCard key={c.curva} resumo={c} />)}
         </div>
       </div>
 
       <div>
-        <h2 className="text-sm font-semibold text-gray-600 mb-2">Ultima referencia por curva</h2>
+        <h2 className="text-sm font-semibold text-gray-600 mb-2">Ultimo item por curva</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {isLoading || !data
+          {isLoading || curvasNormalizadas.length === 0
             ? [1, 2, 3, 4].map((i) => <Card key={i} className="h-24 animate-pulse bg-gray-50"><span /></Card>)
-            : data.curvas.map((c) => <UltimaRefCard key={c.curva} resumo={c} />)}
+            : curvasNormalizadas.map((c) => <UltimaRefCard key={c.curva} resumo={c} />)}
         </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex bg-gray-100 rounded-lg p-1">
-          {(['todas', 'A', 'B', 'C', 'D'] as const).map((c) => (
+        <div className="inline-grid grid-cols-2 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+          {([{ value: 'referencia', label: 'POR REFERENCIA' }, { value: 'sku', label: 'POR SKU' }] as const).map((v) => (
             <button
-              key={c}
-              onClick={() => setCurvaSelecionada(c)}
-              className={cn(
-                'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-                curvaSelecionada === c ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'
-              )}
+              key={v.value}
+              type="button"
+              onClick={() => setVisao(v.value)}
+              className={v.value === visao
+                ? 'min-w-20 bg-[var(--bbtk-red)] px-3 py-2 text-xs font-bold text-white'
+                : 'min-w-20 px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50'}
             >
-              {c === 'todas' ? 'Todas' : c}
+              {v.label}
             </button>
           ))}
         </div>
-        <Input label="Buscar referencia" value={busca} onChange={(e) => setBusca(e.target.value)} className="w-52" placeholder="Codigo ou nome" />
-        <Select label="Ordenar" value={ordenarPor} onChange={(e) => setOrdenarPor(e.target.value as typeof ordenarPor)} options={SORT_OPTIONS} className="w-48" />
+        <div className="inline-grid grid-cols-5 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+          {(['todas', 'A', 'B', 'C', 'D'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setCurvaSelecionada(c)}
+              className={c === curvaSelecionada
+                ? 'min-w-16 bg-[var(--bbtk-red)] px-3 py-2 text-xs font-bold text-white'
+                : 'min-w-16 px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50'}
+            >
+              {c === 'todas' ? 'TODAS' : c}
+            </button>
+          ))}
+        </div>
+        <Input label={visao === 'referencia' ? 'Buscar referencia' : 'Buscar SKU/referencia'} value={busca} onChange={(e) => setBusca(e.target.value)} className="w-52" placeholder="Codigo ou nome" />
+        <Select
+          label="Ordenar"
+          value={ordenarPor}
+          onChange={(e) => setOrdenarPor(e.target.value as typeof ordenarPor)}
+          options={visao === 'sku' ? SORT_OPTIONS.filter((o) => o.value !== 'mediaPorSku') : SORT_OPTIONS}
+          className="w-48"
+        />
         {classificacoes
-          .filter((d) => d.chave === 'linha' || d.chave === 'genero')
+          .filter((d) => d.chave === 'categoria' || d.chave === 'linha' || d.chave === 'genero' || d.chave === 'status')
           .map((dim) => (
             <ClassificacaoMultiSelect
               key={dim.chave}
@@ -263,12 +407,12 @@ export default function PcpCurvaAbcPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{referenciasFiltradas.length} referencias</CardTitle>
+          <CardTitle>{itensFiltrados.length} {visao === 'referencia' ? 'referencias' : 'SKUs'}</CardTitle>
         </CardHeader>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell isHeader>Referencia</TableCell>
+              <TableCell isHeader>{visao === 'referencia' ? 'Referencia' : 'Referencia - Cor - Tamanho'}</TableCell>
               <TableCell isHeader align="center">Curva</TableCell>
               <TableCell isHeader align="right">Rank Valor</TableCell>
               <TableCell isHeader align="right">% Valor</TableCell>
@@ -278,25 +422,25 @@ export default function PcpCurvaAbcPage() {
               <TableCell isHeader align="right">Rank Qtd</TableCell>
               <TableCell isHeader align="right">Qtd Vendida</TableCell>
               <TableCell isHeader align="right">Media Mensal</TableCell>
-              <TableCell isHeader align="right">SKUs</TableCell>
-              <TableCell isHeader align="right">Media/SKU</TableCell>
+              {visao === 'referencia' && <TableCell isHeader align="right">SKUs</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader align="right">Media/SKU</TableCell>}
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 12 : 10} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
-            ) : referenciasFiltradas.length === 0 ? (
+            ) : itensFiltrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 12 : 10} align="center" className="py-8 text-gray-500">Nenhum item encontrado</TableCell>
               </TableRow>
             ) : (
-              referenciasFiltradas.map((r) => (
-                <TableRow key={r.referenceCode} onClick={() => abrirSkus(r)}>
+              itensFiltrados.map((r) => (
+                <TableRow key={r.key} onClick={visao === 'referencia' ? () => abrirSkus(r.key, r.labelSecundaria) : undefined}>
                   <TableCell>
-                    <span className="font-medium text-gray-800">{r.referenceCode}</span>
-                    <span className="block text-xs text-gray-400 truncate max-w-[240px]" title={r.referenceName}>{r.referenceName}</span>
+                    <span className="font-medium text-gray-800">{r.labelPrincipal}</span>
+                    <span className="block text-xs text-gray-400 truncate max-w-[240px]" title={r.labelSecundaria}>{r.labelSecundaria}</span>
                   </TableCell>
                   <TableCell align="center">
                     <span className={cn('inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold', CURVA_STYLE[r.curva].badge)}>
@@ -311,10 +455,12 @@ export default function PcpCurvaAbcPage() {
                   <TableCell align="right">#{r.rankQtd}</TableCell>
                   <TableCell align="right">{formatNumber(r.qtdVendida)}</TableCell>
                   <TableCell align="right">{formatNumber(r.mediaMensal)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.totalSkus)}</TableCell>
-                  <TableCell align="right">
-                    {formatNumber(r.mediaPorSku)} <TrendArrow tendencia={r.tendenciaMediaSku} />
-                  </TableCell>
+                  {visao === 'referencia' && <TableCell align="right">{formatNumber(r.totalSkus || 0)}</TableCell>}
+                  {visao === 'referencia' && (
+                    <TableCell align="right">
+                      {formatNumber(r.mediaPorSku || 0)} {r.tendenciaMediaSku && <TrendArrow tendencia={r.tendenciaMediaSku} />}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             )}

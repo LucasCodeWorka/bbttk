@@ -21,6 +21,7 @@ function parseFiltro(req: Request): AnaliseGradeFiltro {
     categoria: parseList(req.query.categoria),
     linha: parseList(req.query.linha),
     genero: parseList(req.query.genero),
+    status: parseList(req.query.status),
     cor: parseList(req.query.cor),
     branches: parseBranchCodes(req.query.branches),
   };

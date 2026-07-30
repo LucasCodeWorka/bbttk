@@ -136,12 +136,15 @@ export interface CurvaResumo {
 
 export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
   const config = await getConfig();
-  const mesesJanela = 3;
+  // giro_dias guarda a janela em dias (sempre multiplo de 30) pra reaproveitar a mesma
+  // coluna/config do Relatorio Base - na pratica o usuario sempre pensa e edita em
+  // "meses fechados" (ver Input na tela de Configuracoes do PCP).
+  const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
 
   const [identidadeRows, vendaAtual, vendaAnterior] = await Promise.all([
     getIdentidadeRows(filtro),
-    getVendaPorProductCodeMesesFechados(3, 0),
-    getVendaPorProductCodeMesesFechados(6, 3),
+    getVendaPorProductCodeMesesFechados(mesesJanela, 0),
+    getVendaPorProductCodeMesesFechados(mesesJanela * 2, mesesJanela),
   ]);
 
   // Agrupa SKUs por referencia
@@ -260,6 +263,151 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     totalAnalisadas,
     curvas,
     referencias,
+  };
+}
+
+// ---- Curva ABCD calculada na granularidade de SKU (ref-cor-tam) em vez de referencia -
+// mesma regra de curva/rank de getCurvaAbcResumo, so que cada linha do ranking e um SKU
+// (uma combinacao referencia+cor+tamanho) em vez da referencia inteira somada. Pedido do
+// usuario pra alternar entre as duas visoes na mesma tela - o numero do SKU em si nunca
+// e a informacao principal (ninguem decora SKU numerico), o destaque fica em refCorTam.
+
+export interface SkuAbc {
+  sku: string;
+  refCorTam: string;
+  referenceCode: string;
+  referenceName: string;
+  cor: string;
+  tamanho: string;
+  curva: CurvaLetra;
+  rankQtd: number;
+  qtdVendida: number;
+  mediaMensal: number;
+  rankValor: number;
+  valorReais: number;
+  valorMedioMensal: number;
+  representatividadeValor: number;
+  representatividadeAcumulada: number;
+}
+
+export interface SkuCurvaResumo {
+  curva: CurvaLetra;
+  totalItens: number;
+  quantidade: number;
+  valorReais: number;
+  mediaMensal: number;
+  percentDoTotal: number;
+  ultimoItem: SkuAbc | null;
+}
+
+export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
+  const config = await getConfig();
+  const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
+
+  const [identidadeRows, vendaAtual] = await Promise.all([
+    getIdentidadeRows(filtro),
+    getVendaPorProductCodeMesesFechados(mesesJanela, 0),
+  ]);
+
+  const brutos: Array<{
+    sku: string; refCorTam: string; referenceCode: string; referenceName: string;
+    cor: string; tamanho: string; qtdVendida: number; valorReais: number;
+  }> = [];
+
+  for (const row of identidadeRows) {
+    if (!row.reference_code || row.product_code === null) continue;
+    const venda = vendaAtual.get(row.product_code);
+    if (!venda || venda.quantidade <= 0) continue;
+    brutos.push({
+      sku: row.product_sku,
+      refCorTam: buildRefCorTam(row),
+      referenceCode: row.reference_code,
+      referenceName: row.reference_name || row.reference_code,
+      cor: row.color_name?.trim() || row.color_code?.trim() || 'SEM COR',
+      tamanho: row.size?.trim() || 'SEM TAM',
+      qtdVendida: venda.quantidade,
+      valorReais: venda.valor,
+    });
+  }
+
+  const totalAnalisadas = brutos.length;
+  const curvaALimitePercent = decimalToNumber(config.curvaALimitePercent);
+  const curvaBLimitePercent = decimalToNumber(config.curvaBLimitePercent);
+  const curvaCLimitePercent = decimalToNumber(config.curvaCLimitePercent);
+
+  const comMedio = brutos.map((b) => ({ ...b, valorMedioMensal: b.valorReais / mesesJanela }));
+  const totalValorGeralBruto = comMedio.reduce((s, r) => s + Math.max(0, r.valorMedioMensal), 0);
+
+  const curvaPorSku = new Map<string, CurvaLetra>();
+  const representatividadePorSku = new Map<string, { percent: number; acumulado: number }>();
+  const porValorDesc = [...comMedio].sort((a, b) => b.valorMedioMensal - a.valorMedioMensal);
+  let acumuladoValor = 0;
+  porValorDesc.forEach((r) => {
+    const valorBase = Math.max(0, r.valorMedioMensal);
+    acumuladoValor += valorBase;
+    const percent = totalValorGeralBruto > 0 ? (valorBase / totalValorGeralBruto) * 100 : 0;
+    const acumulado = totalValorGeralBruto > 0 ? (acumuladoValor / totalValorGeralBruto) * 100 : 0;
+    representatividadePorSku.set(r.sku, { percent, acumulado });
+    if (acumulado <= curvaALimitePercent) curvaPorSku.set(r.sku, 'A');
+    else if (acumulado <= curvaBLimitePercent) curvaPorSku.set(r.sku, 'B');
+    else if (acumulado <= curvaCLimitePercent) curvaPorSku.set(r.sku, 'C');
+    else curvaPorSku.set(r.sku, 'D');
+  });
+
+  const porQtdDesc = [...comMedio].sort((a, b) => b.qtdVendida - a.qtdVendida);
+  const rankQtdPorSku = new Map<string, number>();
+  porQtdDesc.forEach((r, i) => rankQtdPorSku.set(r.sku, i + 1));
+
+  const rankValorPorSku = new Map<string, number>();
+  porValorDesc.forEach((r, i) => rankValorPorSku.set(r.sku, i + 1));
+
+  const itens: SkuAbc[] = comMedio.map((r) => ({
+    sku: r.sku,
+    refCorTam: r.refCorTam,
+    referenceCode: r.referenceCode,
+    referenceName: r.referenceName,
+    cor: r.cor,
+    tamanho: r.tamanho,
+    curva: curvaPorSku.get(r.sku) || 'B',
+    rankQtd: rankQtdPorSku.get(r.sku) || 0,
+    qtdVendida: round(r.qtdVendida, 0),
+    mediaMensal: round(r.qtdVendida / mesesJanela, 0),
+    rankValor: rankValorPorSku.get(r.sku) || 0,
+    valorReais: round(r.valorReais, 2),
+    valorMedioMensal: round(r.valorMedioMensal, 2),
+    representatividadeValor: round(representatividadePorSku.get(r.sku)?.percent || 0, 2),
+    representatividadeAcumulada: round(representatividadePorSku.get(r.sku)?.acumulado || 0, 2),
+  }));
+
+  itens.sort((a, b) => a.rankValor - b.rankValor);
+
+  const totalValorGeral = itens.reduce((s, r) => s + r.valorReais, 0);
+
+  const curvas: SkuCurvaResumo[] = (['A', 'B', 'C', 'D'] as CurvaLetra[]).map((curva) => {
+    const doGrupo = itens.filter((r) => r.curva === curva).sort((a, b) => a.rankValor - b.rankValor);
+    const quantidade = doGrupo.reduce((s, r) => s + r.qtdVendida, 0);
+    const valorReais = doGrupo.reduce((s, r) => s + r.valorReais, 0);
+    return {
+      curva,
+      totalItens: doGrupo.length,
+      quantidade: round(quantidade, 0),
+      valorReais: round(valorReais, 2),
+      mediaMensal: round(quantidade / mesesJanela, 0),
+      percentDoTotal: totalValorGeral > 0 ? round((valorReais / totalValorGeral) * 100, 1) : 0,
+      ultimoItem: doGrupo.length > 0 ? doGrupo[doGrupo.length - 1] : null,
+    };
+  });
+
+  return {
+    config: {
+      mesesFechados: mesesJanela,
+      curvaALimitePercent,
+      curvaBLimitePercent,
+      curvaCLimitePercent,
+    },
+    totalAnalisadas,
+    curvas,
+    itens,
   };
 }
 

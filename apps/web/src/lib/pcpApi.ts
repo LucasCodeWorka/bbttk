@@ -272,6 +272,12 @@ export interface PcpGradeDetalheSku {
   status: AnaliseGradeStatusSku;
 }
 
+export interface PcpGradeSaldoFilial {
+  branchCode: number;
+  branchName: string;
+  estoque: number;
+}
+
 export interface PcpGradeReferencia {
   referenceCode: string;
   referenceName: string;
@@ -288,6 +294,7 @@ export interface PcpGradeReferencia {
   status: AnaliseGradeStatusReferencia;
   prioridade: number;
   detalhes: PcpGradeDetalheSku[];
+  saldoPorFilial: PcpGradeSaldoFilial[];
 }
 
 export interface AnaliseGradeResponse {
@@ -301,7 +308,7 @@ export interface AnaliseGradeResponse {
   indicadores: {
     referenciasTotal: number;
     referenciasCriticas: number;
-    skusEmRupturaTotal: number;
+    skusEmRiscoTotal: number;
     totalSkus: number;
     percentSkusEmRisco: number;
   };
@@ -317,6 +324,7 @@ export interface AnaliseGradeFiltro {
   categoria?: string[];
   linha?: string[];
   genero?: string[];
+  status?: string[];
   cor?: string[];
   branches?: number[];
 }
@@ -362,6 +370,41 @@ export interface CurvaAbcResumoResponse {
   referencias: ReferenciaAbc[];
 }
 
+export interface SkuAbc {
+  sku: string;
+  refCorTam: string;
+  referenceCode: string;
+  referenceName: string;
+  cor: string;
+  tamanho: string;
+  curva: CurvaLetra;
+  rankQtd: number;
+  qtdVendida: number;
+  mediaMensal: number;
+  rankValor: number;
+  valorReais: number;
+  valorMedioMensal: number;
+  representatividadeValor: number;
+  representatividadeAcumulada: number;
+}
+
+export interface SkuCurvaResumo {
+  curva: CurvaLetra;
+  totalItens: number;
+  quantidade: number;
+  valorReais: number;
+  mediaMensal: number;
+  percentDoTotal: number;
+  ultimoItem: SkuAbc | null;
+}
+
+export interface CurvaAbcResumoSkuResponse {
+  config: { mesesFechados: number; curvaALimitePercent: number; curvaBLimitePercent: number; curvaCLimitePercent: number };
+  totalAnalisadas: number;
+  curvas: SkuCurvaResumo[];
+  itens: SkuAbc[];
+}
+
 export interface CurvaAbcSkuLinha {
   sku: string;
   refCorTam: string;
@@ -405,6 +448,7 @@ export const analiseGradeApi = {
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);
     appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
     appendList(params, 'cor', filtro.cor);
     appendList(params, 'branches', filtro.branches);
     const query = params.toString();
@@ -437,6 +481,13 @@ export const curvaAbcApi = {
     appendCurvaAbcFiltro(params, filtro);
     const query = params.toString();
     return fetchPcpApi<CurvaAbcResumoResponse>(`/api/pcp/curva-abc${query ? `?${query}` : ''}`, { token });
+  },
+
+  getResumoPorSku: (token: string, filtro: CurvaAbcFiltro = {}) => {
+    const params = new URLSearchParams();
+    appendCurvaAbcFiltro(params, filtro);
+    const query = params.toString();
+    return fetchPcpApi<CurvaAbcResumoSkuResponse>(`/api/pcp/curva-abc/resumo-sku${query ? `?${query}` : ''}`, { token });
   },
 
   getSkus: (token: string, filtro: CurvaAbcFiltro & { referencia?: string; page: number; pageSize: number }) => {

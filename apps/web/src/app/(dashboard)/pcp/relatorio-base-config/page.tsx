@@ -178,7 +178,7 @@ export default function RelatorioBaseConfigPage() {
   async function handleSalvarCurvaAbc() {
     if (!token || !curvaConfig) return;
     if (!Number.isInteger(curvaConfig.giroDias) || curvaConfig.giroDias <= 0) {
-      showToast('Janela da Curva ABCD precisa ser um numero inteiro positivo', 'error');
+      showToast('Meses fechados da Curva ABCD precisa ser um numero inteiro positivo', 'error');
       return;
     }
     if (!(curvaConfig.curvaALimitePercent < curvaConfig.curvaBLimitePercent && curvaConfig.curvaBLimitePercent < curvaConfig.curvaCLimitePercent)) {
@@ -356,12 +356,24 @@ export default function RelatorioBaseConfigPage() {
           <CardTitle>Curva ABCD</CardTitle>
         </CardHeader>
         <p className="text-sm text-gray-500 -mt-2 mb-4">
-          Classificacao por representatividade acumulada da media mensal de valor dos ultimos 3 meses fechados.
-          As referencias sao ordenadas por essa media; A, B e C usam os limites acumulados abaixo, e D e o restante.
+          Classificacao por representatividade acumulada da media mensal de valor dos ultimos meses fechados
+          (janela configuravel abaixo). As referencias sao ordenadas por essa media; A, B e C usam os limites
+          acumulados abaixo, e D e o restante.
         </p>
         {curvaConfig && (
           <>
             <div className="flex flex-wrap gap-4 items-end">
+              <Input
+                label="Meses fechados"
+                type="number"
+                step="1"
+                min="1"
+                max="24"
+                value={Math.round(curvaConfig.giroDias / 30)}
+                onChange={(e) => setCurvaConfig({ ...curvaConfig, giroDias: Math.max(1, Number(e.target.value) || 1) * 30 })}
+                className="w-36"
+                disabled={isLoading}
+              />
               <Input
                 label="Curva A ate (%)"
                 type="number"
@@ -398,6 +410,8 @@ export default function RelatorioBaseConfigPage() {
             </div>
             <p className="text-xs text-gray-400 mt-2">
               Exemplo: 80 / 95 / 99 classifica A ate 80% do valor acumulado, B ate 95%, C ate 99% e D acima disso.
+              &quot;Meses fechados&quot; e a janela de calculo (meses completos anteriores ao atual, nunca o mes
+              corrente parcial) - o padrao e 3, mas pode usar 4, 6 etc. se precisar de uma media mais estavel.
             </p>
             <div className="flex justify-end mt-4 pt-4 border-t">
               <Button onClick={handleSalvarCurvaAbc} isLoading={salvandoCurva} size="sm" disabled={isLoading}>

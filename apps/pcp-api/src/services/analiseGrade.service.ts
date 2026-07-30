@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
+import { FILIAIS } from '../config/constants.js';
 import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
@@ -25,6 +26,7 @@ export interface AnaliseGradeFiltro {
   categoria?: string[];
   linha?: string[];
   genero?: string[];
+  status?: string[];
   cor?: string[];
   branches?: number[];
 }
@@ -56,6 +58,7 @@ function buildFiltroSql(filtro: AnaliseGradeFiltro): Prisma.Sql {
   if (filtro.categoria?.length) condicoes.push(Prisma.sql`TRIM(a.class_categoria) IN (${Prisma.join(filtro.categoria)})`);
   if (filtro.linha?.length) condicoes.push(Prisma.sql`TRIM(a.class_linha) IN (${Prisma.join(filtro.linha)})`);
   if (filtro.genero?.length) condicoes.push(Prisma.sql`TRIM(a.class_genero) IN (${Prisma.join(filtro.genero)})`);
+  if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(filtro.status)})`);
   if (filtro.cor?.length) condicoes.push(Prisma.sql`TRIM(a.color_name) IN (${Prisma.join(filtro.cor)})`);
   if (condicoes.length === 0) return Prisma.empty;
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
@@ -96,6 +99,53 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro): Promise<GradeRawRow[
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${filtroSql}
   `;
+}
+
+interface SaldoFilialRow {
+  reference_code: string;
+  branch_code: number;
+  estoque: Decimal;
+}
+
+// Saldo fisico (estoque real na loja/filial, nao venda/canal) por referencia - mesmo
+// "ultimo_saldo" de getGradeRawRows, so que sem colapsar o branch_code no meio do
+// caminho. Usado pra secao "Saldo por Filial" do drill-down de cada referencia.
+async function getSaldoPorFilial(filtro: AnaliseGradeFiltro): Promise<Map<string, Map<number, number>>> {
+  const filtroSql = buildFiltroSql(filtro);
+  const filtroBranch = filtro.branches?.length
+    ? Prisma.sql`AND branch_code IN (${Prisma.join(filtro.branches)})`
+    : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<SaldoFilialRow[]>`
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (product_sku, branch_code, stock_code)
+        product_sku, branch_code, stock
+      FROM prd_saldo
+      WHERE 1=1 ${filtroBranch}
+      ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    ),
+    saldo_sku_filial AS (
+      SELECT product_sku, branch_code, SUM(COALESCE(stock, 0)) FILTER (WHERE COALESCE(stock, 0) > 0) AS estoque
+      FROM ultimo_saldo
+      GROUP BY product_sku, branch_code
+    )
+    SELECT a.reference_code, s.branch_code, SUM(COALESCE(s.estoque, 0)) AS estoque
+    FROM produto_analitico a
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    JOIN saldo_sku_filial s ON s.product_sku = a.product_sku
+    WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${filtroSql}
+    GROUP BY a.reference_code, s.branch_code
+  `;
+
+  const mapa = new Map<string, Map<number, number>>();
+  for (const row of rows) {
+    const porFilial = mapa.get(row.reference_code) || new Map<number, number>();
+    porFilial.set(row.branch_code, decimalToNumber(row.estoque));
+    mapa.set(row.reference_code, porFilial);
+  }
+  return mapa;
 }
 
 async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}): Promise<Map<number, VendaMensalRow>> {
@@ -195,7 +245,7 @@ function prioridade(curva: CurvaLetra, status: StatusReferencia): number {
 }
 
 export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
-  const [rawRows, vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig] = await Promise.all([
+  const [rawRows, vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig, saldoPorFilialPorReferencia] = await Promise.all([
     getGradeRawRows(filtro),
     getVendasMensaisPorProductCode(filtro),
     getMesesFechadosLabels(),
@@ -205,6 +255,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       create: { relatorio: RELATORIO_BASE_CONFIG_KEY },
       update: {},
     }),
+    getSaldoPorFilial(filtro),
   ]);
   const riscoCoberturaMeses = decimalToNumber(relatorioConfig.riscoCoberturaMeses) || RISCO_COBERTURA_MESES_DEFAULT;
 
@@ -332,6 +383,14 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
         if (a.status !== b.status) return a.status === 'risco' ? -1 : 1;
         return a.cor.localeCompare(b.cor) || a.tamanho.localeCompare(b.tamanho);
       }),
+      saldoPorFilial: [...(saldoPorFilialPorReferencia.get(referenceCode) || new Map())]
+        .map(([branchCode, estoque]) => ({
+          branchCode,
+          branchName: FILIAIS[branchCode] || `Filial ${branchCode}`,
+          estoque: round(estoque, 0),
+        }))
+        .filter((f) => f.estoque > 0)
+        .sort((a, b) => b.estoque - a.estoque),
     };
   });
 

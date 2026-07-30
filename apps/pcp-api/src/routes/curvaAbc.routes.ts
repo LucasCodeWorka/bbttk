@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getCurvaAbcResumo, getCurvaAbcSkus, CurvaAbcFiltro, CurvaAbcSkuFiltro } from '../services/curvaAbc.service.js';
+import { getCurvaAbcResumo, getCurvaAbcResumoPorSku, getCurvaAbcSkus, CurvaAbcFiltro, CurvaAbcSkuFiltro } from '../services/curvaAbc.service.js';
 
 const router = Router();
 
@@ -21,6 +21,14 @@ function parseFiltro(req: Request): CurvaAbcFiltro {
 router.get('/curva-abc', async (req: Request, res: Response) => {
   try {
     res.json(await getCurvaAbcResumo(parseFiltro(req)));
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.get('/curva-abc/resumo-sku', async (req: Request, res: Response) => {
+  try {
+    res.json(await getCurvaAbcResumoPorSku(parseFiltro(req)));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

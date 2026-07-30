@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
@@ -44,6 +44,63 @@ const CURVA_STYLE = {
   C: 'bg-red-100 text-red-700',
   D: 'bg-yellow-100 text-yellow-700',
 };
+
+const HEATMAP_RANKING_OPTIONS = [
+  { value: 15, label: 'Top 15' },
+  { value: 30, label: 'Top 30' },
+  { value: 50, label: 'Top 50' },
+];
+
+type HeatmapStatus = 'vermelho' | 'amarelo' | 'verde';
+
+// Mesmo par bg-100/text-700 do componente Badge (usado no Comercial inteiro - Dashboard,
+// Comissoes, etc.) - pedido explicito do usuario pra manter consistencia visual com o
+// resto do app em vez do vermelho/amarelo/verde saturado validado pela skill de dataviz
+// (que passava CVD/contraste mais limpo, mas destoava do restante das telas). O numero
+// em cada celula continua sempre visivel (nunca so a cor) como mitigação.
+const HEATMAP_STATUS_STYLE: Record<HeatmapStatus, string> = {
+  vermelho: 'bg-red-100 text-red-700',
+  amarelo: 'bg-yellow-100 text-yellow-700',
+  verde: 'bg-green-100 text-green-700',
+};
+
+const HEATMAP_STATUS_LABEL: Record<HeatmapStatus, string> = {
+  vermelho: 'Ruptura / baixo estoque',
+  amarelo: 'Atencao',
+  verde: 'Saudavel',
+};
+
+interface CelulaHeatmap {
+  estoque: number;
+  mediaMensal: number;
+  cobertura: number | null;
+  status: HeatmapStatus;
+}
+
+// Soma estoque/venda de todas as cores de uma referencia, por tamanho - o heatmap e
+// tamanho x referencia (nao entra a dimensao cor), diferente da "Matriz por cor e
+// tamanho" do drill-down que mostra cada cor separada.
+function agregarPorTamanho(detalhes: PcpGradeDetalheSku[], riscoCoberturaMeses: number): Map<string, CelulaHeatmap> {
+  const soma = new Map<string, { estoque: number; mediaMensal: number }>();
+  for (const d of detalhes) {
+    const atual = soma.get(d.tamanho) || { estoque: 0, mediaMensal: 0 };
+    atual.estoque += d.estoque;
+    atual.mediaMensal += d.mediaMensal;
+    soma.set(d.tamanho, atual);
+  }
+
+  const mapa = new Map<string, CelulaHeatmap>();
+  for (const [tamanho, valores] of soma) {
+    const cobertura = valores.mediaMensal > 0 ? Math.round((valores.estoque / valores.mediaMensal) * 100) / 100 : null;
+    let status: HeatmapStatus;
+    if (valores.estoque <= 0) status = 'vermelho';
+    else if (cobertura !== null && cobertura < riscoCoberturaMeses) status = 'vermelho';
+    else if (cobertura !== null && cobertura < riscoCoberturaMeses * 2) status = 'amarelo';
+    else status = 'verde';
+    mapa.set(tamanho, { estoque: valores.estoque, mediaMensal: valores.mediaMensal, cobertura, status });
+  }
+  return mapa;
+}
 
 function Badge({ value, className }: { value: string; className: string }) {
   return <span className={cn('inline-flex px-2 py-0.5 rounded-full text-xs font-semibold', className)}>{value}</span>;
@@ -87,6 +144,34 @@ function DetalheReferencia({ referencia }: { referencia: PcpGradeReferencia }) {
           <p className="text-xs text-gray-400 uppercase">SKUs em risco</p>
           <p className="text-lg font-semibold">{referencia.skusEmRisco} de {referencia.totalSkus}</p>
         </Card>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Saldo por filial</h3>
+        {referencia.saldoPorFilial.length === 0 ? (
+          <p className="text-xs text-gray-400">Sem saldo em nenhuma filial.</p>
+        ) : (
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell isHeader>Filial</TableCell>
+                <TableCell isHeader align="right">Estoque</TableCell>
+                <TableCell isHeader align="right">% do total</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {referencia.saldoPorFilial.map((f) => (
+                <TableRow key={f.branchCode}>
+                  <TableCell className="font-medium">{f.branchName}</TableCell>
+                  <TableCell align="right">{formatNumber(f.estoque)}</TableCell>
+                  <TableCell align="right">
+                    {referencia.estoqueTotal > 0 ? `${((f.estoque / referencia.estoqueTotal) * 100).toFixed(1)}%` : '-'}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
       <div>
@@ -183,13 +268,14 @@ export default function PcpAnaliseGradePage() {
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [referenciaBusca, setReferenciaBusca] = useState('');
-  const [referenciaModal, setReferenciaModal] = useState<PcpGradeReferencia | null>(null);
+  const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
+  const [heatmapLimit, setHeatmapLimit] = useState(15);
 
   useEffect(() => {
     if (!token) return;
     relatorioBaseApi
       .getFiltrosRelatorioBase(token)
-      .then((res) => setClassificacoes(res.classificacoes.filter((d) => d.chave !== 'status')))
+      .then((res) => setClassificacoes(res.classificacoes))
       .catch((error) => console.error('Erro ao carregar filtros:', error));
   }, [token]);
 
@@ -202,6 +288,7 @@ export default function PcpAnaliseGradePage() {
         categoria: produtoFiltro.categoria,
         linha: produtoFiltro.linha,
         genero: produtoFiltro.genero,
+        status: produtoFiltro.status,
         branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
       };
       const gradeRes = await analiseGradeApi.getGrade(token, filtro);
@@ -224,6 +311,30 @@ export default function PcpAnaliseGradePage() {
   }
 
   const meses = data?.config.meses || ['Mes 1', 'Mes 2', 'Mes 3'];
+
+  // As referencias ja chegam ordenadas por prioridade de risco (curva + % em risco) -
+  // o heatmap so pega as N primeiras dessa mesma ordem, entao mostra sempre quem mais
+  // precisa de atencao primeiro, nao uma amostra aleatoria.
+  const heatmap = useMemo(() => {
+    const referencias = (data?.referencias || []).slice(0, heatmapLimit);
+    const riscoCoberturaMeses = data?.config.riscoCoberturaMeses ?? 1;
+
+    const tamanhosSet = new Set<string>();
+    const porReferencia = referencias.map((referencia) => {
+      const mapa = agregarPorTamanho(referencia.detalhes, riscoCoberturaMeses);
+      for (const tamanho of mapa.keys()) tamanhosSet.add(tamanho);
+      return { referencia, mapa };
+    });
+    const tamanhos = [...tamanhosSet].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+    const linhas = porReferencia.map(({ referencia, mapa }) => ({
+      referencia,
+      mapa,
+      completude: tamanhos.length > 0 ? Math.round((mapa.size / tamanhos.length) * 100) : 0,
+    }));
+
+    return { tamanhos, linhas, riscoCoberturaMeses };
+  }, [data, heatmapLimit]);
 
   return (
     <div className="space-y-6">
@@ -287,7 +398,7 @@ export default function PcpAnaliseGradePage() {
         />
         <KPICard
           title="SKUs em risco"
-          value={isLoading || !data ? '-' : `${formatNumber(data.indicadores.skusEmRupturaTotal)} de ${formatNumber(data.indicadores.totalSkus)}`}
+          value={isLoading || !data ? '-' : `${formatNumber(data.indicadores.skusEmRiscoTotal)} de ${formatNumber(data.indicadores.totalSkus)}`}
           color="yellow"
           valueSize="md"
           isLoading={isLoading}
@@ -300,6 +411,87 @@ export default function PcpAnaliseGradePage() {
           isLoading={isLoading}
         />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Mapa de calor - estoque por referencia x tamanho</CardTitle>
+          <Select
+            label="Mostrar"
+            value={heatmapLimit}
+            onChange={(e) => setHeatmapLimit(Number(e.target.value))}
+            options={HEATMAP_RANKING_OPTIONS}
+            className="w-32"
+          />
+        </CardHeader>
+        <p className="text-xs text-gray-500 -mt-2 mb-3">
+          Estoque atual em pecas (somado entre cores) por referencia e tamanho - mostra as {heatmapLimit}{' '}
+          referencias com maior prioridade de risco, mesma ordem da tabela abaixo.
+        </p>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mb-3 text-xs text-gray-600">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded bg-red-100 border border-red-300" />
+            Ruptura / baixo estoque - cobertura menor que {heatmap.riscoCoberturaMeses} mes
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded bg-yellow-100 border border-yellow-300" />
+            Atencao - cobertura entre {heatmap.riscoCoberturaMeses} e {heatmap.riscoCoberturaMeses * 2} meses
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded bg-green-100 border border-green-300" />
+            Saudavel - cobertura acima de {heatmap.riscoCoberturaMeses * 2} meses
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 rounded bg-white border border-gray-300" />
+            Sem SKU cadastrado nesse tamanho
+          </span>
+        </div>
+        {isLoading ? (
+          <div className="py-8 text-center text-gray-500">Carregando...</div>
+        ) : heatmap.linhas.length === 0 ? (
+          <div className="py-8 text-center text-gray-500">Nenhuma referencia para mostrar</div>
+        ) : (
+          <Table className="max-h-[520px]">
+            <TableHead className="sticky top-0 z-10">
+              <TableRow>
+                <TableCell isHeader>Referencia</TableCell>
+                {heatmap.tamanhos.map((tamanho) => (
+                  <TableCell key={tamanho} isHeader align="center">{tamanho}</TableCell>
+                ))}
+                <TableCell isHeader align="right">Compl.</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {heatmap.linhas.map(({ referencia, mapa, completude }) => (
+                <TableRow key={referencia.referenceCode}>
+                  <TableCell className="font-medium whitespace-nowrap">
+                    {referencia.referenceCode}
+                    <span className="block text-xs text-gray-400 truncate max-w-[200px]" title={referencia.referenceName}>
+                      {referencia.referenceName}
+                    </span>
+                  </TableCell>
+                  {heatmap.tamanhos.map((tamanho) => {
+                    const celula = mapa.get(tamanho);
+                    if (!celula) {
+                      return <TableCell key={tamanho} align="center" className="text-gray-300">-</TableCell>;
+                    }
+                    return (
+                      <TableCell
+                        key={tamanho}
+                        align="center"
+                        className={cn('font-semibold', HEATMAP_STATUS_STYLE[celula.status])}
+                        title={`${HEATMAP_STATUS_LABEL[celula.status]} - cobertura ${coberturaLabel(celula.cobertura)} - media mensal ${formatNumber(celula.mediaMensal)}`}
+                      >
+                        {formatNumber(celula.estoque)}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell align="right" className="font-semibold">{completude}%</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
 
       <Card>
         <CardHeader>
@@ -332,38 +524,44 @@ export default function PcpAnaliseGradePage() {
                 <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
               </TableRow>
             ) : (
-              data?.referencias.map((r) => (
-                <TableRow key={r.referenceCode} onClick={() => setReferenciaModal(r)}>
-                  <TableCell>
-                    <span className="font-medium text-gray-800">{r.referenceCode}</span>
-                    <span className="block text-xs text-gray-400 truncate max-w-[260px]" title={r.referenceName}>{r.referenceName}</span>
-                  </TableCell>
-                  <TableCell align="center"><Badge value={r.curva} className={CURVA_STYLE[r.curva]} /></TableCell>
-                  <TableCell align="right">{formatNumber(r.estoqueTotal)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.vendaMes1)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.vendaMes2)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.vendaMes3)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.mediaMensal)}</TableCell>
-                  <TableCell align="right">{coberturaLabel(r.coberturaGeral)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.totalSkus)}</TableCell>
-                  <TableCell align="right">{formatNumber(r.skusEmRisco)}</TableCell>
-                  <TableCell align="right">{r.percentGradeEmRisco.toFixed(1)}%</TableCell>
-                  <TableCell align="center"><Badge value={STATUS_LABEL[r.status]} className={STATUS_STYLE[r.status]} /></TableCell>
-                </TableRow>
-              ))
+              data?.referencias.map((r) => {
+                const expandida = referenciaExpandida === r.referenceCode;
+                return (
+                  <Fragment key={r.referenceCode}>
+                    <TableRow onClick={() => setReferenciaExpandida(expandida ? null : r.referenceCode)}>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-gray-400 text-xs">{expandida ? '▼' : '▶'}</span>
+                          <span className="font-medium text-gray-800">{r.referenceCode}</span>
+                        </span>
+                        <span className="block text-xs text-gray-400 truncate max-w-[260px] pl-4" title={r.referenceName}>{r.referenceName}</span>
+                      </TableCell>
+                      <TableCell align="center"><Badge value={r.curva} className={CURVA_STYLE[r.curva]} /></TableCell>
+                      <TableCell align="right">{formatNumber(r.estoqueTotal)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.vendaMes1)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.vendaMes2)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.vendaMes3)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.mediaMensal)}</TableCell>
+                      <TableCell align="right">{coberturaLabel(r.coberturaGeral)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.totalSkus)}</TableCell>
+                      <TableCell align="right">{formatNumber(r.skusEmRisco)}</TableCell>
+                      <TableCell align="right">{r.percentGradeEmRisco.toFixed(1)}%</TableCell>
+                      <TableCell align="center"><Badge value={STATUS_LABEL[r.status]} className={STATUS_STYLE[r.status]} /></TableCell>
+                    </TableRow>
+                    {expandida && (
+                      <TableRow>
+                        <TableCell colSpan={12} className="bg-gray-50 p-4">
+                          <DetalheReferencia referencia={r} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })
             )}
           </TableBody>
         </Table>
       </Card>
-
-      <Modal
-        isOpen={!!referenciaModal}
-        onClose={() => setReferenciaModal(null)}
-        title={referenciaModal ? `${referenciaModal.referenceCode} - ${referenciaModal.referenceName}` : ''}
-        size="xl"
-      >
-        {referenciaModal && <DetalheReferencia referencia={referenciaModal} />}
-      </Modal>
     </div>
   );
 }
