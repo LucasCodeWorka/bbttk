@@ -75,6 +75,15 @@ export async function getTransferencia(filtro: TransferenciaFiltro): Promise<Tra
       SELECT branch_code, description
       FROM branches
       WHERE branch_code != 2
+    ),
+    -- SKUs que já tiveram entrada em cada loja (transferências recebidas)
+    skus_com_entrada AS (
+      SELECT DISTINCT ti.product_code, ti.branch_code
+      FROM transacao_itens ti
+      INNER JOIN transacoes t ON t.transaction_code = ti.transaction_code AND t.branch_code = ti.branch_code
+      INNER JOIN classificacao_operacoes co ON t.operation_code = co.operation_code
+      WHERE co.operations_type = 'E'
+        AND ti.branch_code != 2
     )
     SELECT
       s.reference_code,
@@ -86,6 +95,10 @@ export async function getTransferencia(filtro: TransferenciaFiltro): Promise<Tra
       COALESCE(SUM(ps.stock), 0) as estoque
     FROM skus_ref s
     CROSS JOIN lojas l
+    -- Adiciona join com produtos pra pegar o product_code
+    INNER JOIN produtos p ON p.product_sku = s.product_sku
+    -- Filtra apenas SKUs que já tiveram entrada nesta loja
+    INNER JOIN skus_com_entrada sce ON sce.product_code = p.product_code AND sce.branch_code = l.branch_code
     LEFT JOIN prd_saldo ps ON ps.product_sku = s.product_sku
       AND ps.branch_code = l.branch_code
       AND ps.is_full_snapshot = true
