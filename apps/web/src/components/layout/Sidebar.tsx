@@ -142,7 +142,7 @@ const navEntries: NavEntry[] = [
     icon: iconRelatorios,
     items: [
       { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
-      // { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
     ],
   },
 ];
