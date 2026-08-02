@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import * as pcpConfigService from '../services/pcpConfig.service.js';
-import { syncCustosEPrecos } from '../services/totvs.service.js';
+import { syncCustosEPrecos, syncEmProducao } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -53,6 +53,17 @@ router.post('/pcp-config/sincronizar-custos-precos', async (_req: Request, res: 
   try {
     const { custos, precos } = await syncCustosEPrecos();
     res.json({ custos, precos });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Resincroniza o snapshot de Ordens de Producao abertas direto da API do TOTVS
+// (production-order/v2/orders/search) - alimenta a coluna "Em Producao" do Relatorio Base.
+router.post('/pcp-config/sincronizar-em-producao', async (_req: Request, res: Response) => {
+  try {
+    const resumo = await syncEmProducao();
+    res.json(resumo);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
   }

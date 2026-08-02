@@ -8,23 +8,23 @@ datasource db {
 }
 
 model User {
-  id                Int                @id @default(autoincrement())
-  email             String             @unique @db.VarChar(255)
-  passwordHash      String             @map("password_hash") @db.VarChar(255)
-  name              String             @db.VarChar(100)
-  role              String             @db.VarChar(20)
-  branchCodes       Int[]              @map("branch_codes")
-  sellerCode        Int?               @map("seller_code")
-  isActive          Boolean?           @default(true) @map("is_active")
-  createdAt         DateTime?          @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt         DateTime?          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
-  moduleAccess      String[]           @default([]) @map("module_access")
-  agrupamentoGrupos AgrupamentoGrupo[]
-  metaDistributions MetaDistribution[]
-  pcpRelatorioConfigs      PcpRelatorioConfig[]
+  id                       Int                       @id @default(autoincrement())
+  email                    String                    @unique @db.VarChar(255)
+  passwordHash             String                    @map("password_hash") @db.VarChar(255)
+  name                     String                    @db.VarChar(100)
+  role                     String                    @db.VarChar(20)
+  branchCodes              Int[]                     @map("branch_codes")
+  sellerCode               Int?                      @map("seller_code")
+  isActive                 Boolean?                  @default(true) @map("is_active")
+  createdAt                DateTime?                 @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt                DateTime?                 @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  moduleAccess             String[]                  @default([]) @map("module_access")
+  agrupamentoGrupos        AgrupamentoGrupo[]
+  metaDistributions        MetaDistribution[]
   pcpCoberturaIdealFiliais PcpCoberturaIdealFilial[]
-  pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
   pcpCurvaAbcConfigs       PcpCurvaAbcConfig[]
+  pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
+  pcpRelatorioConfigs      PcpRelatorioConfig[]
 
   @@map("users")
 }
@@ -99,12 +99,6 @@ model MetaNivel {
   @@map("meta_niveis")
 }
 
-// Cache proprio (nao-ETL) da classificacao real de cada operation_code, puxada direto
-// da API do TOTVS (general/v2/operations). O que caracteriza uma venda de verdade e
-// SEMPRE operationsType='S' + operationMode='4' - nunca o operation_code em si, que o
-// TOTVS pode criar/aposentar a qualquer momento (ja aconteceu varias vezes). Guardar
-// aqui em vez de manter lista de codigos manual, que precisa ser remendada toda vez
-// que aparece operacao nova.
 model ClassificacaoOperacao {
   operationCode  Int      @id @map("operation_code")
   description    String?  @db.VarChar(255)
@@ -119,7 +113,6 @@ model ClassificacaoOperacao {
 model branches {
   branch_code       Int         @id
   branch_name       String      @db.VarChar(100)
-  abrev             String?     @db.VarChar(10)
   updated_at        DateTime?   @default(now()) @db.Timestamp(6)
   description       String?     @db.VarChar(255)
   fantasy_name      String?     @db.VarChar(150)
@@ -128,6 +121,7 @@ model branches {
   person_code       BigInt?
   last_change       DateTime?   @db.Timestamp(6)
   dados_api         Json?
+  abrev             String?     @db.VarChar(10)
   prd_saldo         prd_saldo[]
 }
 
@@ -302,47 +296,33 @@ model AgrupamentoMembro {
   @@map("agrupamento_membros")
 }
 
-// Configuracao do PCP, por relatorio (chave textual em vez de singleton fixo, pra
-// futuros relatorios PCP terem sua propria config sem precisar de tabela nova).
 model PcpRelatorioConfig {
-  id                   Int      @id @default(autoincrement())
-  relatorio            String   @unique @db.VarChar(50)
-  giroDias             Int      @default(30) @map("giro_dias")
-  coberturaMeses       Int      @default(3) @map("cobertura_meses")
-  riscoCoberturaMeses  Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
-  // 'fabrica_total' | 'atacado_only' - base usada no denominador da cobertura da
-  // coluna sintetica Atacado (pedido explicito do usuario pra ser configuravel)
-  atacadoCoberturaBase String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
-  // Qual costCode/priceCode do TOTVS (product/v2/costs|prices/search) usar como CUSTO,
-  // PDV VAREJO e PDV ATACADO no relatorio - o TOTVS tem varios "tipos" (ex: costCode 2
-  // = ULTIMA COMPRA, 3 = MEDIO S/ IMPOSTO; priceCode 1 = VAREJO, 3 = ATACADO), pedido
-  // explicito do usuario pra isso ser configuravel em vez de fixo no codigo. Custo/PDV
-  // sao por filial no TOTVS mas o relatorio mostra 1 valor so por SKU (nao por coluna
-  // de filial) - precoCustoBranchCode define de qual filial vem esse valor de
-  // referencia (default Iguatemi/1).
-  custoCode             Int @default(3) @map("custo_code")
-  pdvVarejoCode         Int @default(1) @map("pdv_varejo_code")
-  pdvAtacadoCode        Int @default(3) @map("pdv_atacado_code")
-  precoCustoBranchCode  Int @default(1) @map("preco_custo_branch_code")
-  // Limites de cobertura para coloracao no relatorio Raio X: ate coberturaLimiteVerde
-  // fonte verde, a partir de coberturaLimiteVermelho fonte vermelha
-  coberturaLimiteVerde     Decimal @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
-  coberturaLimiteVermelho  Decimal @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  // Periodo de maturacao em dias: produtos que chegaram na loja ha menos tempo que isso
-  // nao sao sinalizados como "sem giro" (evita marcar produtos novos como problema)
-  maturacaoDias        Int @default(30) @map("maturacao_dias")
-  createdById          Int?     @map("created_by")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
-  createdBy            User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                      Int      @id @default(autoincrement())
+  relatorio               String   @unique @db.VarChar(50)
+  giroDias                Int      @default(30) @map("giro_dias")
+  coberturaMeses          Int      @default(3) @map("cobertura_meses")
+  atacadoCoberturaBase    String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
+  createdById             Int?     @map("created_by")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  // Defaults pedidos pelo usuario pra Custo/PDV do Configurador (Custo=ULTIMA COMPRA,
+  // PDV Varejo=VAREJO, PDV Atacado=ATACADO, Loja de referencia=IGUATEMI) - codigos
+  // confirmados direto em produto_custos/produto_precos (nomes reais sincronizados do
+  // TOTVS), pra um relatorio novo (create no upsert) ja nascer configurado assim em
+  // vez de com o codigo generico "MEDIO S/ IMPOSTO".
+  custoCode               Int      @default(2) @map("custo_code")
+  pdvAtacadoCode          Int      @default(3) @map("pdv_atacado_code")
+  pdvVarejoCode           Int      @default(1) @map("pdv_varejo_code")
+  precoCustoBranchCode    Int      @default(1) @map("preco_custo_branch_code")
+  riscoCoberturaMeses     Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
+  coberturaLimiteVerde    Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  maturacaoDias           Int      @default(30) @map("maturacao_dias")
+  createdBy               User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
 }
 
-// Cache proprio (nao-ETL) de custo por produto+filial+tipo, sincronizado da API do
-// TOTVS (product/v2/costs/search). O TOTVS tem varios "tipos" de custo por
-// produto+filial (costCode/costName, ex: 2=ULTIMA COMPRA, 3=MEDIO S/ IMPOSTO) -
-// guardamos todos, o usuario escolhe qual usar via PcpRelatorioConfig.custoCode.
 model ProdutoCusto {
   id          Int      @id @default(autoincrement())
   productCode Int      @map("product_code")
@@ -357,8 +337,6 @@ model ProdutoCusto {
   @@map("produto_custos")
 }
 
-// Mesma ideia de ProdutoCusto, pro lado de preco (product/v2/prices/search) - priceCode
-// 1=VAREJO, 3=ATACADO etc, configuravel via PcpRelatorioConfig.pdvVarejoCode/pdvAtacadoCode.
 model ProdutoPreco {
   id          Int      @id @default(autoincrement())
   productCode Int      @map("product_code")
@@ -373,10 +351,26 @@ model ProdutoPreco {
   @@map("produto_precos")
 }
 
-// Meta de cobertura ideal por filial/coluna (em meses) de um relatorio PCP. branchCode
-// aceita tanto codigo real de filial quanto o sentinel sintetico ATACADO_BRANCH_CODE
-// (apps/pcp-api/src/config/constants.ts) - sem FK pra branches de proposito, o sentinel
-// nunca vai existir la.
+// Snapshot do que esta "em producao" agora (Ordens de Producao do TOTVS ainda nao
+// finalizadas: status 10=Aguardando, 20=Em Andamento), quantidade PENDENTE de cada
+// item da O.P. (production-order/v2/orders/search, expand=items), somada por
+// product_code x branch_code (filial/unidade fabril dona da O.P.). Tabela e sempre
+// REGRAVADA por inteiro a cada sync (DELETE + INSERT dentro de uma transacao) em vez
+// de upsert incremental - uma O.P. que finalizou/cancelou tem que sumir daqui, nao so
+// parar de ser atualizada, e nao da pra saber isso so olhando o que "nao veio" na
+// pagina atual sem comparar contra o estado inteiro anterior.
+model ProdutoEmProducao {
+  id          Int      @id @default(autoincrement())
+  productCode Int      @map("product_code")
+  branchCode  Int      @map("branch_code")
+  quantidade  Decimal  @db.Decimal(15, 4)
+  syncedAt    DateTime @default(now()) @map("synced_at")
+
+  @@unique([productCode, branchCode])
+  @@index([productCode])
+  @@map("produto_em_producao")
+}
+
 model PcpCoberturaIdealFilial {
   id                  Int      @id @default(autoincrement())
   relatorio           String   @db.VarChar(50)
@@ -391,9 +385,6 @@ model PcpCoberturaIdealFilial {
   @@map("pcp_cobertura_ideal_filiais")
 }
 
-// Metas da tela Visao Geral do PCP (cards com meta/gap) - conceito diferente de
-// PcpRelatorioConfig (que sao janelas de calculo giro/cobertura), por isso modelo
-// proprio. Upsert-on-read, defaults = valores do mockup enviado pelo usuario.
 model PcpMetaVisaoGeral {
   id                        Int      @id @default(autoincrement())
   relatorio                 String   @unique @db.VarChar(50)
@@ -411,15 +402,10 @@ model PcpMetaVisaoGeral {
   @@map("pcp_meta_visao_geral")
 }
 
-// Limiares configuraveis da tela Curva ABCD por representatividade acumulada do valor
-// vendido liquido. Defaults padrao: A ate 80%, B ate 95%, C ate 99%, D restante.
 model PcpCurvaAbcConfig {
   id                  Int      @id @default(autoincrement())
   relatorio           String   @unique @db.VarChar(50)
   giroDias            Int      @default(90) @map("giro_dias")
-  // Reaproveita colunas antigas para evitar migracao imediata no Neon:
-  // meta_curva_a_unidades -> limite acumulado A; curva_d_percent -> limite B;
-  // curva_c_percent -> limite C.
   curvaALimitePercent Int      @default(80) @map("meta_curva_a_unidades")
   curvaBLimitePercent Decimal  @default(95) @map("curva_d_percent") @db.Decimal(5, 2)
   curvaCLimitePercent Decimal  @default(99) @map("curva_c_percent") @db.Decimal(5, 2)

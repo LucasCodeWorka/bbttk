@@ -36,6 +36,7 @@ export default function RelatorioBaseConfigPage() {
 
   const [codigos, setCodigos] = useState<PcpCodigosDisponiveis>({ custos: [], precos: [] });
   const [sincronizando, setSincronizando] = useState(false);
+  const [sincronizandoProducao, setSincronizandoProducao] = useState(false);
 
   // Cobertura ideal por loja - mapa branchCode -> valor em meses (string pra edicao livre no input)
   const [coberturaIdeal, setCoberturaIdeal] = useState<Record<number, string>>({});
@@ -147,6 +148,20 @@ export default function RelatorioBaseConfigPage() {
       console.error(error);
     } finally {
       setSincronizando(false);
+    }
+  }
+
+  async function handleSincronizarEmProducao() {
+    if (!token) return;
+    setSincronizandoProducao(true);
+    try {
+      const resultado = await pcpConfigApi.sincronizarEmProducao(token);
+      showToast(`Sincronizado! ${resultado.linhas} itens em ${resultado.ordens} ordens de produção abertas`, 'success');
+    } catch (error) {
+      showToast('Erro ao sincronizar Ordens de Produção com o TOTVS', 'error');
+      console.error(error);
+    } finally {
+      setSincronizandoProducao(false);
     }
   }
 
@@ -313,6 +328,20 @@ export default function RelatorioBaseConfigPage() {
             Salvar
           </Button>
         </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Em Produção</CardTitle>
+          <Button variant="secondary" size="sm" onClick={handleSincronizarEmProducao} isLoading={sincronizandoProducao}>
+            Sincronizar com o TOTVS
+          </Button>
+        </CardHeader>
+        <p className="text-sm text-gray-500 -mt-2">
+          Alimenta a coluna &quot;Em Produção&quot; do Relatório Base com a quantidade pendente das Ordens de
+          Produção do TOTVS ainda abertas (aguardando, bloqueada ou em andamento). Diferente de custo/preço, não
+          precisa configurar nada aqui - só sincronizar.
+        </p>
       </Card>
 
       <Card>

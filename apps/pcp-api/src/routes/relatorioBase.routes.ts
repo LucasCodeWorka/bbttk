@@ -25,7 +25,8 @@ router.get('/relatorio-base/filtros', async (_req: Request, res: Response) => {
 
 router.get('/relatorio-base', async (req: Request, res: Response) => {
   try {
-    const limit = req.query.limit === 'all' ? null : Number(req.query.limit || 50);
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 15);
 
     const filtro: RelatorioBaseFiltro = {
       categoria: parseList(req.query.categoria),
@@ -34,7 +35,8 @@ router.get('/relatorio-base', async (req: Request, res: Response) => {
       status: parseList(req.query.status),
       branches: parseBranchCodes(req.query.branches),
       search: typeof req.query.search === 'string' ? req.query.search : undefined,
-      limit: limit === null ? null : Number.isFinite(limit) ? limit : 50,
+      page: Number.isFinite(page) && page > 0 ? page : 1,
+      pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 15,
     };
 
     res.json(await getRelatorioBase(filtro));

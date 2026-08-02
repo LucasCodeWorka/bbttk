@@ -17,7 +17,7 @@ export default function RaioXPage() {
   const [searchResults, setSearchResults] = useState<RaioXProdutoSearch[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState<RaioXProdutoSearch[]>([]);
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Filtros

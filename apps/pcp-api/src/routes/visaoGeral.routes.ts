@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getVisaoGeral, VisaoGeralFiltro } from '../services/visaoGeral.service.js';
+import { getVisaoGeralExtras, VisaoGeralExtrasFiltro } from '../services/visaoGeral.service.js';
 
 const router = Router();
 
@@ -17,11 +17,14 @@ function parseBranchCodes(value: unknown): number[] | undefined {
 
 router.get('/visao-geral', async (req: Request, res: Response) => {
   try {
-    const filtro: VisaoGeralFiltro = {
-      branches: parseBranchCodes(req.query.branches),
+    const filtro: VisaoGeralExtrasFiltro = {
+      categoria: parseList(req.query.categoria),
+      linha: parseList(req.query.linha),
       genero: parseList(req.query.genero),
+      status: parseList(req.query.status),
+      branches: parseBranchCodes(req.query.branches),
     };
-    res.json(await getVisaoGeral(filtro));
+    res.json(await getVisaoGeralExtras(filtro));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

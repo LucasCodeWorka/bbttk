@@ -36,7 +36,12 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
-  limit?: number | null;
+  // Paginacao real por REFERENCIA (nao por SKU) - troca o antigo "rank" (Top 50/100/
+  // 250/Todos) por pagina/tamanho de pagina, pedido do usuario ("nao ficar controlando
+  // por rank... crie paginacoes"). pageSize grande (export) e um uso valido, nao um
+  // caso especial - so significa "1 pagina com tudo".
+  page?: number;
+  pageSize?: number;
 }
 
 export interface RelatorioBaseColunaFilial {
@@ -48,6 +53,10 @@ export interface RelatorioBaseColunaFilial {
 export interface RelatorioBaseRow {
   sku: string;
   codigo: number | null;
+  referenceCode: string;
+  cor: string;
+  tamanho: string;
+  refCorTam: string;
   descricao: string;
   descricaoCompleta: string;
   categoria: string | null;
@@ -61,16 +70,20 @@ export interface RelatorioBaseRow {
   ultimaEntrada: string | null;
   // custo/pdvRealVar/markupVar/pdvRealAta/markupAta vem de produto_custos/produto_precos
   // (sincronizados do TOTVS via pcpConfig), null se o SKU ainda nao foi sincronizado ou
-  // nao tem o codigo escolhido no Configurador. pdvAtual nao tem fonte de dado ainda.
+  // nao tem o codigo escolhido no Configurador. pdvAtual e um alias de pdvRealVar (por
+  // pedido do usuario, sem sync propria - mesmo valor, coluna separada por proposito).
   custo: number | null;
-  pdvAtual: null;
+  pdvAtual: number | null;
   pdvRealVar: number | null;
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
   estDisponivel: null;
-  transito: null;
-  emProducao: null;
+  // Soma das quantidades pendentes de Ordens de Producao abertas do product_code, em
+  // todas as filiais (sincronizado via produto_em_producao - ver totvs.service.ts
+  // syncEmProducao). Diferente de custo/preco, e sempre um numero real (0 quando nao
+  // tem O.P. aberta), nao "ainda nao sincronizado".
+  emProducao: number;
   estPrevisto: null;
   estTt: number;
   giroTt1: number;
@@ -79,11 +92,95 @@ export interface RelatorioBaseRow {
   branches: Record<number, RelatorioBaseColunaFilial>;
 }
 
+// Linha principal da tabela - 1 por REFERENCIA (agregando todos os SKUs dela: cores e
+// tamanhos somados). Campos de identidade (categoria/linha/genero/modelo/status/
+// lancamento) vem do primeiro SKU encontrado - sao classificacao da referencia como um
+// todo, consistentes entre as variacoes na pratica. Custo/PDV/markup SO aparecem aqui
+// quando TODOS os SKUs da referencia tem o MESMO valor (caso comum - preco/custo e
+// definido por referencia no varejo, nao varia por cor/tamanho) - quando diverge entre
+// SKUs da mesma referencia, fica null (dash), sem inventar uma media/aproximacao.
+export interface RelatorioBaseReferenciaRow {
+  referenceCode: string;
+  referenceName: string;
+  totalSkus: number;
+  descricao: string;
+  descricaoCompleta: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  modelo: string | null;
+  status: string | null;
+  lancamento: string | null;
+  ultimaEntrada: string | null;
+  custo: number | null;
+  pdvAtual: number | null;
+  pdvRealVar: number | null;
+  markupVar: number | null;
+  pdvRealAta: number | null;
+  markupAta: number | null;
+  emProducao: number;
+  estTt: number;
+  giroTt1: number;
+  giroTt3: number;
+  giroTt6: number;
+  branches: Record<number, RelatorioBaseColunaFilial>;
+  skus: RelatorioBaseRow[];
+}
+
+// KPIs executivos calculados sobre o MESMO universo de SKUs/filtros da tabela
+// detalhada (nunca uma query separada) - pra nunca divergir do que a tabela mostra.
+// "Varejo" = qualquer filial real exceto Fabrica; "Atacado" = canal Atacado da
+// Fabrica (mesmo channel-split ja usado no resto do relatorio).
+export interface RelatorioBaseKpisExtra {
+  coberturaGeral: number | null;
+  coberturaVarejo: number | null;
+  coberturaAtacado: number | null;
+  giroAnualizado: number;
+  valorEstoqueTotal: number;
+  // "Estoque morto" = status TOTVS comecando com "FORA DE LINHA" (cobre todas as
+  // variantes de campanha: "FORA DE LINHA BLACK FRIDAY 2024", "FORA DE LINHA PROMO JAN
+  // 2025" etc, confirmado direto no banco - nao e um dia-sem-venda, e classificacao).
+  estoqueMortoQtd: number;
+  estoqueMortoValor: number;
+  estoqueMortoPercent: number;
+  coberturaBasico: number | null;
+  coberturaBasicoRenovavel: number | null;
+  coberturaColecao: number | null;
+  referenciasComEstoque: number;
+  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/INATIVO - "OUTROS" pega
+  // qualquer status novo/inesperado, nunca descarta silenciosamente).
+  statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseMatrizLinha {
+  label: string;
+  estoqueVarejo: number;
+  estoqueAtacado: number;
+  estoqueTotal: number;
+  valorEstoque: number;
+  coberturaVarejo: number | null;
+  coberturaAtacado: number | null;
+  coberturaGeral: number | null;
+}
+
 export interface RelatorioBaseResponse {
-  config: { giroDias: number; coberturaMeses: number; atacadoCoberturaBase: string };
+  config: {
+    giroDias: number;
+    coberturaMeses: number;
+    atacadoCoberturaBase: string;
+    coberturaLimiteVerde: number;
+    coberturaLimiteVermelho: number;
+  };
   kpis: { giroTt1: number; giroTt3: number; giroTt6: number; estTt: number; skuCount: number };
+  kpisExtra: RelatorioBaseKpisExtra;
+  matriz: {
+    linha: RelatorioBaseMatrizLinha[];
+    categoria: RelatorioBaseMatrizLinha[];
+    genero: RelatorioBaseMatrizLinha[];
+  };
+  pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
-  rows: RelatorioBaseRow[];
+  rows: RelatorioBaseReferenciaRow[];
 }
 
 async function getConfig() {
@@ -237,12 +334,12 @@ function markupPercentual(preco: number | null, custo: number | null): number | 
   return round(((preco - custo) / custo) * 100, 1);
 }
 
-// Base do MARKUP (decisao do usuario): nao usa o CUSTO/PDV REAL configurados no
-// Configurador (esses continuam mostrando o preco de TABELA do TOTVS, pra referencia) -
-// usa custo da ULTIMA COMPRA (costCode=2, fixo) contra o preco da ULTIMA VENDA REAL
-// daquele produto (transacao de verdade, com desconto ja aplicado - net_value/quantity),
-// separado por canal (varejo = filiais reais exceto Fabrica; atacado = mesmo
-// channel-split ja usado no resto do relatorio).
+// Base do MARKUP (decisao do usuario): nao usa o CUSTO configurado no Configurador
+// (esse continua mostrando o preco de TABELA do TOTVS, pra referencia) - usa custo da
+// ULTIMA COMPRA (costCode=2, fixo) contra o PDV Real/Atual (pdvRealVar/pdvRealAta, ja
+// sincronizados do TOTVS), separado por canal. Antes usava o preco da ultima venda
+// real (transacao de verdade, com desconto ja aplicado) em vez do PDV Real/Atual -
+// trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 const CUSTO_ULTIMA_COMPRA_CODE = 2;
 
 async function getCustoUltimaCompraRows(precoCustoBranchCode: number): Promise<Array<{ product_code: number; valor: Decimal }>> {
@@ -250,29 +347,6 @@ async function getCustoUltimaCompraRows(precoCustoBranchCode: number): Promise<A
     SELECT product_code, valor FROM produto_custos
     WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
   `;
-}
-
-// Preco unitario (liquido de desconto) da ultima venda real de cada product_code, por
-// canal - varejo = qualquer filial real exceto Fabrica; atacado = mesmo channel-split
-// (branch_code=2 + descricao contendo ATACADO) usado no resto do relatorio.
-async function getUltimaVendaRealRows(canal: 'varejo' | 'atacado'): Promise<Array<{ product_code: number; preco_unitario: number }>> {
-  const canalFiltro =
-    canal === 'varejo'
-      ? Prisma.sql`t.branch_code != ${FABRICA_BRANCH_CODE}`
-      : Prisma.sql`t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%'`;
-
-  const rows = await prisma.$queryRaw<Array<{ product_code: number; preco_unitario: Decimal | null }>>`
-    SELECT DISTINCT ON (ti.product_code) ti.product_code,
-      CASE WHEN ti.quantity IS NOT NULL AND ti.quantity != 0 THEN ti.net_value / ti.quantity ELSE NULL END AS preco_unitario
-    FROM transacoes t
-    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-    ${OPERACAO_JOIN}
-    WHERE t.status = 4 AND ${IS_VENDA} AND ${canalFiltro}
-    ORDER BY ti.product_code, t.transaction_date DESC, t.transaction_code DESC
-  `;
-  return rows
-    .filter((r) => r.preco_unitario !== null)
-    .map((r) => ({ product_code: r.product_code, preco_unitario: decimalToNumber(r.preco_unitario) }));
 }
 
 // Ultima entrada de estoque por product_code (rede toda, nao por filial - o relatorio
@@ -293,9 +367,26 @@ async function getUltimaEntradaRows(): Promise<Array<{ product_code: number; ult
   `;
 }
 
+// Quantidade pendente de Ordens de Producao abertas, somada em todas as filiais - a
+// tabela produto_em_producao ja vem por product_code x branch_code (sincronizada via
+// totvs.service.ts syncEmProducao), aqui so agrega pro nivel do relatorio (que mostra
+// "Em Producao" como 1 numero so por SKU, sem quebrar por loja).
+async function getEmProducaoRows(): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+  return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
+    SELECT product_code, SUM(quantidade) AS quantidade
+    FROM produto_em_producao
+    GROUP BY product_code
+  `;
+}
+
 interface IdentidadeRow {
   product_sku: string;
   product_code: number | null;
+  reference_code: string | null;
+  reference_name: string | null;
+  color_code: string | null;
+  color_name: string | null;
+  size: string | null;
   descricao: string | null;
   descricao_completa: string | null;
   categoria: string | null;
@@ -304,6 +395,10 @@ interface IdentidadeRow {
   modelo: string | null;
   status: string | null;
   lancamento: string | null;
+}
+
+function buildRefCorTam(referenceCode: string, cor: string, tamanho: string): string {
+  return [referenceCode, cor, tamanho].join(' - ');
 }
 
 // class_lancamento vem do TOTVS no formato "MM AAAA" (ex: "11 2020") - so reformata pra
@@ -338,6 +433,11 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
     SELECT
       a.product_sku,
       a.product_code,
+      a.reference_code,
+      a.reference_name,
+      a.color_code,
+      a.color_name,
+      a.size,
       COALESCE(NULLIF(TRIM(a.product_name), ''), NULLIF(TRIM(a.reference_name), ''), a.product_sku) as descricao,
       COALESCE(NULLIF(TRIM(a.description), ''), NULLIF(TRIM(a.product_name), ''), NULLIF(TRIM(a.reference_name), ''), a.product_sku) as descricao_completa,
       NULLIF(TRIM(a.class_categoria), '') as categoria,
@@ -370,8 +470,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     custoPrecoRows,
     ultimaEntradaRows,
     custoUltimaCompraRows,
-    ultimaVendaVarejoRows,
-    ultimaVendaAtacadoRows,
+    emProducaoRows,
+    venda12mRows,
   ] = await Promise.all([
     getIdentidadeRows(filtro),
     getEstoqueRows(),
@@ -385,8 +485,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode),
     getUltimaEntradaRows(),
     getCustoUltimaCompraRows(config.precoCustoBranchCode),
-    getUltimaVendaRealRows('varejo'),
-    getUltimaVendaRealRows('atacado'),
+    getEmProducaoRows(),
+    getVendaPorMesesRows(12),
   ]);
 
   // Mapas auxiliares product_sku -> ... e product_code -> ...
@@ -438,21 +538,102 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const custoUltimaCompraPorProductCode = new Map<number, number>();
   for (const r of custoUltimaCompraRows) custoUltimaCompraPorProductCode.set(r.product_code, decimalToNumber(r.valor));
-  const ultimaVendaVarejoPorProductCode = new Map<number, number>();
-  for (const r of ultimaVendaVarejoRows) ultimaVendaVarejoPorProductCode.set(r.product_code, r.preco_unitario);
-  const ultimaVendaAtacadoPorProductCode = new Map<number, number>();
-  for (const r of ultimaVendaAtacadoRows) ultimaVendaAtacadoPorProductCode.set(r.product_code, r.preco_unitario);
+
+  const emProducaoPorProductCode = new Map<number, number>();
+  for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+
+  const venda12mPorProductCode = new Map<number, Map<number, number>>();
+  for (const r of venda12mRows) {
+    const mapa = venda12mPorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    venda12mPorProductCode.set(r.product_code, mapa);
+  }
+  function somaMapa(mapa: Map<number, number> | undefined): number {
+    if (!mapa) return 0;
+    let soma = 0;
+    for (const v of mapa.values()) soma += v;
+    return soma;
+  }
 
   function coberturaDe(estoque: number, mediaMensal: number): number | null {
     if (mediaMensal <= 0) return null;
     return round(estoque / mediaMensal, 2);
   }
 
+  // Acumuladores dos KPIs executivos e da matriz linha/categoria/genero - preenchidos
+  // dentro do MESMO loop por SKU abaixo (sem query nova), pra nunca divergir da tabela.
+  interface BucketAcc {
+    estVarejo: number;
+    estAtacado: number;
+    vendaVarejo: number;
+    vendaAtacado: number;
+    valorEstoque: number;
+  }
+  function bucketVazio(): BucketAcc {
+    return { estVarejo: 0, estAtacado: 0, vendaVarejo: 0, vendaAtacado: 0, valorEstoque: 0 };
+  }
+  function acumularBucket(mapa: Map<string, BucketAcc>, chave: string | null, valores: BucketAcc) {
+    if (!chave) return;
+    const acc = mapa.get(chave) || bucketVazio();
+    acc.estVarejo += valores.estVarejo;
+    acc.estAtacado += valores.estAtacado;
+    acc.vendaVarejo += valores.vendaVarejo;
+    acc.vendaAtacado += valores.vendaAtacado;
+    acc.valorEstoque += valores.valorEstoque;
+    mapa.set(chave, acc);
+  }
+  // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
+  // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
+  // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
+  function linhaBucket(linha: string | null): string | null {
+    const l = linha?.trim().toUpperCase();
+    if (l === 'BASICA') return 'Básico';
+    if (l === 'BASICA RENOVAVEL') return 'Básico Renovável';
+    if (l === 'STYLE') return 'Coleção';
+    return null;
+  }
+
+  const matrizLinhaAgg = new Map<string, BucketAcc>();
+  const matrizCategoriaAgg = new Map<string, BucketAcc>();
+  const matrizGeneroAgg = new Map<string, BucketAcc>();
+  const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
+  let valorEstoqueTotal = 0;
+  let venda12mTotal = 0;
+  let estVarejoTotal = 0;
+  let estAtacadoTotal = 0;
+  let vendaVarejoTotal = 0;
+  let vendaAtacadoTotal = 0;
+  let estoqueMortoQtd = 0;
+  let estoqueMortoValor = 0;
+
   const colunasAtivas = branchFiltro
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
     : RELATORIO_BASE_BRANCH_ORDER;
 
-  const rows: RelatorioBaseRow[] = [];
+  const skuRows: RelatorioBaseRow[] = [];
+
+  // Agregacao por referencia, construida no mesmo loop dos SKUs pra nao duplicar os
+  // lookups - cada referencia acumula est/giro por filial (pra recalcular cobertura
+  // certa, nao so somar a cobertura ja arredondada de cada SKU) e a lista completa de
+  // SKUs (usada no drill-down "abrir por SKU").
+  interface RefAgg {
+    referenceName: string;
+    categoria: string | null;
+    linha: string | null;
+    genero: string | null;
+    modelo: string | null;
+    status: string | null;
+    lancamento: string | null;
+    ultimaEntrada: string | null;
+    emProducao: number;
+    estTt: number;
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+    skus: RelatorioBaseRow[];
+  }
+  const referenciaAgg = new Map<string, RefAgg>();
 
   for (const identidade of identidadeRows) {
     const sku = identidade.product_sku;
@@ -466,6 +647,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     for (const valor of estoqueDoSku.values()) estTt += valor;
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
+    const mediaMensalPorBranchDoSku = new Map<number, number>();
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) {
         const estFabrica = estoqueDoSku.get(FABRICA_BRANCH_CODE) || 0;
@@ -480,6 +662,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
           est: round(estFabrica, 0),
           cob: coberturaDe(estFabrica, mediaMensalAtacado),
         };
+        mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensalAtacado);
         continue;
       }
 
@@ -492,6 +675,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
         est: round(est, 0),
         cob: coberturaDe(est, mediaMensal),
       };
+      mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensal);
     }
 
     const giroTt1 = productCode !== null ? giroTt1PorProductCode.get(productCode) || 0 : 0;
@@ -507,8 +691,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
 
     const custoUltimaCompra = productCode !== null ? custoUltimaCompraPorProductCode.get(productCode) ?? null : null;
-    const ultimaVendaVarejo = productCode !== null ? ultimaVendaVarejoPorProductCode.get(productCode) ?? null : null;
-    const ultimaVendaAtacado = productCode !== null ? ultimaVendaAtacadoPorProductCode.get(productCode) ?? null : null;
+    const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // So entra na tabela quem tem estoque ou movimento recente - evita catalogo inteiro
     // com SKU morto (mesma convencao da tabela pcp_estoque_sem_giro_analitico).
@@ -522,9 +705,66 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       if (!temSinalNaSelecao) continue;
     }
 
-    rows.push({
+    // KPIs executivos e matriz linha/categoria/genero - acumulados aqui pra reusar
+    // exatamente os mesmos branches/custo/mediaMensal ja calculados pra essa linha,
+    // respeitando os mesmos filtros (loja/categoria/etc) da tabela detalhada.
+    const estAtacadoSku = branches[ATACADO_BRANCH_CODE]?.est ?? 0;
+    let estVarejoSku = 0;
+    let vendaVarejoSku = 0;
+    for (const coluna of colunasAtivas) {
+      if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
+      estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
+      vendaVarejoSku += (mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0) * config.coberturaMeses;
+    }
+    const vendaAtacadoSku = (mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0) * config.coberturaMeses;
+    const venda12mSku = productCode !== null ? somaMapa(venda12mPorProductCode.get(productCode)) : 0;
+    const valorEstoqueSku = estTt * (custo ?? 0);
+
+    valorEstoqueTotal += valorEstoqueSku;
+    venda12mTotal += venda12mSku;
+    estVarejoTotal += estVarejoSku;
+    estAtacadoTotal += estAtacadoSku;
+    vendaVarejoTotal += vendaVarejoSku;
+    vendaAtacadoTotal += vendaAtacadoSku;
+
+    const statusTrim = identidade.status?.trim().toUpperCase() || null;
+    let statusBucketKey: string;
+    if (statusTrim && statusTrim.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA';
+    else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
+    else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
+    else statusBucketKey = 'OUTROS';
+    statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + estTt);
+    if (statusBucketKey === 'FORA DE LINHA') {
+      estoqueMortoQtd += estTt;
+      estoqueMortoValor += valorEstoqueSku;
+    }
+
+    const bucketValores: BucketAcc = {
+      estVarejo: estVarejoSku,
+      estAtacado: estAtacadoSku,
+      vendaVarejo: vendaVarejoSku,
+      vendaAtacado: vendaAtacadoSku,
+      valorEstoque: valorEstoqueSku,
+    };
+    acumularBucket(matrizLinhaAgg, linhaBucket(identidade.linha), bucketValores);
+    acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
+    acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
+
+    // Referencia/cor/tamanho vem do produto_analitico - fallback pro proprio SKU quando
+    // reference_code vier nulo (dado incompleto), pra nao perder a linha, so vira uma
+    // "referencia" de 1 SKU so.
+    const referenceCode = identidade.reference_code || sku;
+    const referenceName = identidade.reference_name || referenceCode;
+    const cor = identidade.color_name?.trim() || identidade.color_code?.trim() || 'SEM COR';
+    const tamanho = identidade.size?.trim() || 'SEM TAM';
+
+    const skuRow: RelatorioBaseRow = {
       sku,
       codigo: productCode,
+      referenceCode,
+      cor,
+      tamanho,
+      refCorTam: buildRefCorTam(referenceCode, cor, tamanho),
       descricao: identidade.descricao || sku,
       descricaoCompleta: identidade.descricao_completa || sku,
       categoria: identidade.categoria,
@@ -535,27 +775,126 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       lancamento: formatarLancamento(identidade.lancamento),
       ultimaEntrada,
       custo,
-      pdvAtual: null,
+      pdvAtual: pdvRealVar,
       pdvRealVar,
-      markupVar: markupPercentual(ultimaVendaVarejo, custoUltimaCompra),
+      markupVar: markupPercentual(pdvRealVar, custoUltimaCompra),
       pdvRealAta,
-      markupAta: markupPercentual(ultimaVendaAtacado, custoUltimaCompra),
+      markupAta: markupPercentual(pdvRealAta, custoUltimaCompra),
       estDisponivel: null,
-      transito: null,
-      emProducao: null,
+      emProducao: round(emProducao, 0),
       estPrevisto: null,
       estTt: round(estTt, 0),
       giroTt1: round(giroTt1, 0),
       giroTt3: round(giroTt3, 0),
       giroTt6: round(giroTt6, 0),
       branches,
+    };
+    skuRows.push(skuRow);
+
+    const agg = referenciaAgg.get(referenceCode) || {
+      referenceName,
+      categoria: identidade.categoria,
+      linha: identidade.linha,
+      genero: identidade.genero,
+      modelo: identidade.modelo,
+      status: identidade.status,
+      lancamento: formatarLancamento(identidade.lancamento),
+      ultimaEntrada: null,
+      emProducao: 0,
+      estTt: 0,
+      giroTt1: 0,
+      giroTt3: 0,
+      giroTt6: 0,
+      branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+      skus: [],
+    };
+    agg.emProducao += skuRow.emProducao;
+    agg.estTt += skuRow.estTt;
+    agg.giroTt1 += skuRow.giroTt1;
+    agg.giroTt3 += skuRow.giroTt3;
+    agg.giroTt6 += skuRow.giroTt6;
+    if (ultimaEntrada && (!agg.ultimaEntrada || ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = ultimaEntrada;
+    for (const coluna of colunasAtivas) {
+      const acumulado = agg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+      acumulado.est += branches[coluna.branchCode].est;
+      acumulado.giro += branches[coluna.branchCode].giro;
+      acumulado.mediaMensalSum += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
+      agg.branchesAgg.set(coluna.branchCode, acumulado);
+    }
+    agg.skus.push(skuRow);
+    referenciaAgg.set(referenceCode, agg);
+  }
+
+  // Custo/PDV/markup na referencia so aparecem quando TODOS os SKUs dela concordam no
+  // mesmo valor (ignora SKU sem esse dado, sem invalidar os outros) - caso comum no
+  // varejo, preco/custo e por referencia, nao por cor/tamanho. Se divergir, fica null.
+  function valorConsistente(
+    skus: RelatorioBaseRow[],
+    campo: 'custo' | 'pdvAtual' | 'pdvRealVar' | 'markupVar' | 'pdvRealAta' | 'markupAta'
+  ): number | null {
+    let valor: number | null | undefined;
+    for (const s of skus) {
+      const v = s[campo];
+      if (v === null) continue;
+      if (valor === undefined) valor = v;
+      else if (valor !== v) return null;
+    }
+    return valor ?? null;
+  }
+
+  const rows: RelatorioBaseReferenciaRow[] = [];
+  for (const [referenceCode, agg] of referenciaAgg) {
+    const branches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const [branchCode, valores] of agg.branchesAgg) {
+      branches[branchCode] = {
+        est: round(valores.est, 0),
+        giro: round(valores.giro, 0),
+        cob: coberturaDe(valores.est, valores.mediaMensalSum),
+      };
+    }
+    rows.push({
+      referenceCode,
+      referenceName: agg.referenceName,
+      totalSkus: agg.skus.length,
+      descricao: agg.referenceName,
+      descricaoCompleta: agg.referenceName,
+      categoria: agg.categoria,
+      linha: agg.linha,
+      genero: agg.genero,
+      modelo: agg.modelo,
+      status: agg.status,
+      lancamento: agg.lancamento,
+      ultimaEntrada: agg.ultimaEntrada,
+      custo: valorConsistente(agg.skus, 'custo'),
+      pdvAtual: valorConsistente(agg.skus, 'pdvAtual'),
+      pdvRealVar: valorConsistente(agg.skus, 'pdvRealVar'),
+      markupVar: valorConsistente(agg.skus, 'markupVar'),
+      pdvRealAta: valorConsistente(agg.skus, 'pdvRealAta'),
+      markupAta: valorConsistente(agg.skus, 'markupAta'),
+      emProducao: round(agg.emProducao, 0),
+      estTt: round(agg.estTt, 0),
+      giroTt1: round(agg.giroTt1, 0),
+      giroTt3: round(agg.giroTt3, 0),
+      giroTt6: round(agg.giroTt6, 0),
+      branches,
+      skus: agg.skus.sort((a, b) => a.refCorTam.localeCompare(b.refCorTam, undefined, { numeric: true })),
     });
   }
 
-  rows.sort((a, b) => b.estTt - a.estTt);
-  const rowsLimitadas = filtro.limit && filtro.limit > 0 ? rows.slice(0, filtro.limit) : rows;
+  // Ordenado por venda (giro 3 meses), nao por estoque - pedido do usuario ("tudo vindo
+  // ordenado por venda"). Isso tambem decide a ordem das paginas, nao so a ordem visual.
+  rows.sort((a, b) => b.giroTt3 - a.giroTt3);
 
-  const kpis = rows.reduce(
+  // Paginacao real por referencia (substitui o antigo "rank" Top 50/100/250/Todos, que
+  // o usuario pediu pra tirar - "muito ruim... crie paginacoes"). pageSize grande e um
+  // uso valido (ex: exportar tudo numa pagina so), nao precisa de sentinel especial.
+  const pageSize = filtro.pageSize && filtro.pageSize > 0 ? filtro.pageSize : 15;
+  const totalReferencias = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
+  const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
+  const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+
+  const kpis = skuRows.reduce(
     (acc, r) => {
       acc.giroTt1 += r.giroTt1;
       acc.giroTt3 += r.giroTt3;
@@ -563,14 +902,87 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       acc.estTt += r.estTt;
       return acc;
     },
-    { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: rows.length }
+    { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: skuRows.length }
   );
+
+  // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
+  // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.
+  function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
+    const mediaMensalVarejo = acc.vendaVarejo / config.coberturaMeses;
+    const mediaMensalAtacado = acc.vendaAtacado / config.coberturaMeses;
+    const mediaMensalGeral = (acc.vendaVarejo + acc.vendaAtacado) / config.coberturaMeses;
+    return {
+      label,
+      estoqueVarejo: round(acc.estVarejo, 0),
+      estoqueAtacado: round(acc.estAtacado, 0),
+      estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
+      valorEstoque: round(acc.valorEstoque, 2),
+      coberturaVarejo: coberturaDe(acc.estVarejo, mediaMensalVarejo),
+      coberturaAtacado: coberturaDe(acc.estAtacado, mediaMensalAtacado),
+      coberturaGeral: coberturaDe(acc.estVarejo + acc.estAtacado, mediaMensalGeral),
+    };
+  }
+
+  // Ordenado por venda (varejo+atacado) desc, "Total" sempre por ultimo - mesma
+  // convencao do antigo visaoGeral.service.ts.
+  function buildMatriz(agg: Map<string, BucketAcc>): RelatorioBaseMatrizLinha[] {
+    const entradas = [...agg.entries()].sort(
+      (a, b) => b[1].vendaVarejo + b[1].vendaAtacado - (a[1].vendaVarejo + a[1].vendaAtacado)
+    );
+    const linhas = entradas.map(([label, acc]) => montarLinhaMatriz(label, acc));
+    const totalAcc = entradas.reduce<BucketAcc>(
+      (acc, [, v]) => ({
+        estVarejo: acc.estVarejo + v.estVarejo,
+        estAtacado: acc.estAtacado + v.estAtacado,
+        vendaVarejo: acc.vendaVarejo + v.vendaVarejo,
+        vendaAtacado: acc.vendaAtacado + v.vendaAtacado,
+        valorEstoque: acc.valorEstoque + v.valorEstoque,
+      }),
+      bucketVazio()
+    );
+    linhas.push(montarLinhaMatriz('Total', totalAcc));
+    return linhas;
+  }
+
+  const matrizLinha = buildMatriz(matrizLinhaAgg);
+  const matrizCategoria = buildMatriz(matrizCategoriaAgg);
+  const matrizGenero = buildMatriz(matrizGeneroAgg);
+
+  function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
+    return linhas.find((l) => l.label === label)?.coberturaGeral ?? null;
+  }
+
+  const statusBreakdown = [...statusAgg.entries()]
+    .map(([status, qtd]) => ({
+      status,
+      estTt: round(qtd, 0),
+      percent: kpis.estTt > 0 ? round((qtd / kpis.estTt) * 100, 1) : 0,
+    }))
+    .sort((a, b) => b.estTt - a.estTt);
+
+  const kpisExtra: RelatorioBaseKpisExtra = {
+    coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, (vendaVarejoTotal + vendaAtacadoTotal) / config.coberturaMeses),
+    coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal / config.coberturaMeses),
+    coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal / config.coberturaMeses),
+    giroAnualizado: valorEstoqueTotal > 0 ? round(venda12mTotal / valorEstoqueTotal, 2) : 0,
+    valorEstoqueTotal: round(valorEstoqueTotal, 2),
+    estoqueMortoQtd: round(estoqueMortoQtd, 0),
+    estoqueMortoValor: round(estoqueMortoValor, 2),
+    estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+    coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
+    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
+    coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
+    referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
+    statusBreakdown,
+  };
 
   return {
     config: {
       giroDias: config.giroDias,
       coberturaMeses: config.coberturaMeses,
       atacadoCoberturaBase: config.atacadoCoberturaBase,
+      coberturaLimiteVerde: decimalToNumber(config.coberturaLimiteVerde),
+      coberturaLimiteVermelho: decimalToNumber(config.coberturaLimiteVermelho),
     },
     kpis: {
       giroTt1: round(kpis.giroTt1, 0),
@@ -579,8 +991,15 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       estTt: round(kpis.estTt, 0),
       skuCount: kpis.skuCount,
     },
+    kpisExtra,
+    matriz: {
+      linha: matrizLinha,
+      categoria: matrizCategoria,
+      genero: matrizGenero,
+    },
+    pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: colunasAtivas,
-    rows: rowsLimitadas,
+    rows: rowsPaginadas,
   };
 }
 

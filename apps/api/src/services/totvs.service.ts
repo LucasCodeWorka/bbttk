@@ -323,6 +323,123 @@ export async function syncCustosEPrecos(): Promise<{ custos: SyncCustoPrecoResum
   return { custos, precos };
 }
 
+interface OrderItemApi {
+  productCode: number;
+  quantity?: number | null;
+  finishedQuantity?: number | null;
+  pendingQuantity?: number | null;
+}
+
+interface OrderApi {
+  branchCode: number;
+  orderCode: number;
+  status: number;
+  items?: OrderItemApi[] | null;
+}
+
+// Status 05=Bloqueada, 10=Aguardando, 20=Em Andamento, 30=Finalizada, 40=Cancelada
+// (production-order/v2, confirmado no swagger) - "em producao" = ainda nao finalizou
+// nem cancelou, entao entram Bloqueada/Aguardando/Em Andamento.
+const STATUS_EM_PRODUCAO = [5, 10, 20];
+
+export interface SyncEmProducaoResumo {
+  ordens: number;
+  linhas: number;
+}
+
+// Sincroniza o snapshot de "em producao" (Ordens de Producao do TOTVS ainda abertas) -
+// production-order/v2/orders/search com expand=items, soma pendingQuantity de cada
+// item por productCode x branchCode (a O.P. inteira pertence a uma filial/unidade
+// fabril so). Diferente de custo/preco, aqui NAO filtramos por productCodes
+// relevantes - o volume de O.P. aberta e pequeno (nao e o catalogo inteiro), da pra
+// trazer tudo numa paginacao so.
+export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
+  const agregado = new Map<string, { productCode: number; branchCode: number; quantidade: number }>();
+  const ordensVistas = new Set<number>();
+
+  const PAGE_SIZE = 100;
+  const MAX_TENTATIVAS = 4;
+  let page = 1;
+  let hasNext = true;
+
+  while (hasNext) {
+    let response: Response | null = null;
+    let ultimoErro = '';
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      try {
+        const token = await getApiToken();
+        if (!token) throw new Error('Nao foi possivel autenticar na API TOTVS');
+        const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+        const tentativaResponse = await fetch(`${API_BASE_URL}/production-order/v2/orders/search`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            // filter.branchCodeList e obrigatorio pra essa API (testado ao vivo: 400
+            // EmptyField sem ele) - mesma lista de filiais reais usada em custo/preco.
+            filter: { statusList: STATUS_EM_PRODUCAO, branchCodeList: FILIAIS_RELATORIO_BASE },
+            expand: 'items',
+            page,
+            pageSize: PAGE_SIZE,
+          }),
+          // @ts-ignore
+          agent: httpsAgent,
+        });
+        if (tentativaResponse.ok) {
+          response = tentativaResponse;
+          break;
+        }
+        ultimoErro = `HTTP ${tentativaResponse.status} ${(await tentativaResponse.text().catch(() => '')).slice(0, 200)}`;
+      } catch (error) {
+        ultimoErro = error instanceof Error ? error.message : String(error);
+      }
+      if (tentativa < MAX_TENTATIVAS) await new Promise((r) => setTimeout(r, tentativa * 3000));
+    }
+
+    if (!response) {
+      throw new Error(`Erro ao sincronizar Ordens de Producao do TOTVS (pagina ${page}) apos ${MAX_TENTATIVAS} tentativas: ${ultimoErro}`);
+    }
+
+    const data = (await response.json()) as { hasNext?: boolean; items?: OrderApi[] };
+
+    for (const ordem of data.items || []) {
+      ordensVistas.add(ordem.branchCode * 10_000_000 + ordem.orderCode);
+      for (const item of ordem.items || []) {
+        const pendente = item.pendingQuantity ?? 0;
+        if (!pendente || pendente <= 0) continue;
+        const chave = `${item.productCode}-${ordem.branchCode}`;
+        const acumulado = agregado.get(chave) || { productCode: item.productCode, branchCode: ordem.branchCode, quantidade: 0 };
+        acumulado.quantidade += pendente;
+        agregado.set(chave, acumulado);
+      }
+    }
+
+    hasNext = !!data.hasNext;
+    page++;
+  }
+
+  const linhas = [...agregado.values()];
+
+  // Regrava a tabela inteira dentro de uma transacao (DELETE + INSERT) - snapshot do
+  // que esta aberto AGORA, nao upsert incremental (O.P. finalizada/cancelada precisa
+  // sumir, nao so parar de ser atualizada).
+  await prisma.$transaction(async (tx) => {
+    await tx.produtoEmProducao.deleteMany({});
+    for (let i = 0; i < linhas.length; i += 2000) {
+      const lote = linhas.slice(i, i + 2000);
+      if (lote.length === 0) continue;
+      await tx.$executeRaw`
+        INSERT INTO produto_em_producao (product_code, branch_code, quantidade, synced_at)
+        VALUES ${Prisma.join(
+          lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.quantidade}, now())`)
+        )}
+      `;
+    }
+  });
+
+  return { ordens: ordensVistas.size, linhas: linhas.length };
+}
+
 // Checa se apareceu algum operation_code novo (sem classificacao ainda) e sincroniza
 // sozinho - chamado no inicio das queries de faturamento mais usadas, pra pegar
 // operacao nova do TOTVS sem precisar de acao manual. So bate no banco uma vez a cada

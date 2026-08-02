@@ -128,6 +128,7 @@ const navEntries: NavEntry[] = [
     label: 'PCP',
     icon: iconPcp,
     items: [
+      { label: 'Visão Geral', href: '/pcp-relatorio-base', icon: iconAgrupamentoCores },
       { label: 'Estoque Sem Giro', href: '/pcp-novo', icon: iconAgrupamentoCores },
       { label: 'Análise de Grade', href: '/pcp-analise-grade', icon: iconAgrupamentoCores },
       { label: 'Curva ABC', href: '/pcp-curva-abc', icon: iconAgrupamentoCores },

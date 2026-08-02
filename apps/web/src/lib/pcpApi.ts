@@ -143,7 +143,8 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
-  limit?: number | 'all';
+  page?: number;
+  pageSize?: number;
 }
 
 export interface RelatorioBaseColunaFilial {
@@ -155,6 +156,10 @@ export interface RelatorioBaseColunaFilial {
 export interface RelatorioBaseRow {
   sku: string;
   codigo: number | null;
+  referenceCode: string;
+  cor: string;
+  tamanho: string;
+  refCorTam: string;
   descricao: string;
   descricaoCompleta: string;
   categoria: string | null;
@@ -165,14 +170,13 @@ export interface RelatorioBaseRow {
   lancamento: string | null;
   ultimaEntrada: string | null;
   custo: number | null;
-  pdvAtual: null;
+  pdvAtual: number | null;
   pdvRealVar: number | null;
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
   estDisponivel: null;
-  transito: null;
-  emProducao: null;
+  emProducao: number;
   estPrevisto: null;
   estTt: number;
   giroTt1: number;
@@ -181,11 +185,79 @@ export interface RelatorioBaseRow {
   branches: Record<number, RelatorioBaseColunaFilial>;
 }
 
+export interface RelatorioBaseReferenciaRow {
+  referenceCode: string;
+  referenceName: string;
+  totalSkus: number;
+  descricao: string;
+  descricaoCompleta: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  modelo: string | null;
+  status: string | null;
+  lancamento: string | null;
+  ultimaEntrada: string | null;
+  custo: number | null;
+  pdvAtual: number | null;
+  pdvRealVar: number | null;
+  markupVar: number | null;
+  pdvRealAta: number | null;
+  markupAta: number | null;
+  emProducao: number;
+  estTt: number;
+  giroTt1: number;
+  giroTt3: number;
+  giroTt6: number;
+  branches: Record<number, RelatorioBaseColunaFilial>;
+  skus: RelatorioBaseRow[];
+}
+
 export interface RelatorioBaseResponse {
-  config: { giroDias: number; coberturaMeses: number; atacadoCoberturaBase: string };
+  config: {
+    giroDias: number;
+    coberturaMeses: number;
+    atacadoCoberturaBase: string;
+    coberturaLimiteVerde: number;
+    coberturaLimiteVermelho: number;
+  };
   kpis: { giroTt1: number; giroTt3: number; giroTt6: number; estTt: number; skuCount: number };
+  kpisExtra: RelatorioBaseKpisExtra;
+  matriz: {
+    linha: RelatorioBaseMatrizLinha[];
+    categoria: RelatorioBaseMatrizLinha[];
+    genero: RelatorioBaseMatrizLinha[];
+  };
+  pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
-  rows: RelatorioBaseRow[];
+  rows: RelatorioBaseReferenciaRow[];
+}
+
+export interface RelatorioBaseKpisExtra {
+  coberturaGeral: number | null;
+  coberturaVarejo: number | null;
+  coberturaAtacado: number | null;
+  giroAnualizado: number;
+  valorEstoqueTotal: number;
+  estoqueMortoQtd: number;
+  estoqueMortoValor: number;
+  estoqueMortoPercent: number;
+  coberturaBasico: number | null;
+  coberturaBasicoRenovavel: number | null;
+  coberturaColecao: number | null;
+  referenciasComEstoque: number;
+  statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseMatrizLinha {
+  label: string;
+  estoqueVarejo: number;
+  estoqueAtacado: number;
+  estoqueTotal: number;
+  valorEstoque: number;
+  coberturaVarejo: number | null;
+  coberturaAtacado: number | null;
+  coberturaGeral: number | null;
 }
 
 export interface RelatorioBaseFiltrosResponse {
@@ -197,7 +269,8 @@ export const relatorioBaseApi = {
   getRelatorioBase: (token: string, filtro: RelatorioBaseFiltro = {}) => {
     const params = new URLSearchParams();
     if (filtro.search) params.set('search', filtro.search);
-    if (filtro.limit) params.set('limit', String(filtro.limit));
+    if (filtro.page) params.set('page', String(filtro.page));
+    if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);
@@ -212,45 +285,33 @@ export const relatorioBaseApi = {
     fetchPcpApi<RelatorioBaseFiltrosResponse>('/api/pcp/relatorio-base/filtros', { token }),
 };
 
-// ---- Visao Geral ----
+// ---- Visao Geral (indicadores extra, reusados de Analise de Grade/Estoque Sem
+// Giro/Curva ABC - ver apps/pcp-api/src/services/visaoGeral.service.ts) ----
 
-export interface PcpMetaGap {
-  valor: number;
-  meta: number;
-  gap: number;
-}
-
-export interface PcpMatrizCelula {
-  estoque: number;
-  vendaPeriodo: number;
-  cobertura: number | null;
-}
-
-export interface PcpMatrizCanal {
-  linhas: string[];
-  matriz: Record<string, Record<'varejo' | 'atacado' | 'total', PcpMatrizCelula>>;
-}
-
-export interface VisaoGeralResponse {
-  config: { coberturaMeses: number };
-  kpis: {
-    coberturaGeral: PcpMetaGap;
-    giroAnualizado: PcpMetaGap;
-    estoqueMortoPercent: PcpMetaGap;
-    coberturaBasico: PcpMetaGap;
-    coberturaColecao: PcpMetaGap;
-    valorEstoque: number;
-    estoqueMortoValor: number;
-    skusAtivos: number;
+export interface VisaoGeralExtrasResponse {
+  meta: {
+    metaCoberturaGeralMeses: number;
+    metaGiroAnualizado: number;
+    metaEstoqueMortoPercent: number;
+    metaCoberturaBasicoMeses: number;
+    metaCoberturaColecaoMeses: number;
   };
-  coberturaPorLinhaCanal: PcpMatrizCanal;
-  coberturaPorCategoriaCanal: PcpMatrizCanal;
-  coberturaPorGeneroCanal: PcpMatrizCanal;
+  skusEmRisco: {
+    percent: number;
+    referenciasCriticas: number;
+    skusEmRiscoTotal: number;
+    totalSkus: number;
+  };
+  estoqueSemGiro: { dias: number; label: string; sku_count: number; quantidade: number; valor: number; pct_total: number }[];
+  curvaAbc: { curva: 'A' | 'B' | 'C' | 'D'; percentDoTotal: number }[];
 }
 
-export interface VisaoGeralFiltro {
-  branches?: number[];
+export interface VisaoGeralExtrasFiltro {
+  categoria?: string[];
+  linha?: string[];
   genero?: string[];
+  status?: string[];
+  branches?: number[];
 }
 
 // ---- Analise de Grade ----
@@ -442,12 +503,15 @@ export interface CurvaAbcFiltro {
 }
 
 export const visaoGeralApi = {
-  getVisaoGeral: (token: string, filtro: VisaoGeralFiltro = {}) => {
+  getVisaoGeralExtras: (token: string, filtro: VisaoGeralExtrasFiltro = {}) => {
     const params = new URLSearchParams();
     appendList(params, 'branches', filtro.branches);
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
     appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
     const query = params.toString();
-    return fetchPcpApi<VisaoGeralResponse>(`/api/pcp/visao-geral${query ? `?${query}` : ''}`, { token });
+    return fetchPcpApi<VisaoGeralExtrasResponse>(`/api/pcp/visao-geral${query ? `?${query}` : ''}`, { token });
   },
 };
 

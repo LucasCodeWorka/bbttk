@@ -310,6 +310,9 @@ export const pcpConfigApi = {
       { token, method: 'POST' }
     ),
 
+  sincronizarEmProducao: (token: string) =>
+    fetchApi<{ ordens: number; linhas: number }>('/api/pcp-config/sincronizar-em-producao', { token, method: 'POST' }),
+
   getCoberturaIdeal: (token: string, relatorio = 'relatorio_base') =>
     fetchApi<{ items: PcpCoberturaIdealItem[] }>(`/api/pcp-config/cobertura-ideal?relatorio=${relatorio}`, { token }),
 
