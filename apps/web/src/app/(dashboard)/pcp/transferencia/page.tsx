@@ -270,6 +270,7 @@ export default function TransferenciaPage() {
           {referencia.trim() && (
             <Button
               onClick={async () => {
+                if (!token) return;
                 setReferencia('');
                 setIsLoading(true);
                 try {
