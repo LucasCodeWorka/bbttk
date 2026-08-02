@@ -250,6 +250,13 @@ export interface PcpRelatorioConfig {
   precoCustoBranchCode: number;
 }
 
+export interface PcpEstoqueSemGiroConfig {
+  relatorio: string;
+  maturacaoDias: number;
+  coberturaLimiteVerde: number;
+  coberturaLimiteVermelho: number;
+}
+
 export interface PcpCoberturaIdealItem {
   branchCode: number;
   coberturaIdealMeses: number;
@@ -328,6 +335,16 @@ export const pcpConfigApi = {
 
   updateCurvaAbcConfig: (token: string, data: PcpCurvaAbcConfig) =>
     fetchApi<{ config: PcpCurvaAbcConfig }>('/api/pcp-config/curva-abc', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getEstoqueSemGiroConfig: (token: string, relatorio = 'estoque_sem_giro') =>
+    fetchApi<{ config: PcpEstoqueSemGiroConfig }>(`/api/pcp-config/estoque-sem-giro?relatorio=${relatorio}`, { token }),
+
+  updateEstoqueSemGiroConfig: (token: string, data: PcpEstoqueSemGiroConfig) =>
+    fetchApi<{ config: PcpEstoqueSemGiroConfig }>('/api/pcp-config/estoque-sem-giro', {
       token,
       method: 'PUT',
       body: JSON.stringify(data),

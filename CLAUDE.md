@@ -290,3 +290,135 @@ de sempre (meta individual contra faturamento individual).
 uma fonte de dado separada da meta) continuam usando a projeção individual de cada
 linha — não sabemos se a projeção também precisa desse mesmo tratamento combinado, não
 foi pedido ainda.
+
+## Módulo PCP — Configurações e Ordenação (02/08/2026)
+
+### Configuração do Estoque Sem Giro
+
+Implementada tela de configuração dedicada para o relatório "Estoque Sem Giro" em
+`/pcp/estoque-sem-giro-config`, acessível via menu Configurações (requer acesso ao
+módulo `pcp_servico`).
+
+**Campos configuráveis:**
+- **Período de maturação (dias)**: Produtos que chegaram nas lojas há menos tempo que
+  este período não são sinalizados como "sem giro". Default: 30 dias. Permite valor 0
+  para desabilitar o filtro completamente.
+- **Limiares de cobertura**: Define os limites verde (estoque baixo) e vermelho
+  (estoque alto) em meses de cobertura.
+
+**Infraestrutura criada:**
+- Backend: `pcpConfig.service.ts` — `getEstoqueSemGiroConfig()` e
+  `updateEstoqueSemGiroConfig()`
+- API Routes: `GET/PUT /api/pcp-config/estoque-sem-giro` em `pcpConfig.routes.ts`
+- Frontend: `apps/web/src/lib/api.ts` — `PcpEstoqueSemGiroConfig` interface e métodos
+- Schema: Campo `maturacaoDias` já existia em `pcp_relatorio_configs` (adicionado em
+  sessão anterior), agora tem UI para edição
+
+**Aplicação no relatório:**
+O período de maturação é aplicado em `apps/pcp-api/src/services/estoque.service.ts`
+via CTE `primeira_entrada` que identifica a primeira entrada de cada produto por filial
+(usando `operations_type = 'E'` da tabela `classificacao_operacoes`) e filtra produtos
+onde `CURRENT_DATE - primeira_entrada >= maturacaoDias`.
+
+### Abreviações de Filiais
+
+Adicionado campo `abrev` (VARCHAR(10)) na tabela `branches` para exibir identificadores
+curtos (3 letras) em relatórios em vez de códigos numéricos ou nomes completos.
+
+**Abreviações definidas:**
+```
+1: IGU (Iguatemi), 2: FAB (Fábrica), 3: BEN (Benfica), 4: DEL (Del Paseo),
+5: PDL (Pátio Dom Luís), 6: SOB (Sobral), 7: PAR (Parangaba), 8: RIO (Riomar),
+9: EXP (Expansão), 11: RPK (Riomar PK), 12: MES (Messejana), 13: EUS (Eusébio),
+17: NOR (North Shopping)
+```
+
+Aplicado em `apps/pcp-api/src/services/estoque.service.ts` via
+`COALESCE(b.abrev, b.description, ...)` priorizando a abreviação quando disponível.
+
+### Ordenação Universal em Tabelas PCP
+
+Habilitada ordenação clicável por cabeçalho em **todas as colunas** das principais
+tabelas do módulo PCP. Padrão de implementação consistente em todas as telas:
+
+**Componente reutilizável `ThSortPcp`:**
+- Renderiza cabeçalho de tabela com indicador visual de ordenação (▲/▼)
+- Cor roxa (`--bbtk-purple`) quando ativo, cinza quando inativo
+- Hover effect para indicar clicabilidade
+- Suporta alinhamento customizado (left/center/right)
+
+**Telas atualizadas:**
+
+1. **Estoque Sem Giro** (`pcp-novo/page.tsx`) — ✅ **Já tinha ordenação completa**
+   (implementada em sessão anterior)
+   - Todas as 6 colunas base + todas as colunas de distribuição por loja
+
+2. **Análise de Grade** (`pcp-analise-grade/page.tsx`) — ✅ **Ordenação adicionada**
+   - **Tabela de referências**: 12 colunas ordenáveis (Referencia, Curva, Estoque,
+     3 meses de venda, Média mensal, Cobertura, SKUs, SKUs risco, % risco, Status)
+   - **Mapa de calor (heatmap)**: Coluna Referencia + todas as colunas de tamanho +
+     coluna Completude — ordenação independente da tabela de referências
+   - Default: tabela por % risco (desc), heatmap sem ordenação inicial
+   - Estados de ordenação separados: `sortKey`/`sortDir` para tabela,
+     `heatmapSortKey`/`heatmapSortDir` para mapa de calor
+
+3. **Relatório Base** (`pcp-relatorio-base/page.tsx`) — ✅ **Ordenação adicionada**
+   - **25 colunas fixas** + **N × 3 colunas dinâmicas por filial** (GIRO/EST/COB)
+   - Todas 100% ordenáveis, incluindo colunas sticky (SKU, DESCRIÇÃO)
+   - Default: ordenado por EST. TT (estoque total, desc)
+   - Export CSV respeita a ordenação ativa na tela
+
+4. **Curva ABC** (`pcp-curva-abc/page.tsx`) — ✅ **Ordenação adicionada**
+   - **Todas as 15 colunas** (modo referencia) ou **13 colunas** (modo SKU) ordenáveis
+   - Cabeçalhos clicáveis sincronizam com o dropdown de ordenação existente
+   - Estrutura de cabeçalho complexa (2 linhas, com rowSpan/colSpan) preservada
+   - Handler `handleSort` atualiza tanto `ordenarPor` quanto `sortDir`, mantendo
+     compatibilidade com controles de filtro
+   - Default: continua sendo configurável via dropdown, headers refletem a escolha
+
+5. **Visão Geral** (`pcp-visao-geral/page.tsx`) — ⚠️ **Sem ordenação**
+   - Matriz estática (linha × canal), não faz sentido ordenar
+
+6. **Agrupamento de Cores** (`pcp/agrupamento-cores/page.tsx`) — ⚠️ **Sem ordenação**
+   - Interface modal/wizard, não é tabela tradicional
+
+**Padrão de implementação:**
+```typescript
+// Estado de ordenação
+const [sortKey, setSortKey] = useState<string | null>('defaultColumn');
+const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+// Handler de clique
+function handleSort(key: string) {
+  if (sortKey === key) {
+    setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+  } else {
+    setSortKey(key);
+    setSortDir('desc');
+  }
+}
+
+// Extração de valor ordenável
+function getSortValue(row: RowType, key: string): string | number {
+  // Mapeia key -> valor do row, com defaults adequados
+}
+
+// Dados ordenados
+const sortedData = useMemo(() => {
+  if (!sortKey) return data;
+  return [...data].sort((a, b) => {
+    const aVal = getSortValue(a, sortKey);
+    const bVal = getSortValue(b, sortKey);
+    const cmp = typeof aVal === 'string'
+      ? aVal.localeCompare(bVal as string)
+      : Number(aVal) - Number(bVal);
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+}, [data, sortKey, sortDir]);
+```
+
+**Benefícios:**
+- UX consistente em todo o módulo PCP
+- Facilita análise exploratória sem precisar exportar pra Excel
+- Ordenação client-side (instantânea, sem chamada ao backend)
+- Não afeta performance mesmo com centenas de linhas

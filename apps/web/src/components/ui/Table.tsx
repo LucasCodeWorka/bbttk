@@ -72,10 +72,11 @@ interface TableCellProps {
   isHeader?: boolean;
   onClick?: () => void;
   colSpan?: number;
+  rowSpan?: number;
   style?: CSSProperties;
 }
 
-export function TableCell({ children, className, title, align = 'left', isHeader, onClick, colSpan, style }: TableCellProps) {
+export function TableCell({ children, className, title, align = 'left', isHeader, onClick, colSpan, rowSpan, style }: TableCellProps) {
   const alignments = {
     left: 'text-left',
     center: 'text-center',
@@ -89,6 +90,7 @@ export function TableCell({ children, className, title, align = 'left', isHeader
       title={title}
       onClick={onClick}
       colSpan={colSpan}
+      rowSpan={rowSpan}
       style={style}
       className={cn(
         'px-4 py-3',

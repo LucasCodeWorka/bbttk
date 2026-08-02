@@ -341,6 +341,8 @@ export interface ReferenciaAbc {
   rankCurva: number;
   qtdVendida: number;
   mediaMensal: number;
+  giro30dVarejo: number;
+  giro30dAtacado: number;
   totalSkus: number;
   mediaPorSku: number;
   mediaPorSkuAnterior: number;
@@ -350,6 +352,9 @@ export interface ReferenciaAbc {
   valorMedioMensal: number;
   representatividadeValor: number;
   representatividadeAcumulada: number;
+  estoqueAtacado: number;
+  estoqueVarejo: number;
+  estoqueTotal: number;
 }
 
 export interface CurvaResumo {
@@ -381,11 +386,16 @@ export interface SkuAbc {
   rankQtd: number;
   qtdVendida: number;
   mediaMensal: number;
+  giro30dVarejo: number;
+  giro30dAtacado: number;
   rankValor: number;
   valorReais: number;
   valorMedioMensal: number;
   representatividadeValor: number;
   representatividadeAcumulada: number;
+  estoqueAtacado: number;
+  estoqueVarejo: number;
+  estoqueTotal: number;
 }
 
 export interface SkuCurvaResumo {
@@ -498,5 +508,98 @@ export const curvaAbcApi = {
     params.set('pageSize', String(filtro.pageSize));
     const query = params.toString();
     return fetchPcpApi<CurvaAbcSkusResponse>(`/api/pcp/curva-abc/skus${query ? `?${query}` : ''}`, { token });
+  },
+};
+
+// ---- Raio X ----
+
+export interface RaioXFiltro {
+  dataInicio: string;
+  dataFim: string;
+  referencias?: string[];
+  categorias?: string[];
+  lojas?: number[];
+  canal?: 'varejo' | 'atacado' | 'todos';
+  visao?: 'sintetico' | 'analitico';
+  agruparPorCor?: boolean;
+}
+
+export interface RaioXGrade {
+  tamanho: string;
+  estoqueInicial: number;
+  transferencias: number;
+  vendasVarejo: number;
+  vendasAtacado: number;
+  estoqueFinal: number;
+  cobertura: number;
+}
+
+export interface RaioXLoja {
+  branchCode: number;
+  branchName: string;
+  grades: RaioXGrade[];
+  totais: {
+    estoqueInicial: number;
+    transferencias: number;
+    vendasVarejo: number;
+    vendasAtacado: number;
+    estoqueFinal: number;
+    cobertura: number;
+  };
+}
+
+export interface RaioXProduto {
+  productSku?: string;
+  referenceCode: string;
+  referenceName: string;
+  productCode?: number;
+  cor?: string;
+  fotoUrl?: string | null;
+  emPromocao?: boolean;
+  lojas: RaioXLoja[];
+  totalGeral: {
+    estoqueInicial: number;
+    transferencias: number;
+    vendasVarejo: number;
+    vendasAtacado: number;
+    estoqueFinal: number;
+    cobertura: number;
+  };
+}
+
+export interface RaioXResponse {
+  produtos: RaioXProduto[];
+  config: {
+    coberturaLimiteVerde: number;
+    coberturaLimiteVermelho: number;
+  };
+}
+
+export interface RaioXProdutoSearch {
+  reference_code: string;
+  reference_name: string;
+}
+
+export const raioXApi = {
+  buscarProdutos: (token: string, search: string = '', limit: number = 20) => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    params.set('limit', String(limit));
+    const query = params.toString();
+    return fetchPcpApi<RaioXProdutoSearch[]>(`/api/pcp/raio-x/produtos${query ? `?${query}` : ''}`, { token });
+  },
+
+  getRaioX: (token: string, filtro: RaioXFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    if (filtro.referencias) params.set('referencias', filtro.referencias.join(','));
+    if (filtro.categorias) params.set('categorias', filtro.categorias.join(','));
+    if (filtro.lojas) params.set('lojas', filtro.lojas.join(','));
+    if (filtro.canal) params.set('canal', filtro.canal);
+    if (filtro.visao) params.set('visao', filtro.visao);
+    if (filtro.agruparPorCor !== undefined) params.set('agruparPorCor', String(filtro.agruparPorCor));
+    const query = params.toString();
+    return fetchPcpApi<RaioXResponse>(`/api/pcp/raio-x${query ? `?${query}` : ''}`, { token });
   },
 };

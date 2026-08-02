@@ -82,6 +82,34 @@ interface VendaProductCode {
   valor: Decimal;
 }
 
+interface VendaCanalProductCode {
+  product_code: number;
+  canal: 'varejo' | 'atacado';
+  quantidade: Decimal;
+}
+
+// Vendas dos ultimos 30 dias separadas por canal (varejo/atacado)
+async function getVenda30DiasPorCanal(): Promise<Map<number, { varejo: number; atacado: number }>> {
+  const rows = await prisma.$queryRaw<VendaCanalProductCode[]>`
+    SELECT ti.product_code,
+      CASE WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN 'atacado' ELSE 'varejo' END AS canal,
+      SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+    FROM transacoes t
+    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+    ${OPERACAO_JOIN}
+    WHERE t.transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+      AND t.status = 4 AND ${SALE_OPERATION_FILTER}
+    GROUP BY ti.product_code, canal
+  `;
+  const mapa = new Map<number, { varejo: number; atacado: number }>();
+  for (const r of rows) {
+    const atual = mapa.get(r.product_code) || { varejo: 0, atacado: 0 };
+    atual[r.canal] += decimalToNumber(r.quantidade);
+    mapa.set(r.product_code, atual);
+  }
+  return mapa;
+}
+
 // Vendas liquidas de devolucao por product_code nos ultimos meses fechados.
 // Ex: em 29/07, mesesInicio=3 e mesesFim=0 pega 01/04 ate 30/06.
 async function getVendaPorProductCodeMesesFechados(mesesInicio: number, mesesFim: number): Promise<Map<number, { quantidade: number; valor: number }>> {
@@ -112,6 +140,8 @@ export interface ReferenciaAbc {
   rankCurva: number;
   qtdVendida: number;
   mediaMensal: number;
+  giro30dVarejo: number;
+  giro30dAtacado: number;
   totalSkus: number;
   mediaPorSku: number;
   mediaPorSkuAnterior: number;
@@ -121,6 +151,9 @@ export interface ReferenciaAbc {
   valorMedioMensal: number;
   representatividadeValor: number;
   representatividadeAcumulada: number;
+  estoqueAtacado: number;
+  estoqueVarejo: number;
+  estoqueTotal: number;
 }
 
 export interface CurvaResumo {
@@ -141,11 +174,21 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
   // "meses fechados" (ver Input na tela de Configuracoes do PCP).
   const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
 
-  const [identidadeRows, vendaAtual, vendaAnterior] = await Promise.all([
+  const [identidadeRows, vendaAtual, vendaAnterior, estoqueRows, venda30d] = await Promise.all([
     getIdentidadeRows(filtro),
     getVendaPorProductCodeMesesFechados(mesesJanela, 0),
     getVendaPorProductCodeMesesFechados(mesesJanela * 2, mesesJanela),
+    getEstoqueCanalPorSku(),
+    getVenda30DiasPorCanal(),
   ]);
+
+  // Mapa de estoque por SKU
+  const estoquePorSku = new Map<string, { varejo: number; atacado: number }>();
+  for (const row of estoqueRows) {
+    const atual = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
+    atual[row.canal] += decimalToNumber(row.estoque);
+    estoquePorSku.set(row.product_sku, atual);
+  }
 
   // Agrupa SKUs por referencia
   const porReferencia = new Map<string, { nome: string; skus: Set<string>; productCodes: Set<number> }>();
@@ -157,12 +200,16 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     porReferencia.set(row.reference_code, ref);
   }
 
-  const brutos: Array<{ referenceCode: string; referenceName: string; qtdVendida: number; valorReais: number; valorMedioMensal: number; totalSkus: number; qtdAnterior: number }> = [];
+  const brutos: Array<{ referenceCode: string; referenceName: string; qtdVendida: number; valorReais: number; valorMedioMensal: number; totalSkus: number; qtdAnterior: number; estoqueVarejo: number; estoqueAtacado: number; giro30dVarejo: number; giro30dAtacado: number }> = [];
 
   for (const [referenceCode, dados] of porReferencia) {
     let qtdVendida = 0;
     let valorReais = 0;
     let qtdAnterior = 0;
+    let estoqueVarejo = 0;
+    let estoqueAtacado = 0;
+    let giro30dVarejo = 0;
+    let giro30dAtacado = 0;
     for (const pc of dados.productCodes) {
       const atual = vendaAtual.get(pc);
       if (atual) {
@@ -171,9 +218,20 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       }
       const anterior = vendaAnterior.get(pc);
       if (anterior) qtdAnterior += anterior.quantidade;
+      const giro = venda30d.get(pc);
+      if (giro) {
+        giro30dVarejo += giro.varejo;
+        giro30dAtacado += giro.atacado;
+      }
+    }
+    // Soma estoque de todos os SKUs da referência
+    for (const sku of dados.skus) {
+      const estoque = estoquePorSku.get(sku) || { varejo: 0, atacado: 0 };
+      estoqueVarejo += estoque.varejo;
+      estoqueAtacado += estoque.atacado;
     }
     if (qtdVendida <= 0) continue; // so entra quem foi "analisado" (teve venda no periodo)
-    brutos.push({ referenceCode, referenceName: dados.nome, qtdVendida, valorReais, valorMedioMensal: valorReais / mesesJanela, totalSkus: dados.skus.size, qtdAnterior });
+    brutos.push({ referenceCode, referenceName: dados.nome, qtdVendida, valorReais, valorMedioMensal: valorReais / mesesJanela, totalSkus: dados.skus.size, qtdAnterior, estoqueVarejo, estoqueAtacado, giro30dVarejo, giro30dAtacado });
   }
 
   const totalAnalisadas = brutos.length;
@@ -219,6 +277,8 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       rankCurva: rankValorPorReferencia.get(r.referenceCode) || 0,
       qtdVendida: round(r.qtdVendida, 0),
       mediaMensal: round(r.qtdVendida / mesesJanela, 0),
+      giro30dVarejo: round(r.giro30dVarejo, 0),
+      giro30dAtacado: round(r.giro30dAtacado, 0),
       totalSkus: r.totalSkus,
       mediaPorSku,
       mediaPorSkuAnterior,
@@ -228,6 +288,9 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       valorMedioMensal: round(r.valorMedioMensal, 2),
       representatividadeValor: round(representatividadePorReferencia.get(r.referenceCode)?.percent || 0, 2),
       representatividadeAcumulada: round(representatividadePorReferencia.get(r.referenceCode)?.acumulado || 0, 2),
+      estoqueAtacado: round(r.estoqueAtacado, 0),
+      estoqueVarejo: round(r.estoqueVarejo, 0),
+      estoqueTotal: round(r.estoqueVarejo + r.estoqueAtacado, 0),
     };
   });
 
@@ -283,11 +346,16 @@ export interface SkuAbc {
   rankQtd: number;
   qtdVendida: number;
   mediaMensal: number;
+  giro30dVarejo: number;
+  giro30dAtacado: number;
   rankValor: number;
   valorReais: number;
   valorMedioMensal: number;
   representatividadeValor: number;
   representatividadeAcumulada: number;
+  estoqueAtacado: number;
+  estoqueVarejo: number;
+  estoqueTotal: number;
 }
 
 export interface SkuCurvaResumo {
@@ -304,20 +372,33 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
   const config = await getConfig();
   const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
 
-  const [identidadeRows, vendaAtual] = await Promise.all([
+  const [identidadeRows, vendaAtual, estoqueRows, venda30d] = await Promise.all([
     getIdentidadeRows(filtro),
     getVendaPorProductCodeMesesFechados(mesesJanela, 0),
+    getEstoqueCanalPorSku(),
+    getVenda30DiasPorCanal(),
   ]);
+
+  // Mapa de estoque por SKU
+  const estoquePorSku = new Map<string, { varejo: number; atacado: number }>();
+  for (const row of estoqueRows) {
+    const atual = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
+    atual[row.canal] += decimalToNumber(row.estoque);
+    estoquePorSku.set(row.product_sku, atual);
+  }
 
   const brutos: Array<{
     sku: string; refCorTam: string; referenceCode: string; referenceName: string;
-    cor: string; tamanho: string; qtdVendida: number; valorReais: number;
+    cor: string; tamanho: string; qtdVendida: number; valorReais: number; estoqueVarejo: number; estoqueAtacado: number;
+    giro30dVarejo: number; giro30dAtacado: number;
   }> = [];
 
   for (const row of identidadeRows) {
     if (!row.reference_code || row.product_code === null) continue;
     const venda = vendaAtual.get(row.product_code);
     if (!venda || venda.quantidade <= 0) continue;
+    const estoque = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
+    const giro = venda30d.get(row.product_code) || { varejo: 0, atacado: 0 };
     brutos.push({
       sku: row.product_sku,
       refCorTam: buildRefCorTam(row),
@@ -327,6 +408,10 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
       tamanho: row.size?.trim() || 'SEM TAM',
       qtdVendida: venda.quantidade,
       valorReais: venda.valor,
+      estoqueVarejo: estoque.varejo,
+      estoqueAtacado: estoque.atacado,
+      giro30dVarejo: giro.varejo,
+      giro30dAtacado: giro.atacado,
     });
   }
 
@@ -372,11 +457,16 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
     rankQtd: rankQtdPorSku.get(r.sku) || 0,
     qtdVendida: round(r.qtdVendida, 0),
     mediaMensal: round(r.qtdVendida / mesesJanela, 0),
+    giro30dVarejo: round(r.giro30dVarejo, 0),
+    giro30dAtacado: round(r.giro30dAtacado, 0),
     rankValor: rankValorPorSku.get(r.sku) || 0,
     valorReais: round(r.valorReais, 2),
     valorMedioMensal: round(r.valorMedioMensal, 2),
     representatividadeValor: round(representatividadePorSku.get(r.sku)?.percent || 0, 2),
     representatividadeAcumulada: round(representatividadePorSku.get(r.sku)?.acumulado || 0, 2),
+    estoqueAtacado: round(r.estoqueAtacado, 0),
+    estoqueVarejo: round(r.estoqueVarejo, 0),
+    estoqueTotal: round(r.estoqueVarejo + r.estoqueAtacado, 0),
   }));
 
   itens.sort((a, b) => a.rankValor - b.rankValor);

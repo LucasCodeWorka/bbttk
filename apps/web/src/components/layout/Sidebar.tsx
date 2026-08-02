@@ -78,6 +78,18 @@ const iconConfigurador = (
   </svg>
 );
 
+const iconRelatorios = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>
+);
+
+const iconRaioX = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+  </svg>
+);
+
 const navEntries: NavEntry[] = [
   { type: 'link', label: 'Inicio', href: '/inicio', icon: iconInicio },
   {
@@ -106,6 +118,7 @@ const navEntries: NavEntry[] = [
       { label: 'Metas', href: '/metas', icon: iconMetas, moduleKey: 'comercial' },
       { label: 'Agrupamento de Cores', href: '/pcp/agrupamento-cores', icon: iconAgrupamentoCores, moduleKey: 'pcp' },
       { label: 'Config. Relatório PCP', href: '/pcp/relatorio-base-config', icon: iconConfigurador, adminOnly: true },
+      { label: 'Config. Estoque Sem Giro', href: '/pcp/estoque-sem-giro-config', icon: iconConfigurador, moduleKey: 'pcp_servico' },
       { label: 'Usuarios', href: '/usuarios', icon: iconUsuarios, adminOnly: true },
     ],
   },
@@ -118,6 +131,15 @@ const navEntries: NavEntry[] = [
       { label: 'Estoque Sem Giro', href: '/pcp-novo', icon: iconAgrupamentoCores },
       { label: 'Análise de Grade', href: '/pcp-analise-grade', icon: iconAgrupamentoCores },
       { label: 'Curva ABC', href: '/pcp-curva-abc', icon: iconAgrupamentoCores },
+    ],
+  },
+  {
+    type: 'module',
+    key: 'relatorios',
+    label: 'Relatórios',
+    icon: iconRelatorios,
+    items: [
+      { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
     ],
   },
 ];

@@ -119,6 +119,7 @@ model ClassificacaoOperacao {
 model branches {
   branch_code       Int         @id
   branch_name       String      @db.VarChar(100)
+  abrev             String?     @db.VarChar(10)
   updated_at        DateTime?   @default(now()) @db.Timestamp(6)
   description       String?     @db.VarChar(255)
   fantasy_name      String?     @db.VarChar(150)
@@ -323,6 +324,13 @@ model PcpRelatorioConfig {
   pdvVarejoCode         Int @default(1) @map("pdv_varejo_code")
   pdvAtacadoCode        Int @default(3) @map("pdv_atacado_code")
   precoCustoBranchCode  Int @default(1) @map("preco_custo_branch_code")
+  // Limites de cobertura para coloracao no relatorio Raio X: ate coberturaLimiteVerde
+  // fonte verde, a partir de coberturaLimiteVermelho fonte vermelha
+  coberturaLimiteVerde     Decimal @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho  Decimal @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  // Periodo de maturacao em dias: produtos que chegaram na loja ha menos tempo que isso
+  // nao sao sinalizados como "sem giro" (evita marcar produtos novos como problema)
+  maturacaoDias        Int @default(30) @map("maturacao_dias")
   createdById          Int?     @map("created_by")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")

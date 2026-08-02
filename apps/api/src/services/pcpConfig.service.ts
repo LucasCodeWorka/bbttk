@@ -245,3 +245,43 @@ export async function updateCurvaAbcConfig(input: UpdateCurvaAbcConfigInput, use
     update: dados,
   });
 }
+
+export interface UpdateEstoqueSemGiroConfigInput {
+  relatorio: string;
+  maturacaoDias: number;
+  coberturaLimiteVerde: number;
+  coberturaLimiteVermelho: number;
+}
+
+// Configuracoes do relatorio Estoque Sem Giro (periodo de maturacao e limiares de cobertura)
+export async function getEstoqueSemGiroConfig(relatorio: string) {
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+}
+
+export async function updateEstoqueSemGiroConfig(input: UpdateEstoqueSemGiroConfigInput, userId?: number) {
+  if (!Number.isInteger(input.maturacaoDias) || input.maturacaoDias < 0) {
+    throw new Error('maturacaoDias precisa ser um numero inteiro nao-negativo');
+  }
+  if (typeof input.coberturaLimiteVerde !== 'number' || input.coberturaLimiteVerde < 0) {
+    throw new Error('coberturaLimiteVerde precisa ser um numero nao-negativo');
+  }
+  if (typeof input.coberturaLimiteVermelho !== 'number' || input.coberturaLimiteVermelho < 0) {
+    throw new Error('coberturaLimiteVermelho precisa ser um numero nao-negativo');
+  }
+
+  const dados = {
+    maturacaoDias: input.maturacaoDias,
+    coberturaLimiteVerde: input.coberturaLimiteVerde,
+    coberturaLimiteVermelho: input.coberturaLimiteVermelho,
+  };
+
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+}

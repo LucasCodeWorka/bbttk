@@ -8,6 +8,7 @@ import relatorioBaseRoutes from './routes/relatorioBase.routes.js';
 import visaoGeralRoutes from './routes/visaoGeral.routes.js';
 import analiseGradeRoutes from './routes/analiseGrade.routes.js';
 import curvaAbcRoutes from './routes/curvaAbc.routes.js';
+import raioXRoutes from './routes/raioX.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -24,6 +25,7 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), relatorioBaseRo
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), visaoGeralRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), raioXRoutes);
 
 async function start() {
   try {

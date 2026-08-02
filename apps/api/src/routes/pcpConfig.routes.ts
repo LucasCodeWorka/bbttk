@@ -158,4 +158,33 @@ router.put('/pcp-config/curva-abc', async (req: Request, res: Response) => {
   }
 });
 
+// Configuracoes do Estoque Sem Giro (maturacao e limiares de cobertura)
+router.get('/pcp-config/estoque-sem-giro', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'estoque_sem_giro';
+    const config = await pcpConfigService.getEstoqueSemGiroConfig(relatorio);
+    res.json({ config });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/estoque-sem-giro', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, maturacaoDias, coberturaLimiteVerde, coberturaLimiteVermelho } = req.body;
+    if (!relatorio) {
+      res.status(400).json({ error: 'relatorio e obrigatorio' });
+      return;
+    }
+
+    const config = await pcpConfigService.updateEstoqueSemGiroConfig(
+      { relatorio, maturacaoDias, coberturaLimiteVerde, coberturaLimiteVermelho },
+      req.user?.userId
+    );
+    res.json({ config });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 export default router;

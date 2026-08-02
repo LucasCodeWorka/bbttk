@@ -162,7 +162,26 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
   const coberturaFilter = buildCoberturaFilter(params.cobertura);
 
+  // Busca o período de maturação configurado
+  const config = await prisma.pcpRelatorioConfig.findFirst({
+    where: { relatorio: 'estoque_sem_giro' },
+    select: { maturacaoDias: true },
+  });
+  const maturacaoDias = config?.maturacaoDias ?? 30;
+
   return prisma.$queryRaw<AnaliticoRow[]>`
+    WITH primeira_entrada AS (
+      SELECT
+        ti.product_code,
+        t.branch_code,
+        MIN(t.transaction_date) as primeira_entrada_data
+      FROM transacoes t
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
+      LEFT JOIN classificacao_operacoes co ON co.operation_code = t.operation_code
+      WHERE t.status = 4
+        AND co.operations_type = 'E'
+      GROUP BY ti.product_code, t.branch_code
+    )
     SELECT
       a.product_sku,
       a.product_code,
@@ -173,7 +192,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       NULLIF(TRIM(p.size), '') as tamanho,
       NULLIF(TRIM(ag.nome), '') as cor_de_para,
       a.branch_code,
-      COALESCE(NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
+      COALESCE(NULLIF(TRIM(b.abrev), ''), NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
       a.ultima_venda,
       COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
       COALESCE(a.quantidade_estoque, 0) as quantidade,
@@ -190,7 +209,14 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
     LEFT JOIN agrupamento_grupos ag
       ON ag.id = am.grupo_id
       AND ag.tipo = am.tipo
+    LEFT JOIN primeira_entrada pe
+      ON pe.product_code = a.product_code
+      AND pe.branch_code = a.branch_code
     WHERE COALESCE(a.quantidade_estoque, 0) > 0
+      AND (
+        pe.primeira_entrada_data IS NULL
+        OR CURRENT_DATE - pe.primeira_entrada_data::date >= ${maturacaoDias}
+      )
       ${branchFilter}
       ${produtoFilter}
       ${coberturaFilter}

@@ -106,6 +106,46 @@ function Badge({ value, className }: { value: string; className: string }) {
   return <span className={cn('inline-flex px-2 py-0.5 rounded-full text-xs font-semibold', className)}>{value}</span>;
 }
 
+function ThSortPcp({
+  label,
+  sortKeyName,
+  sortKey,
+  sortDir,
+  onSort,
+  align = 'left',
+  className,
+  title,
+}: {
+  label: string;
+  sortKeyName: string;
+  sortKey: string | null;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: string) => void;
+  align?: 'left' | 'center' | 'right';
+  className?: string;
+  title?: string;
+}) {
+  const active = sortKey === sortKeyName;
+  return (
+    <TableCell
+      isHeader
+      align={align}
+      className={cn('cursor-pointer select-none hover:bg-gray-100', className)}
+      onClick={() => onSort(sortKeyName)}
+      title={title}
+    >
+      <span className="flex items-center gap-1.5">
+        <span>{label}</span>
+        {active ? (
+          <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '▲' : '▼'}</span>
+        ) : (
+          <span className="text-gray-300">▲</span>
+        )}
+      </span>
+    </TableCell>
+  );
+}
+
 function coberturaLabel(value: number | null) {
   return value === null ? '-' : `${value.toFixed(2)} m`;
 }
@@ -270,6 +310,66 @@ export default function PcpAnaliseGradePage() {
   const [referenciaBusca, setReferenciaBusca] = useState('');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
   const [heatmapLimit, setHeatmapLimit] = useState(15);
+  const [sortKey, setSortKey] = useState<string | null>('percentGradeEmRisco');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [heatmapSortKey, setHeatmapSortKey] = useState<string | null>(null);
+  const [heatmapSortDir, setHeatmapSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  function handleHeatmapSort(key: string) {
+    if (heatmapSortKey === key) {
+      setHeatmapSortDir(heatmapSortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setHeatmapSortKey(key);
+      setHeatmapSortDir('desc');
+    }
+  }
+
+  function getSortValue(ref: PcpGradeReferencia, key: string): string | number {
+    switch (key) {
+      case 'referenceCode': return ref.referenceCode || '';
+      case 'curva': return ref.curva || '';
+      case 'estoqueTotal': return ref.estoqueTotal || 0;
+      case 'vendaMes1': return ref.vendaMes1 || 0;
+      case 'vendaMes2': return ref.vendaMes2 || 0;
+      case 'vendaMes3': return ref.vendaMes3 || 0;
+      case 'mediaMensal': return ref.mediaMensal || 0;
+      case 'coberturaGeral': return ref.coberturaGeral ?? -1;
+      case 'totalSkus': return ref.totalSkus || 0;
+      case 'skusEmRisco': return ref.skusEmRisco || 0;
+      case 'percentGradeEmRisco': return ref.percentGradeEmRisco || 0;
+      case 'status': return ref.status || '';
+      default: return '';
+    }
+  }
+
+  const referenciasSorted = useMemo(() => {
+    if (!data) return [];
+    const lista = [...data.referencias];
+    if (!sortKey) return lista;
+
+    return lista.sort((a, b) => {
+      const aVal = getSortValue(a, sortKey);
+      const bVal = getSortValue(b, sortKey);
+      let cmp = 0;
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        cmp = aVal.localeCompare(bVal);
+      } else {
+        cmp = Number(aVal) - Number(bVal);
+      }
+
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [data, sortKey, sortDir]);
 
   useEffect(() => {
     if (!token) return;
@@ -327,14 +427,42 @@ export default function PcpAnaliseGradePage() {
     });
     const tamanhos = [...tamanhosSet].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-    const linhas = porReferencia.map(({ referencia, mapa }) => ({
+    let linhas = porReferencia.map(({ referencia, mapa }) => ({
       referencia,
       mapa,
       completude: tamanhos.length > 0 ? Math.round((mapa.size / tamanhos.length) * 100) : 0,
     }));
 
+    // Ordenação customizada do heatmap
+    if (heatmapSortKey) {
+      linhas = [...linhas].sort((a, b) => {
+        let aVal: string | number = '';
+        let bVal: string | number = '';
+
+        if (heatmapSortKey === 'referencia') {
+          aVal = a.referencia.referenceCode || '';
+          bVal = b.referencia.referenceCode || '';
+        } else if (heatmapSortKey === 'completude') {
+          aVal = a.completude;
+          bVal = b.completude;
+        } else {
+          // Ordenação por tamanho específico
+          const tamanho = heatmapSortKey;
+          const aCelula = a.mapa.get(tamanho);
+          const bCelula = b.mapa.get(tamanho);
+          aVal = aCelula?.estoque ?? -1;
+          bVal = bCelula?.estoque ?? -1;
+        }
+
+        const cmp = typeof aVal === 'string'
+          ? aVal.localeCompare(bVal as string)
+          : Number(aVal) - Number(bVal);
+        return heatmapSortDir === 'asc' ? cmp : -cmp;
+      });
+    }
+
     return { tamanhos, linhas, riscoCoberturaMeses };
-  }, [data, heatmapLimit]);
+  }, [data, heatmapLimit, heatmapSortKey, heatmapSortDir]);
 
   return (
     <div className="space-y-6">
@@ -453,11 +581,11 @@ export default function PcpAnaliseGradePage() {
           <Table className="max-h-[520px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
-                <TableCell isHeader>Referencia</TableCell>
+                <ThSortPcp label="Referencia" sortKeyName="referencia" sortKey={heatmapSortKey} sortDir={heatmapSortDir} onSort={handleHeatmapSort} />
                 {heatmap.tamanhos.map((tamanho) => (
-                  <TableCell key={tamanho} isHeader align="center">{tamanho}</TableCell>
+                  <ThSortPcp key={tamanho} label={tamanho} sortKeyName={tamanho} sortKey={heatmapSortKey} sortDir={heatmapSortDir} onSort={handleHeatmapSort} align="center" />
                 ))}
-                <TableCell isHeader align="right">Compl.</TableCell>
+                <ThSortPcp label="Compl." sortKeyName="completude" sortKey={heatmapSortKey} sortDir={heatmapSortDir} onSort={handleHeatmapSort} align="right" />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -500,18 +628,18 @@ export default function PcpAnaliseGradePage() {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell isHeader>Referencia</TableCell>
-              <TableCell isHeader align="center">Curva</TableCell>
-              <TableCell isHeader align="right">Estoque</TableCell>
-              <TableCell isHeader align="right">{meses[0]}</TableCell>
-              <TableCell isHeader align="right">{meses[1]}</TableCell>
-              <TableCell isHeader align="right">{meses[2]}</TableCell>
-              <TableCell isHeader align="right">Media mensal</TableCell>
-              <TableCell isHeader align="right">Cobertura</TableCell>
-              <TableCell isHeader align="right">SKUs</TableCell>
-              <TableCell isHeader align="right">SKUs risco</TableCell>
-              <TableCell isHeader align="right">% risco</TableCell>
-              <TableCell isHeader align="center">Status</TableCell>
+              <ThSortPcp label="Referencia" sortKeyName="referenceCode" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <ThSortPcp label="Curva" sortKeyName="curva" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" />
+              <ThSortPcp label="Estoque" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label={meses[0]} sortKeyName="vendaMes1" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label={meses[1]} sortKeyName="vendaMes2" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label={meses[2]} sortKeyName="vendaMes3" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="Media mensal" sortKeyName="mediaMensal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="Cobertura" sortKeyName="coberturaGeral" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="SKUs" sortKeyName="totalSkus" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="SKUs risco" sortKeyName="skusEmRisco" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="% risco" sortKeyName="percentGradeEmRisco" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="Status" sortKeyName="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -519,12 +647,12 @@ export default function PcpAnaliseGradePage() {
               <TableRow>
                 <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
-            ) : (data?.referencias || []).length === 0 ? (
+            ) : referenciasSorted.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
               </TableRow>
             ) : (
-              data?.referencias.map((r) => {
+              referenciasSorted.map((r) => {
                 const expandida = referenciaExpandida === r.referenceCode;
                 return (
                   <Fragment key={r.referenceCode}>

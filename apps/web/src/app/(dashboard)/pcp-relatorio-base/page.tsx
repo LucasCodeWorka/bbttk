@@ -20,6 +20,49 @@ import {
 import { cn, formatDate, formatMoney, formatNumber } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 
+function ThSortPcp({
+  label,
+  sortKeyName,
+  sortKey,
+  sortDir,
+  onSort,
+  align = 'left',
+  className,
+  style,
+  title,
+}: {
+  label: string;
+  sortKeyName: string;
+  sortKey: string | null;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: string) => void;
+  align?: 'left' | 'center' | 'right';
+  className?: string;
+  style?: React.CSSProperties;
+  title?: string;
+}) {
+  const active = sortKey === sortKeyName;
+  return (
+    <TableCell
+      isHeader
+      align={align}
+      className={cn('cursor-pointer select-none hover:bg-gray-100', className)}
+      style={style}
+      onClick={() => onSort(sortKeyName)}
+      title={title}
+    >
+      <span className="flex items-center gap-1.5">
+        <span>{label}</span>
+        {active ? (
+          <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '▲' : '▼'}</span>
+        ) : (
+          <span className="text-gray-300">▲</span>
+        )}
+      </span>
+    </TableCell>
+  );
+}
+
 const RANKING_OPTIONS = [
   { value: '50', label: 'Top 50 (por estoque)' },
   { value: '100', label: 'Top 100' },
@@ -120,6 +163,8 @@ export default function PcpRelatorioBasePage() {
   const [rankingLimit, setRankingLimit] = useState<'50' | '100' | '250' | 'all'>('50');
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>('estTt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const carregarDados = useCallback(async () => {
     if (!token) return;
@@ -174,7 +219,77 @@ export default function PcpRelatorioBasePage() {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
   }
 
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  function getSortValue(row: RelatorioBaseRow, key: string): string | number {
+    // Fixed columns
+    if (key === 'sku') return row.sku || '';
+    if (key === 'descricao') return row.descricao || '';
+    if (key === 'status') return row.status || '';
+    if (key === 'codigo') return row.codigo ?? -1;
+    if (key === 'categoria') return row.categoria || '';
+    if (key === 'linha') return row.linha || '';
+    if (key === 'genero') return row.genero || '';
+    if (key === 'modelo') return row.modelo || '';
+    if (key === 'lancamento') return row.lancamento || '';
+    if (key === 'ultimaEntrada') return row.ultimaEntrada || '';
+    if (key === 'custo') return row.custo ?? -1;
+    if (key === 'pdvAtual') return 0;
+    if (key === 'pdvRealVar') return row.pdvRealVar ?? -1;
+    if (key === 'markupVar') return row.markupVar ?? -1;
+    if (key === 'pdvRealAta') return row.pdvRealAta ?? -1;
+    if (key === 'markupAta') return row.markupAta ?? -1;
+    if (key === 'estTt') return row.estTt || 0;
+    if (key === 'estDisponivel') return 0;
+    if (key === 'transito') return 0;
+    if (key === 'emProducao') return 0;
+    if (key === 'estPrevisto') return 0;
+    if (key === 'giroTt1') return row.giroTt1 || 0;
+    if (key === 'giroTt3') return row.giroTt3 || 0;
+    if (key === 'giroTt6') return row.giroTt6 || 0;
+
+    // Dynamic branch columns - format: branch-{branchCode}-{field}
+    if (key.startsWith('branch-')) {
+      const parts = key.split('-');
+      const branchCode = parseInt(parts[1]);
+      const field = parts[2]; // giro, est, or cob
+      const dados = row.branches[branchCode];
+      if (!dados) return field === 'cob' ? '' : 0;
+      if (field === 'giro') return dados.giro ?? 0;
+      if (field === 'est') return dados.est ?? 0;
+      if (field === 'cob') return dados.cob ?? -1;
+    }
+
+    return '';
+  }
+
   const colunas = data?.colunas || [];
+
+  const sortedRows = useMemo(() => {
+    if (!data || !sortKey) return data?.rows || [];
+    const rows = [...data.rows];
+
+    return rows.sort((a, b) => {
+      const aVal = getSortValue(a, sortKey);
+      const bVal = getSortValue(b, sortKey);
+      let cmp = 0;
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        cmp = aVal.localeCompare(bVal);
+      } else {
+        cmp = Number(aVal) - Number(bVal);
+      }
+
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [data, sortKey, sortDir]);
   const totalColunas = COLUNAS_FIXAS.length + colunas.length * 3;
 
   function exportarExcel() {
@@ -193,7 +308,7 @@ export default function PcpRelatorioBasePage() {
         { header: `${c.label} - COB`, value: (r: RelatorioBaseRow) => r.branches[c.branchCode]?.cob ?? '' },
       ]),
     ];
-    exportToCsv('relatorio-base-pcp', columns, data.rows);
+    exportToCsv('relatorio-base-pcp', columns, sortedRows);
   }
 
   return (
@@ -290,15 +405,17 @@ export default function PcpRelatorioBasePage() {
           <TableHead className="sticky top-0 z-10">
             <TableRow>
               {COLUNAS_FIXAS.map((c) => (
-                <TableCell
+                <ThSortPcp
                   key={c.key}
-                  isHeader
+                  label={c.label}
+                  sortKeyName={c.key}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                   align={c.align}
                   className={cn('!px-1.5 !py-2 whitespace-nowrap', c.sticky && 'sticky z-20 bg-gray-50')}
                   style={stickyStyleFor(c.sticky)}
-                >
-                  {c.label}
-                </TableCell>
+                />
               ))}
               {colunas.map((c) => (
                 <TableCell
@@ -324,9 +441,33 @@ export default function PcpRelatorioBasePage() {
               ))}
               {colunas.map((c) => (
                 <Fragment key={c.branchCode}>
-                  <TableCell isHeader align="center" className="bg-blue-50/60 text-blue-800 !px-1 !py-1">GIRO</TableCell>
-                  <TableCell isHeader align="center" className="bg-blue-50/60 text-blue-800 !px-1 !py-1">EST</TableCell>
-                  <TableCell isHeader align="center" className="bg-blue-50/60 text-blue-800 !px-1 !py-1">COB</TableCell>
+                  <ThSortPcp
+                    label="GIRO"
+                    sortKeyName={`branch-${c.branchCode}-giro`}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                    align="center"
+                    className="bg-blue-50/60 text-blue-800 !px-1 !py-1"
+                  />
+                  <ThSortPcp
+                    label="EST"
+                    sortKeyName={`branch-${c.branchCode}-est`}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                    align="center"
+                    className="bg-blue-50/60 text-blue-800 !px-1 !py-1"
+                  />
+                  <ThSortPcp
+                    label="COB"
+                    sortKeyName={`branch-${c.branchCode}-cob`}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={handleSort}
+                    align="center"
+                    className="bg-blue-50/60 text-blue-800 !px-1 !py-1"
+                  />
                 </Fragment>
               ))}
             </TableRow>
@@ -338,14 +479,14 @@ export default function PcpRelatorioBasePage() {
                   Carregando...
                 </TableCell>
               </TableRow>
-            ) : !data || data.rows.length === 0 ? (
+            ) : sortedRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={totalColunas} align="center" className="py-10 text-gray-500">
                   Nenhum SKU encontrado para os filtros selecionados
                 </TableCell>
               </TableRow>
             ) : (
-              data.rows.map((row) => (
+              sortedRows.map((row) => (
                 <TableRow key={row.sku}>
                   {COLUNAS_FIXAS.map((c) => (
                     <TableCell
