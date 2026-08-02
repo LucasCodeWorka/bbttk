@@ -68,11 +68,18 @@ export default function DashboardPage() {
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortKeyVendedores, setSortKeyVendedores] = useState<string | null>(null);
+  const [sortDirVendedores, setSortDirVendedores] = useState<'asc' | 'desc'>('desc');
+  const [sortKeyProdutos, setSortKeyProdutos] = useState<string | null>(null);
+  const [sortDirProdutos, setSortDirProdutos] = useState<'asc' | 'desc'>('desc');
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
   const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'semana'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
   const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
   const [comparativoScrollWidth, setComparativoScrollWidth] = useState(0);
+  const vendedoresScrollRef = useRef<HTMLDivElement>(null);
+  const vendedoresTopScrollRef = useRef<HTMLDivElement>(null);
+  const [vendedoresScrollWidth, setVendedoresScrollWidth] = useState(0);
 
   function rolarComparativo(direcao: 'esquerda' | 'direita') {
     comparativoScrollRef.current?.scrollBy({ left: direcao === 'esquerda' ? -320 : 320, behavior: 'smooth' });
@@ -81,6 +88,13 @@ export default function DashboardPage() {
   function sincronizarComparativoPeloTopo() {
     const topo = comparativoTopScrollRef.current;
     const tabela = comparativoScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
+  }
+
+  function sincronizarVendedoresPeloTopo() {
+    const topo = vendedoresTopScrollRef.current;
+    const tabela = vendedoresScrollRef.current;
     if (!topo || !tabela) return;
     tabela.scrollLeft = topo.scrollLeft;
   }
@@ -189,10 +203,62 @@ export default function DashboardPage() {
   }, [comparativo, projecao, sortKey, sortDir]);
 
   const vendedoresRanking = useMemo(() => {
-    const lista = vendedores?.vendedores || [];
+    let lista = vendedores?.vendedores || [];
+
+    // Aplicar ordenação se houver
+    if (sortKeyVendedores) {
+      lista = [...lista].sort((a, b) => {
+        let aVal: number | string = 0;
+        let bVal: number | string = 0;
+
+        switch (sortKeyVendedores) {
+          case 'seller_name':
+            aVal = a.seller_name;
+            bVal = b.seller_name;
+            break;
+          case 'faturamento':
+            aVal = a.faturamento;
+            bVal = b.faturamento;
+            break;
+          case 'meta':
+            aVal = a.meta;
+            bVal = b.meta;
+            break;
+          case 'debito_meta':
+            aVal = a.debito_meta;
+            bVal = b.debito_meta;
+            break;
+          case 'pct_meta':
+            aVal = a.pct_meta;
+            bVal = b.pct_meta;
+            break;
+          case 'pct_proj':
+            aVal = a.pct_proj;
+            bVal = b.pct_proj;
+            break;
+          case 'pa':
+            aVal = a.pa;
+            bVal = b.pa;
+            break;
+          case 'tm':
+            aVal = a.tm;
+            bVal = b.tm;
+            break;
+          default:
+            return 0;
+        }
+
+        if (typeof aVal === 'string' && typeof bVal === 'string') {
+          return aVal.localeCompare(bVal) * (sortDirVendedores === 'asc' ? 1 : -1);
+        }
+        return ((aVal as number) - (bVal as number)) * (sortDirVendedores === 'asc' ? 1 : -1);
+      });
+    }
+
+    // Aplicar limite
     if (limiteRankingVendedores === 'todos') return lista;
     return lista.slice(0, Number(limiteRankingVendedores));
-  }, [vendedores, limiteRankingVendedores]);
+  }, [vendedores, limiteRankingVendedores, sortKeyVendedores, sortDirVendedores]);
 
   const totaisVendedoresRanking = useMemo(() => {
     const faturamento = vendedoresRanking.reduce((sum, v) => sum + v.faturamento, 0);
@@ -212,6 +278,46 @@ export default function DashboardPage() {
       tm: transacoes > 0 ? faturamento / transacoes : 0,
     };
   }, [vendedoresRanking]);
+
+  const produtosOrdenados = useMemo(() => {
+    const lista = produtos?.produtos || [];
+    if (!sortKeyProdutos) return lista;
+
+    return [...lista].sort((a, b) => {
+      let aVal: number | string = 0;
+      let bVal: number | string = 0;
+
+      switch (sortKeyProdutos) {
+        case 'referencia':
+          aVal = a.referencia;
+          bVal = b.referencia;
+          break;
+        case 'nome':
+          aVal = a.nome;
+          bVal = b.nome;
+          break;
+        case 'quantidade':
+          aVal = a.quantidade;
+          bVal = b.quantidade;
+          break;
+        case 'valor':
+          aVal = a.valor;
+          bVal = b.valor;
+          break;
+        case 'pct_total':
+          aVal = vendas?.total?.faturamento ? (a.valor / vendas.total.faturamento) * 100 : 0;
+          bVal = vendas?.total?.faturamento ? (b.valor / vendas.total.faturamento) * 100 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return aVal.localeCompare(bVal) * (sortDirProdutos === 'asc' ? 1 : -1);
+      }
+      return ((aVal as number) - (bVal as number)) * (sortDirProdutos === 'asc' ? 1 : -1);
+    });
+  }, [produtos, sortKeyProdutos, sortDirProdutos, vendas]);
   useEffect(() => {
     const tabela = comparativoScrollRef.current;
     const topo = comparativoTopScrollRef.current;
@@ -247,12 +353,65 @@ export default function DashboardPage() {
     };
   }, [linhas.length, isLoading]);
 
+  useEffect(() => {
+    const tabela = vendedoresScrollRef.current;
+    const topo = vendedoresTopScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setVendedoresScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    const tableElement = tabela.querySelector('table');
+    if (tableElement) resizeObserver?.observe(tableElement);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [vendedoresRanking.length, isLoading]);
+
   function handleSort(key: string) {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
       setSortDir('desc');
+    }
+  }
+
+  function handleSortVendedores(key: string) {
+    if (sortKeyVendedores === key) {
+      setSortDirVendedores((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKeyVendedores(key);
+      setSortDirVendedores('desc');
+    }
+  }
+
+  function handleSortProdutos(key: string) {
+    if (sortKeyProdutos === key) {
+      setSortDirProdutos((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKeyProdutos(key);
+      setSortDirProdutos('desc');
     }
   }
 
@@ -433,10 +592,66 @@ export default function DashboardPage() {
   }
   function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);
+    const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
     return (
-      <TableCell isHeader align={align} className="whitespace-nowrap" onClick={() => handleSort(sortKeyName)}>
-        {label}
-        {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+      <TableCell
+        isHeader
+        align={align}
+        className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+        onClick={() => handleSort(sortKeyName)}
+      >
+        <span className={`flex items-center gap-1 ${justifyClass}`}>
+          {label}
+          {active ? (
+            <span className="text-xs">{sortDir === 'asc' ? '▲' : '▼'}</span>
+          ) : (
+            <span className="text-xs text-gray-300">▼</span>
+          )}
+        </span>
+      </TableCell>
+    );
+  }
+
+  function ThSortVendedores({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+    const active = sortKeyVendedores === sortKeyName;
+    const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
+    return (
+      <TableCell
+        isHeader
+        align={align}
+        className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+        onClick={() => handleSortVendedores(sortKeyName)}
+      >
+        <span className={`flex items-center gap-1 ${justifyClass}`}>
+          {label}
+          {active ? (
+            <span className="text-xs">{sortDirVendedores === 'asc' ? '▲' : '▼'}</span>
+          ) : (
+            <span className="text-xs text-gray-300">▼</span>
+          )}
+        </span>
+      </TableCell>
+    );
+  }
+
+  function ThSortProdutos({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+    const active = sortKeyProdutos === sortKeyName;
+    const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
+    return (
+      <TableCell
+        isHeader
+        align={align}
+        className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+        onClick={() => handleSortProdutos(sortKeyName)}
+      >
+        <span className={`flex items-center gap-1 ${justifyClass}`}>
+          {label}
+          {active ? (
+            <span className="text-xs">{sortDirProdutos === 'asc' ? '▲' : '▼'}</span>
+          ) : (
+            <span className="text-xs text-gray-300">▼</span>
+          )}
+        </span>
       </TableCell>
     );
   }
@@ -825,7 +1040,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* Vendedores e Produtos */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(260px,0.75fr)] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,1fr)] gap-6">
         {/* Ranking Vendedores */}
         <Card>
           <CardHeader>
@@ -847,19 +1062,27 @@ export default function DashboardPage() {
               </Button>
             </div>
           </CardHeader>
-          <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
-            <Table>
+          <LoadingOverlay active={isLoading}>
+          <div
+            ref={vendedoresTopScrollRef}
+            onScroll={sincronizarVendedoresPeloTopo}
+            className="mb-2 overflow-x-auto overflow-y-hidden"
+          >
+            <div style={{ width: vendedoresScrollWidth || '100%', height: 1 }} />
+          </div>
+          <div className="max-h-96 overflow-y-auto">
+            <Table ref={vendedoresScrollRef} className="[scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <TableHead>
                 <TableRow>
                   <TableCell isHeader>#</TableCell>
-                  <TableCell isHeader>Vendedor</TableCell>
-                  <TableCell isHeader align="right">Fat.</TableCell>
-                  <TableCell isHeader align="right">Meta</TableCell>
-                  <TableCell isHeader align="right">Debito</TableCell>
-                  <TableCell isHeader align="center">% Meta</TableCell>
-                  <TableCell isHeader align="center">% Proj</TableCell>
-                  <TableCell isHeader align="right">PA</TableCell>
-                  <TableCell isHeader align="right">TM</TableCell>
+                  <ThSortVendedores label="Vendedor" sortKeyName="seller_name" align="left" />
+                  <ThSortVendedores label="Fat." sortKeyName="faturamento" />
+                  <ThSortVendedores label="Meta" sortKeyName="meta" />
+                  <ThSortVendedores label="Debito" sortKeyName="debito_meta" />
+                  <ThSortVendedores label="% Meta" sortKeyName="pct_meta" align="center" />
+                  <ThSortVendedores label="% Proj" sortKeyName="pct_proj" align="center" />
+                  <ThSortVendedores label="PA" sortKeyName="pa" />
+                  <ThSortVendedores label="TM" sortKeyName="tm" />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -876,7 +1099,9 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium">{v.seller_name}</TableCell>
+                    <TableCell className="font-medium max-w-[180px]">
+                      <div className="line-clamp-2 leading-tight" title={v.seller_name}>{v.seller_name}</div>
+                    </TableCell>
                     <TableCell align="right">{formatMoney(v.faturamento)}</TableCell>
                     <TableCell align="right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</TableCell>
                     <TableCell align="right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</TableCell>
@@ -900,6 +1125,7 @@ export default function DashboardPage() {
                 )}
               </TableBody>
             </Table>
+          </div>
           </LoadingOverlay>
         </Card>
 
@@ -909,20 +1135,20 @@ export default function DashboardPage() {
             <CardTitle>Top Produtos</CardTitle>
           </CardHeader>
           <LoadingOverlay active={isLoading} className="max-h-96 overflow-y-auto">
-            <Table>
+            <Table tableClassName="text-sm">
               <TableHead>
                 <TableRow>
-                  <TableCell isHeader>#</TableCell>
-                  <TableCell isHeader>Produto</TableCell>
-                  <TableCell isHeader align="right">Qtd</TableCell>
-                  <TableCell isHeader align="right">Valor</TableCell>
-                  <TableCell isHeader align="right">% Total</TableCell>
+                  <TableCell isHeader className="!px-2 w-10">#</TableCell>
+                  <ThSortProdutos label="Produto" sortKeyName="referencia" align="left" />
+                  <ThSortProdutos label="Qtd" sortKeyName="quantidade" align="right" />
+                  <ThSortProdutos label="Valor" sortKeyName="valor" align="right" />
+                  <ThSortProdutos label="% Total" sortKeyName="pct_total" align="right" />
                 </TableRow>
               </TableHead>
               <TableBody>
-                {produtos?.produtos.map((p, i) => (
+                {produtosOrdenados.map((p, i) => (
                   <TableRow key={p.referencia}>
-                    <TableCell>
+                    <TableCell className="!px-2">
                       {i < 3 ? (
                         <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
                           i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : 'bg-orange-400'
@@ -933,29 +1159,31 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium" title={`${p.referencia} - ${p.nome}`}>
-                      {p.referencia}
-                      <span className="text-gray-400 font-normal">
-                        {' '}- {p.nome.length > 20 ? p.nome.substring(0, 20) + '...' : p.nome}
-                      </span>
+                    <TableCell className="font-medium max-w-[100px]" title={`${p.referencia} - ${p.nome}`}>
+                      <div className="leading-tight">
+                        <div className="text-sm">{p.referencia}</div>
+                        <div className="text-xs text-gray-500 font-normal line-clamp-2 mt-0.5">
+                          {p.nome}
+                        </div>
+                      </div>
                     </TableCell>
-                    <TableCell align="right">{formatNumber(p.quantidade)}</TableCell>
-                    <TableCell align="right">{formatMoney(p.valor)}</TableCell>
-                    <TableCell align="right">
+                    <TableCell align="right" className="!px-2">{formatNumber(p.quantidade)}</TableCell>
+                    <TableCell align="right" className="!px-2">{formatMoney(p.valor)}</TableCell>
+                    <TableCell align="right" className="!px-2">
                       {vendas?.total?.faturamento ? `${((p.valor / vendas.total.faturamento) * 100).toFixed(1)}%` : '-'}
                     </TableCell>
                   </TableRow>
                 ))}
                 {(produtos?.produtos.length || 0) > 0 && (
                   <TableRow isHighlighted>
-                    <TableCell className="font-bold" colSpan={2}>TOTAL</TableCell>
-                    <TableCell align="right" className="font-bold">
+                    <TableCell className="font-bold !px-2" colSpan={2}>TOTAL</TableCell>
+                    <TableCell align="right" className="font-bold !px-2">
                       {formatNumber(produtos?.produtos.reduce((sum, p) => sum + p.quantidade, 0) || 0)}
                     </TableCell>
-                    <TableCell align="right" className="font-bold">
+                    <TableCell align="right" className="font-bold !px-2">
                       {formatMoney(produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0)}
                     </TableCell>
-                    <TableCell align="right" className="font-bold">
+                    <TableCell align="right" className="font-bold !px-2">
                       {vendas?.total?.faturamento
                         ? `${(((produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0) / vendas.total.faturamento) * 100).toFixed(1)}%`
                         : '-'}
