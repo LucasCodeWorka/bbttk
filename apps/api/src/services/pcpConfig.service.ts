@@ -253,6 +253,13 @@ export interface UpdateEstoqueSemGiroConfigInput {
   coberturaLimiteVermelho: number;
 }
 
+export interface UpdateTransferenciaConfigInput {
+  relatorio: string;
+  diasAnaliseVendas: number;
+  transferenciaCoberturaDiasVerde: number;
+  transferenciaCoberturaDiasAmarelo: number;
+}
+
 // Configuracoes do relatorio Estoque Sem Giro (periodo de maturacao e limiares de cobertura)
 export async function getEstoqueSemGiroConfig(relatorio: string) {
   return prisma.pcpRelatorioConfig.upsert({
@@ -277,6 +284,39 @@ export async function updateEstoqueSemGiroConfig(input: UpdateEstoqueSemGiroConf
     maturacaoDias: input.maturacaoDias,
     coberturaLimiteVerde: input.coberturaLimiteVerde,
     coberturaLimiteVermelho: input.coberturaLimiteVermelho,
+  };
+
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+}
+
+// Configuracoes do relatorio de Gestao de Transferencia (periodo de analise de vendas)
+export async function getTransferenciaConfig(relatorio: string) {
+  return prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+}
+
+export async function updateTransferenciaConfig(input: UpdateTransferenciaConfigInput, userId?: number) {
+  if (!Number.isInteger(input.diasAnaliseVendas) || input.diasAnaliseVendas <= 0) {
+    throw new Error('diasAnaliseVendas precisa ser um numero inteiro positivo');
+  }
+  if (!Number.isInteger(input.transferenciaCoberturaDiasVerde) || input.transferenciaCoberturaDiasVerde <= 0) {
+    throw new Error('transferenciaCoberturaDiasVerde precisa ser um numero inteiro positivo');
+  }
+  if (!Number.isInteger(input.transferenciaCoberturaDiasAmarelo) || input.transferenciaCoberturaDiasAmarelo <= 0) {
+    throw new Error('transferenciaCoberturaDiasAmarelo precisa ser um numero inteiro positivo');
+  }
+
+  const dados = {
+    diasAnaliseVendas: input.diasAnaliseVendas,
+    transferenciaCoberturaDiasVerde: input.transferenciaCoberturaDiasVerde,
+    transferenciaCoberturaDiasAmarelo: input.transferenciaCoberturaDiasAmarelo,
   };
 
   return prisma.pcpRelatorioConfig.upsert({

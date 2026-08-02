@@ -198,4 +198,33 @@ router.put('/pcp-config/estoque-sem-giro', async (req: Request, res: Response) =
   }
 });
 
+// Configuracoes da Gestao de Transferencia (periodo de analise de vendas)
+router.get('/pcp-config/transferencia', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'gestao_transferencia';
+    const config = await pcpConfigService.getTransferenciaConfig(relatorio);
+    res.json({ config });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/transferencia', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, diasAnaliseVendas, transferenciaCoberturaDiasVerde, transferenciaCoberturaDiasAmarelo } = req.body;
+    if (!relatorio) {
+      res.status(400).json({ error: 'relatorio e obrigatorio' });
+      return;
+    }
+
+    const config = await pcpConfigService.updateTransferenciaConfig(
+      { relatorio, diasAnaliseVendas, transferenciaCoberturaDiasVerde, transferenciaCoberturaDiasAmarelo },
+      req.user?.userId
+    );
+    res.json({ config });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 export default router;

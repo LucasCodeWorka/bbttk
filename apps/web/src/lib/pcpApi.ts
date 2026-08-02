@@ -667,3 +667,34 @@ export const raioXApi = {
     return fetchPcpApi<RaioXResponse>(`/api/pcp/raio-x${query ? `?${query}` : ''}`, { token });
   },
 };
+
+// Gestão de Transferência
+export interface TransferenciaLoja {
+  branchCode: number;
+  branchName: string;
+  estoquePorTamanho: Record<string, number>;
+  estoqueTotal: number;
+  vendasPorTamanho: Record<string, number>;
+  coberturaPorTamanho: Record<string, number>;
+}
+
+export interface TransferenciaGrupo {
+  referencia: string;
+  descricao: string;
+  cor: string | null;
+  tamanhos: string[];
+  lojas: TransferenciaLoja[];
+}
+
+export interface TransferenciaResponse {
+  grupos: TransferenciaGrupo[];
+}
+
+export const transferenciaApi = {
+  getTransferencia: (token: string, referencia: string, agruparPorCor: boolean) => {
+    const params = new URLSearchParams();
+    params.set('referencia', referencia);
+    params.set('agruparPorCor', String(agruparPorCor));
+    return fetchPcpApi<TransferenciaResponse>(`/api/pcp/transferencia?${params.toString()}`, { token });
+  },
+};

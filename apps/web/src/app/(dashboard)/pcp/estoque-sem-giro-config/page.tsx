@@ -15,7 +15,7 @@ export default function EstoqueSemGiroConfigPage() {
   const { showToast } = useToast();
 
   const [isLoading, setIsLoading] = useState(true);
-  const [maturacaoDias, setMaturacaoDias] = useState('30');
+  const [maturacaoDias, setMaturacaoDias] = useState('15');
   const [coberturaLimiteVerde, setCoberturaLimiteVerde] = useState('4.00');
   const [coberturaLimiteVermelho, setCoberturaLimiteVermelho] = useState('4.01');
   const [salvando, setSalvando] = useState(false);
@@ -108,7 +108,7 @@ export default function EstoqueSemGiroConfigPage() {
           />
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          Recomendado: 30 dias ou mais. Use 0 para desabilitar o filtro de maturacao.
+          Recomendado: 15 a 30 dias. Use 0 para desabilitar o filtro de maturacao.
         </p>
         <div className="flex justify-end mt-4 pt-4 border-t">
           <Button onClick={handleSalvar} isLoading={salvando} size="sm" disabled={isLoading}>

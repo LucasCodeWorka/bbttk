@@ -10,6 +10,8 @@ export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/pcp-curva-abc', module: 'pcp_servico' },
   { prefix: '/relatorios', module: 'pcp_servico' },
   { prefix: '/pcp/estoque-sem-giro-config', module: 'pcp_servico' },
+  { prefix: '/pcp/transferencia-config', module: 'pcp_servico' },
+  { prefix: '/pcp/transferencia', module: 'pcp_servico' },
   { prefix: '/pcp', module: 'pcp' },
 ];
 

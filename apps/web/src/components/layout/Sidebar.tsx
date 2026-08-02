@@ -119,6 +119,7 @@ const navEntries: NavEntry[] = [
       { label: 'Agrupamento de Cores', href: '/pcp/agrupamento-cores', icon: iconAgrupamentoCores, moduleKey: 'pcp' },
       { label: 'Config. Relatório PCP', href: '/pcp/relatorio-base-config', icon: iconConfigurador, adminOnly: true },
       { label: 'Config. Estoque Sem Giro', href: '/pcp/estoque-sem-giro-config', icon: iconConfigurador, moduleKey: 'pcp_servico' },
+      { label: 'Config. Transferência', href: '/pcp/transferencia-config', icon: iconConfigurador, moduleKey: 'pcp_servico' },
       { label: 'Usuarios', href: '/usuarios', icon: iconUsuarios, adminOnly: true },
     ],
   },
@@ -141,6 +142,7 @@ const navEntries: NavEntry[] = [
     icon: iconRelatorios,
     items: [
       { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
+      // { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
     ],
   },
 ];

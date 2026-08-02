@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { KPIMetaCard } from '@/components/dashboard/KPIMetaCard';
@@ -295,23 +295,61 @@ export default function PcpRelatorioBasePage() {
   const [meta, setMeta] = useState<PcpMetaVisaoGeral | null>(null);
   const [salvandoMeta, setSalvandoMeta] = useState(false);
 
-  const carregarDados = useCallback(async () => {
+  // Refs e estado para scroll sincronizado
+  const tabelaScrollRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
+
+  const carregarDados = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
+
+    const filtro: RelatorioBaseFiltro = {
+      categoria: produtoFiltro.categoria,
+      linha: produtoFiltro.linha,
+      genero: produtoFiltro.genero,
+      status: produtoFiltro.status,
+      branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+      search: search.trim() || undefined,
+      page: pagina,
+      pageSize: PAGE_SIZE,
+    };
+
+    // Gerar chave de cache baseada nos filtros
+    const cacheKey = `visao-geral-${JSON.stringify(filtro)}`;
+
+    // Tentar carregar do cache se não for forçar recarregar
+    if (!forcarRecarregar) {
+      try {
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          const { data: cachedData, timestamp } = JSON.parse(cached);
+          // Cache válido por 5 minutos
+          if (Date.now() - timestamp < 5 * 60 * 1000) {
+            setData(cachedData);
+            setIsLoading(false);
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignorar erros de cache
+      }
+    }
+
     setIsLoading(true);
     setErro(null);
     try {
-      const filtro: RelatorioBaseFiltro = {
-        categoria: produtoFiltro.categoria,
-        linha: produtoFiltro.linha,
-        genero: produtoFiltro.genero,
-        status: produtoFiltro.status,
-        branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
-        search: search.trim() || undefined,
-        page: pagina,
-        pageSize: PAGE_SIZE,
-      };
       const response = await relatorioBaseApi.getRelatorioBase(token, filtro);
       setData(response);
+
+      // Salvar no cache
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          data: response,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        // Ignorar erros ao salvar cache (ex: quota excedida)
+      }
     } catch (error) {
       setErro(error instanceof Error ? error.message : 'Erro ao carregar o Relatorio Base');
       console.error(error);
@@ -326,18 +364,52 @@ export default function PcpRelatorioBasePage() {
     setPagina(1);
   }, [produtoFiltro, filiaisSelecionadas, search]);
 
-  const carregarExtras = useCallback(async () => {
+  const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
+
+    const filtro = {
+      categoria: produtoFiltro.categoria,
+      linha: produtoFiltro.linha,
+      genero: produtoFiltro.genero,
+      status: produtoFiltro.status,
+      branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+    };
+
+    // Gerar chave de cache baseada nos filtros
+    const cacheKey = `visao-geral-extras-${JSON.stringify(filtro)}`;
+
+    // Tentar carregar do cache se não for forçar recarregar
+    if (!forcarRecarregar) {
+      try {
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          const { data: cachedData, timestamp } = JSON.parse(cached);
+          // Cache válido por 5 minutos
+          if (Date.now() - timestamp < 5 * 60 * 1000) {
+            setExtras(cachedData);
+            setIsLoadingExtras(false);
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignorar erros de cache
+      }
+    }
+
     setIsLoadingExtras(true);
     try {
-      const response = await visaoGeralApi.getVisaoGeralExtras(token, {
-        categoria: produtoFiltro.categoria,
-        linha: produtoFiltro.linha,
-        genero: produtoFiltro.genero,
-        status: produtoFiltro.status,
-        branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
-      });
+      const response = await visaoGeralApi.getVisaoGeralExtras(token, filtro);
       setExtras(response);
+
+      // Salvar no cache
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          data: response,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        // Ignorar erros ao salvar cache
+      }
     } catch (error) {
       console.error('Erro ao carregar indicadores extra da Visao Geral:', error);
     } finally {
@@ -363,6 +435,42 @@ export default function PcpRelatorioBasePage() {
   useEffect(() => {
     carregarExtras();
   }, [carregarExtras]);
+
+  // Sincronizar scroll horizontal
+  useEffect(() => {
+    const tabela = tabelaScrollRef.current;
+    const topo = topScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    const tableElement = tabela.querySelector('table');
+    if (tableElement) resizeObserver?.observe(tableElement);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [data?.rows.length, isLoading, verPorLoja]);
 
   async function abrirEdicaoMetas() {
     if (!token) return;
@@ -404,6 +512,13 @@ export default function PcpRelatorioBasePage() {
 
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
+  }
+
+  function sincronizarScrollPeloTopo() {
+    const topo = topScrollRef.current;
+    const tabela = tabelaScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
   }
 
   function handleSort(key: string) {
@@ -592,7 +707,7 @@ export default function PcpRelatorioBasePage() {
           className="w-52"
           placeholder="Ex: 7800..."
         />
-        <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+        <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
         <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
           Exportar Excel
         </Button>
@@ -772,6 +887,15 @@ export default function PcpRelatorioBasePage() {
           </div>
         </CardHeader>
 
+        <div
+          ref={topScrollRef}
+          onScroll={sincronizarScrollPeloTopo}
+          className="mb-2 overflow-x-auto overflow-y-hidden"
+        >
+          <div style={{ width: scrollWidth || '100%', height: 1 }} />
+        </div>
+
+        <div ref={tabelaScrollRef} className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <Table tableClassName="table-fixed text-xs">
           <colgroup>
             {COLUNAS_REFERENCIA.map((c) => (
@@ -987,6 +1111,7 @@ export default function PcpRelatorioBasePage() {
             )}
           </TableBody>
         </Table>
+        </div>
       </Card>
 
       <Modal isOpen={metaModalAberto} onClose={() => setMetaModalAberto(false)} title="Editar metas da Visão Geral" size="md">

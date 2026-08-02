@@ -317,7 +317,10 @@ model PcpRelatorioConfig {
   riscoCoberturaMeses     Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
   coberturaLimiteVerde    Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
   coberturaLimiteVermelho Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  maturacaoDias           Int      @default(30) @map("maturacao_dias")
+  maturacaoDias           Int      @default(15) @map("maturacao_dias")
+  diasAnaliseVendas       Int      @default(30) @map("dias_analise_vendas")
+  transferenciaCoberturaDiasVerde    Int      @default(75) @map("transferencia_cobertura_dias_verde")
+  transferenciaCoberturaDiasAmarelo  Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
   createdBy               User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
