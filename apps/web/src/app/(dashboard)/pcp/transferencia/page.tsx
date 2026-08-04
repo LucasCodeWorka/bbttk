@@ -1,34 +1,41 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { MultiSelect } from '@/components/ui/MultiSelect';
-import { transferenciaApi, TransferenciaResponse, TransferenciaGrupo } from '@/lib/pcpApi';
+import { transferenciaApi, TransferenciaResponse, TransferenciaGrupo, ReferenciaSearchResult } from '@/lib/pcpApi';
 import { pcpConfigApi } from '@/lib/api';
 import { FILIAIS } from '@/lib/utils';
 
 const RELATORIO = 'gestao_transferencia';
 
-// Cores da paleta BBTK para o dashboard
+// Cores da paleta BBTK para o dashboard - cores mais vivas (maior opacidade)
 const STATUS_COLORS = {
-  ruptura: { bg: 'bg-[#CC222E]/10', text: 'text-[#CC222E]', bar: 'bg-[#CC222E]', label: 'Ruptura' },
-  ok: { bg: 'bg-[#F5A623]/10', text: 'text-[#F5A623]', bar: 'bg-[#F5A623]', label: 'Equilibrio' },
-  excesso: { bg: 'bg-[#6B5B95]/10', text: 'text-[#6B5B95]', bar: 'bg-[#6B5B95]', label: 'Excesso' },
+  ruptura: { bg: 'bg-[#CC222E]/20', text: 'text-[#CC222E]', bar: 'bg-[#CC222E]', label: 'Ruptura', cellBg: 'bg-[#CC222E]/30' },
+  ok: { bg: 'bg-[#F5A623]/20', text: 'text-[#F5A623]', bar: 'bg-[#F5A623]', label: 'Equilibrio', cellBg: 'bg-[#F5A623]/30' },
+  excesso: { bg: 'bg-[#6B5B95]/20', text: 'text-[#6B5B95]', bar: 'bg-[#6B5B95]', label: 'Excesso', cellBg: 'bg-[#6B5B95]/30' },
 };
 
 export default function TransferenciaPage() {
   const { token } = useAuth();
   const { showToast } = useToast();
 
-  const [referencia, setReferencia] = useState('');
   const [agruparPorCor, setAgruparPorCor] = useState(true);
   const [dados, setDados] = useState<TransferenciaResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Busca de referencias estilo lista
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<ReferenciaSearchResult[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedRefs, setSelectedRefs] = useState<ReferenciaSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Filtros
   const [coresSelecionadas, setCoresSelecionadas] = useState<string[]>([]);
@@ -99,11 +106,75 @@ export default function TransferenciaPage() {
     loadConfigAndData();
   }, [token, agruparPorCor, showToast]);
 
+  // Fecha dropdown ao clicar fora
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Busca referencias via API
+  const buscarReferencias = useCallback(async (search: string) => {
+    if (!token) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const results = await transferenciaApi.buscarReferencias(token, search, 20);
+      setSearchResults(results);
+      setShowDropdown(results.length > 0);
+    } catch (error) {
+      console.error('Erro ao buscar referencias:', error);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [token]);
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      buscarReferencias(value);
+    }, 150);
+  };
+
+  const adicionarReferencia = (ref: ReferenciaSearchResult) => {
+    const key = ref.cor ? `${ref.referencia}|${ref.cor}` : ref.referencia;
+    if (!selectedRefs.find(r => (r.cor ? `${r.referencia}|${r.cor}` : r.referencia) === key)) {
+      setSelectedRefs([...selectedRefs, ref]);
+    }
+    setSearchTerm('');
+    setShowDropdown(false);
+    setSearchResults([]);
+  };
+
+  const removerReferencia = (ref: ReferenciaSearchResult) => {
+    const key = ref.cor ? `${ref.referencia}|${ref.cor}` : ref.referencia;
+    setSelectedRefs(selectedRefs.filter(r => (r.cor ? `${r.referencia}|${r.cor}` : r.referencia) !== key));
+  };
+
+  const limparSelecao = () => {
+    setSelectedRefs([]);
+  };
+
   const buscar = useCallback(async () => {
     if (!token) return;
     setIsLoading(true);
     try {
-      const resultado = await transferenciaApi.getTransferencia(token, referencia.trim(), agruparPorCor);
+      // Se tem referencias selecionadas, busca a primeira (API nao suporta multiplas ainda)
+      const refToBuscar = selectedRefs.length > 0 ? selectedRefs[0].referencia : '';
+      const resultado = await transferenciaApi.getTransferencia(token, refToBuscar, agruparPorCor);
       setDados(resultado);
       if (resultado.grupos.length === 0) {
         showToast('Nenhum estoque encontrado', 'info');
@@ -115,7 +186,7 @@ export default function TransferenciaPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, referencia, agruparPorCor, showToast]);
+  }, [token, selectedRefs, agruparPorCor, showToast]);
 
   function getStatus(cobertura: number): 'ruptura' | 'ok' | 'excesso' | null {
     if (!cobertura || cobertura === 0 || !Number.isFinite(cobertura)) return null;
@@ -127,9 +198,10 @@ export default function TransferenciaPage() {
 
   function getBgClass(status: 'ruptura' | 'ok' | 'excesso' | null): string {
     if (!status) return '';
-    if (status === 'ruptura') return 'bg-[#CC222E]/10';
-    if (status === 'ok') return 'bg-[#F5A623]/10';
-    return 'bg-[#6B5B95]/10';
+    // Cores mais vivas para melhor visualizacao
+    if (status === 'ruptura') return 'bg-[#CC222E]/30';
+    if (status === 'ok') return 'bg-[#F5A623]/30';
+    return 'bg-[#6B5B95]/30';
   }
 
   function toNumber(value: unknown): number {
@@ -464,15 +536,101 @@ export default function TransferenciaPage() {
 
       {/* Filtros */}
       <Card>
+        {/* Busca de Referencias estilo lista */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Buscar Referencias</label>
+
+          <div className="flex gap-2 mb-2">
+            <div ref={dropdownRef} className="relative flex-1">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={() => {
+                    if (searchResults.length > 0) {
+                      setShowDropdown(true);
+                    } else if (!searchTerm.trim()) {
+                      buscarReferencias('');
+                    }
+                  }}
+                  placeholder="Digite codigo ou descricao da referencia..."
+                  className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#6B5B95] focus:border-transparent"
+                />
+                {isSearching && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <svg className="animate-spin h-4 w-4 text-[#6B5B95]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                )}
+              </div>
+
+              {showDropdown && searchResults.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {searchResults.map((ref, idx) => {
+                    const key = ref.cor ? `${ref.referencia}|${ref.cor}` : ref.referencia;
+                    return (
+                      <button
+                        key={key + idx}
+                        type="button"
+                        onClick={() => adicionarReferencia(ref)}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 border-b border-gray-100 last:border-b-0"
+                      >
+                        <div className="font-medium text-gray-900">{ref.referencia}</div>
+                        <div className="text-xs text-gray-600 truncate">
+                          {ref.descricao}
+                          {ref.cor && <span className="ml-2 text-[#6B5B95]">({ref.cor})</span>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {selectedRefs.length > 0 && (
+            <div className="border border-gray-200 rounded-lg bg-gray-50 max-h-32 overflow-y-auto">
+              {selectedRefs.map((ref) => {
+                const key = ref.cor ? `${ref.referencia}|${ref.cor}` : ref.referencia;
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between px-3 py-2 border-b border-gray-200 last:border-b-0 hover:bg-gray-100"
+                  >
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-gray-900">{ref.referencia}</span>
+                      {ref.cor && <span className="ml-2 text-xs text-[#6B5B95]">({ref.cor})</span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removerReferencia(ref)}
+                      className="ml-2 text-gray-400 hover:text-red-600"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {selectedRefs.length > 0 && (
+            <button
+              type="button"
+              onClick={limparSelecao}
+              className="mt-2 text-xs text-gray-500 hover:text-red-600"
+            >
+              Limpar selecao
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-4 items-end">
-          <Input
-            label="Referencia"
-            value={referencia}
-            onChange={(e) => setReferencia(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') buscar(); }}
-            placeholder="Buscar referencia..."
-            className="w-48"
-          />
           <MultiSelect
             label="Loja"
             options={lojasOptions}
@@ -535,7 +693,7 @@ export default function TransferenciaPage() {
 
       {!isLoading && dados && dados.grupos.length === 0 && (
         <Card className="border-[#F5A623]/30 bg-[#F5A623]/5">
-          <p className="text-sm text-[#F5A623]">Nenhum estoque encontrado{referencia ? ` para "${referencia}"` : ''}.</p>
+          <p className="text-sm text-[#F5A623]">Nenhum estoque encontrado{selectedRefs.length > 0 ? ` para "${selectedRefs[0].referencia}"` : ''}.</p>
         </Card>
       )}
 

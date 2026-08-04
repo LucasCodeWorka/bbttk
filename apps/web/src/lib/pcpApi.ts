@@ -690,11 +690,24 @@ export interface TransferenciaResponse {
   grupos: TransferenciaGrupo[];
 }
 
+export interface ReferenciaSearchResult {
+  referencia: string;
+  descricao: string;
+  cor?: string;
+}
+
 export const transferenciaApi = {
   getTransferencia: (token: string, referencia: string, agruparPorCor: boolean) => {
     const params = new URLSearchParams();
     params.set('referencia', referencia);
     params.set('agruparPorCor', String(agruparPorCor));
     return fetchPcpApi<TransferenciaResponse>(`/api/pcp/transferencia?${params.toString()}`, { token });
+  },
+
+  buscarReferencias: (token: string, search: string, limit: number = 20) => {
+    const params = new URLSearchParams();
+    params.set('search', search);
+    params.set('limit', String(limit));
+    return fetchPcpApi<ReferenciaSearchResult[]>(`/api/pcp/transferencia/referencias?${params.toString()}`, { token });
   },
 };

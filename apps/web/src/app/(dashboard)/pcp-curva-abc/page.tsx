@@ -275,6 +275,7 @@ export default function PcpCurvaAbcPage() {
       .catch((error) => console.error('Erro ao carregar filtros:', error));
   }, [token]);
 
+  // Carrega AMBAS as tabelas (REF e SKU) ao mesmo tempo para nao ter delay ao trocar visao
   const carregarDados = useCallback(async () => {
     if (!token) return;
     setIsLoading(true);
@@ -285,11 +286,13 @@ export default function PcpCurvaAbcPage() {
         genero: produtoFiltro.genero,
         status: produtoFiltro.status,
       };
-      if (visao === 'referencia') {
-        setData(await curvaAbcApi.getResumo(token, filtro));
-      } else {
-        setDataSku(await curvaAbcApi.getResumoPorSku(token, filtro));
-      }
+      // Carrega ambas as visoes em paralelo
+      const [refData, skuData] = await Promise.all([
+        curvaAbcApi.getResumo(token, filtro),
+        curvaAbcApi.getResumoPorSku(token, filtro),
+      ]);
+      setData(refData);
+      setDataSku(skuData);
     } catch (error) {
       showToast('Erro ao carregar Curva ABCD', 'error');
       console.error(error);
@@ -297,7 +300,7 @@ export default function PcpCurvaAbcPage() {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, produtoFiltro, visao]);
+  }, [token, produtoFiltro]);
 
   useEffect(() => {
     carregarDados();

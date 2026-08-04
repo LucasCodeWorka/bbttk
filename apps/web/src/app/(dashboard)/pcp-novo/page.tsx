@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardValue } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -16,6 +16,34 @@ import {
   pcpApi,
 } from '@/lib/pcpApi';
 import { cn, formatMoney, formatNumber } from '@/lib/utils';
+
+// Estrutura agrupada por REF > Cor > Tamanho
+interface GrupoRef {
+  referencia: string;
+  descricao: string;
+  quantidade: number;
+  valor: number;
+  cores: GrupoCor[];
+}
+
+interface GrupoCor {
+  cor: string;
+  quantidade: number;
+  valor: number;
+  tamanhos: GrupoTamanho[];
+}
+
+interface GrupoTamanho {
+  tamanho: string;
+  sku: string;
+  quantidade: number;
+  valor: number;
+  dias_sem_giro: number;
+  ultima_venda: string | null;
+  lojas_sem_venda: number;
+  lojas_total: number;
+  lojas: { branch_code: number; quantidade: number }[];
+}
 
 const DIAS_OPTIONS = [
   { value: 30, label: 'Ate 30 dias sem girar' },
@@ -122,6 +150,10 @@ export default function PcpNovoPage() {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // Estado de expansao para o layout hierarquico REF > Cor > Tamanho
+  const [expandedRefs, setExpandedRefs] = useState<Set<string>>(new Set());
+  const [expandedCores, setExpandedCores] = useState<Set<string>>(new Set());
+
   const carregarDados = useCallback(async () => {
     if (!token) return;
 
@@ -216,6 +248,106 @@ export default function PcpNovoPage() {
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, sortKey, sortDir]);
+
+  // Agrupa SKUs por REF > Cor > Tamanho
+  const gruposHierarquicos = useMemo((): GrupoRef[] => {
+    const skus = data?.top_skus || [];
+    const refMap = new Map<string, GrupoRef>();
+
+    for (const sku of skus) {
+      // Extrair tamanho do grade (ultimo elemento geralmente)
+      const tamanho = sku.grade?.split(' ').pop() || 'UNICO';
+      const cor = sku.cor_de_para || 'SEM COR';
+
+      if (!refMap.has(sku.referencia)) {
+        refMap.set(sku.referencia, {
+          referencia: sku.referencia,
+          descricao: sku.descricao?.split(' - ')[0] || sku.referencia,
+          quantidade: 0,
+          valor: 0,
+          cores: [],
+        });
+      }
+
+      const refGrupo = refMap.get(sku.referencia)!;
+      refGrupo.quantidade += sku.quantidade;
+      refGrupo.valor += sku.valor;
+
+      let corGrupo = refGrupo.cores.find(c => c.cor === cor);
+      if (!corGrupo) {
+        corGrupo = { cor, quantidade: 0, valor: 0, tamanhos: [] };
+        refGrupo.cores.push(corGrupo);
+      }
+      corGrupo.quantidade += sku.quantidade;
+      corGrupo.valor += sku.valor;
+
+      corGrupo.tamanhos.push({
+        tamanho,
+        sku: sku.sku,
+        quantidade: sku.quantidade,
+        valor: sku.valor,
+        dias_sem_giro: sku.dias_sem_giro,
+        ultima_venda: sku.ultima_venda,
+        lojas_sem_venda: sku.lojas_sem_venda,
+        lojas_total: sku.lojas_total,
+        lojas: sku.lojas,
+      });
+    }
+
+    // Ordenar por valor decrescente
+    const resultado = Array.from(refMap.values());
+    resultado.sort((a, b) => b.valor - a.valor);
+    resultado.forEach(ref => {
+      ref.cores.sort((a, b) => b.valor - a.valor);
+      ref.cores.forEach(cor => {
+        cor.tamanhos.sort((a, b) => {
+          // Ordenar tamanhos: PP, P, M, G, GG, XG, EG, depois numericos
+          const ordem = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'EG'];
+          const aIdx = ordem.indexOf(a.tamanho.toUpperCase());
+          const bIdx = ordem.indexOf(b.tamanho.toUpperCase());
+          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+          if (aIdx !== -1) return -1;
+          if (bIdx !== -1) return 1;
+          const aNum = parseInt(a.tamanho, 10);
+          const bNum = parseInt(b.tamanho, 10);
+          if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+          return a.tamanho.localeCompare(b.tamanho);
+        });
+      });
+    });
+
+    return resultado;
+  }, [data]);
+
+  function toggleRef(ref: string) {
+    setExpandedRefs(prev => {
+      const next = new Set(prev);
+      if (next.has(ref)) next.delete(ref);
+      else next.add(ref);
+      return next;
+    });
+  }
+
+  function toggleCor(refCorKey: string) {
+    setExpandedCores(prev => {
+      const next = new Set(prev);
+      if (next.has(refCorKey)) next.delete(refCorKey);
+      else next.add(refCorKey);
+      return next;
+    });
+  }
+
+  function expandirTodos() {
+    const refs = new Set(gruposHierarquicos.map(g => g.referencia));
+    const cores = new Set(gruposHierarquicos.flatMap(g => g.cores.map(c => `${g.referencia}|${c.cor}`)));
+    setExpandedRefs(refs);
+    setExpandedCores(cores);
+  }
+
+  function recolherTodos() {
+    setExpandedRefs(new Set());
+    setExpandedCores(new Set());
+  }
 
   const top10Totais = useMemo(() => {
     if (!data) return null;
@@ -387,145 +519,167 @@ export default function PcpNovoPage() {
             </CardTitle>
             {resumoSelecionado && (
               <p className="text-xs text-gray-400 mt-1">
-                {formatNumber(resumoSelecionado.quantidade)} pecas em estoque no filtro atual
+                {formatNumber(resumoSelecionado.quantidade)} pecas em estoque no filtro atual | {gruposHierarquicos.length} referencias
               </p>
             )}
           </div>
-          <Select
-            label="Ranking"
-            value={rankingLimit}
-            onChange={(event) => setRankingLimit(event.target.value as '10' | '25' | '50' | 'all')}
-            options={RANKING_OPTIONS}
-            className="w-36"
-          />
+          <div className="flex gap-2 items-end">
+            <div className="flex gap-1">
+              <Button variant="secondary" size="sm" onClick={expandirTodos}>Expandir</Button>
+              <Button variant="secondary" size="sm" onClick={recolherTodos}>Recolher</Button>
+            </div>
+            <Select
+              label="Ranking"
+              value={rankingLimit}
+              onChange={(event) => setRankingLimit(event.target.value as '10' | '25' | '50' | 'all')}
+              options={RANKING_OPTIONS}
+              className="w-36"
+            />
+          </div>
         </CardHeader>
 
-        <Table
-          className={cn(
-            'overflow-x-visible',
-            tableNeedsScroll && 'max-h-[560px] overflow-y-auto pr-1'
-          )}
-          tableClassName="table-fixed text-[9px] sm:text-[10px] lg:text-[11px]"
-        >
-          <colgroup>
-            <col style={{ width: '18%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '6%' }} />
-            <col style={{ width: '4%' }} />
-            <col style={{ width: '6%' }} />
-            {lojasTabela.length === 0 ? (
-              <col style={{ width: '49%' }} />
-            ) : lojasTabela.map((loja) => (
-              <col key={`col-${loja.branch_code}`} style={{ width: `${lojaColumnWidth}%` }} />
-            ))}
-          </colgroup>
-          <TableHead className="sticky top-0 z-10">
-            <TableRow>
-              <ThSortPcp label="Descricao completa" sortKeyName="descricao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
-              <ThSortPcp label="Grade" sortKeyName="grade" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
-              <ThSortPcp label="Cor de-para" sortKeyName="cor_de_para" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="!px-1.5 !py-2" />
-              <ThSortPcp label="Sem giro" sortKeyName="dias_sem_giro" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
-              <ThSortPcp label="Qtd" sortKeyName="quantidade" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
-              <ThSortPcp label="Valor" sortKeyName="valor" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
-              <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-1.5 !py-2">
-                Distribuicao por loja (pc)
-              </TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              <TableCell isHeader className="bg-gray-50 !px-1.5 !py-2" />
-              {lojasTabela.length === 0 ? (
-                <TableCell isHeader align="center" className="bg-blue-50 text-blue-800 !px-1 !py-2">-</TableCell>
-              ) : lojasTabela.map((loja) => (
-                <ThSortPcp
-                  key={loja.branch_code}
-                  label={shortLojaName(loja.branch_name, loja.branch_code)}
-                  sortKeyName={`loja-${loja.branch_code}`}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                  align="center"
-                  title={loja.branch_name}
-                  className="bg-blue-50 text-blue-800 !px-0.5 !py-2 whitespace-nowrap"
-                />
-              ))}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {isLoading ? (
+        {/* Layout hierarquico REF > Cor > Tamanho */}
+        <div className={cn('overflow-auto', tableNeedsScroll && 'max-h-[600px]')}>
+          <Table tableClassName="text-xs">
+            <TableHead className="sticky top-0 z-10 bg-white">
               <TableRow>
-                <TableCell colSpan={totalColunasTabela} align="center" className="py-10 text-gray-500">
-                  Carregando...
+                <TableCell isHeader className="w-8 !px-2"></TableCell>
+                <TableCell isHeader className="min-w-[200px] !px-2">Referencia / Cor / Tamanho</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-20">Qtd</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-28">Valor</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-24">Sem Giro</TableCell>
+                <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-2">
+                  Distribuicao por Loja
                 </TableCell>
               </TableRow>
-            ) : data?.top_skus.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={totalColunasTabela} align="center" className="py-10 text-gray-500">
-                  Nenhum SKU encontrado para os filtros selecionados
-                </TableCell>
-              </TableRow>
-            ) : skusOrdenados.map((item) => {
-              const lojaMap = new Map(item.lojas.map((loja) => [loja.branch_code, loja.quantidade]));
-              return (
-                <TableRow key={item.sku}>
-                  <TableCell className="!px-1.5 !py-2 align-top">
-                    <p className="font-medium text-gray-900 truncate max-w-full" title={item.descricao}>{item.descricao}</p>
-                    <p className="text-[9px] text-gray-500 truncate">
-                      Ref. {item.referencia}{item.colecao ? ` - Colecao ${item.colecao}` : ''}
-                    </p>
-                  </TableCell>
-                  <TableCell className="!px-1.5 !py-2 text-gray-700 truncate" title={item.grade || '-'}>{item.grade || '-'}</TableCell>
-                  <TableCell className="!px-1.5 !py-2 text-gray-700 truncate" title={item.cor_de_para || '-'}>{item.cor_de_para || '-'}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-semibold text-red-600 whitespace-normal leading-tight">{formatDiasSemGiro(item.dias_sem_giro, item.ultima_venda, item.lojas_sem_venda, item.lojas_total)}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2">{formatNumber(item.quantidade)}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-semibold whitespace-normal leading-tight">{formatMoney(item.valor)}</TableCell>
-                  {lojasTabela.length === 0 ? (
-                    <TableCell align="center" className="!px-1 !py-2">-</TableCell>
-                  ) : lojasTabela.map((loja) => (
-                    <TableCell key={`${item.sku}-${loja.branch_code}`} align="center" className="!px-1 !py-2">
-                      {formatNumber(lojaMap.get(loja.branch_code) || 0)}
+              {lojasTabela.length > 0 && (
+                <TableRow>
+                  <TableCell isHeader className="!px-2"></TableCell>
+                  <TableCell isHeader className="!px-2"></TableCell>
+                  <TableCell isHeader className="!px-2"></TableCell>
+                  <TableCell isHeader className="!px-2"></TableCell>
+                  <TableCell isHeader className="!px-2"></TableCell>
+                  {lojasTabela.map((loja) => (
+                    <TableCell key={loja.branch_code} isHeader align="center" title={loja.branch_name} className="bg-blue-50 text-blue-800 !px-1 !py-1 text-[10px]">
+                      {shortLojaName(loja.branch_name, loja.branch_code)}
                     </TableCell>
                   ))}
                 </TableRow>
-              );
-            })}
-            {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
-              <>
-                <TableRow isHighlighted>
-                  <TableCell colSpan={3} align="right" className="!px-1.5 !py-2 font-bold">{totalizadorLabel}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-bold whitespace-normal leading-tight">{formatMoney(top10Totais.valor)}</TableCell>
+              )}
+            </TableHead>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5 + Math.max(lojasTabela.length, 1)} align="center" className="py-10 text-gray-500">
+                    Carregando...
+                  </TableCell>
+                </TableRow>
+              ) : gruposHierarquicos.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5 + Math.max(lojasTabela.length, 1)} align="center" className="py-10 text-gray-500">
+                    Nenhum SKU encontrado para os filtros selecionados
+                  </TableCell>
+                </TableRow>
+              ) : (
+                gruposHierarquicos.map((refGrupo) => {
+                  const refExpanded = expandedRefs.has(refGrupo.referencia);
+                  return (
+                    <React.Fragment key={refGrupo.referencia}>
+                      {/* Linha da REFERENCIA */}
+                      <TableRow className="bg-gray-100 hover:bg-gray-200 cursor-pointer" onClick={() => toggleRef(refGrupo.referencia)}>
+                        <TableCell className="!px-2 !py-2">
+                          <span className="font-bold text-[#6B5B95]">{refExpanded ? '−' : '+'}</span>
+                        </TableCell>
+                        <TableCell className="!px-2 !py-2">
+                          <span className="font-bold text-gray-900">{refGrupo.referencia}</span>
+                          <span className="ml-2 text-gray-500 text-[10px]">{refGrupo.cores.length} cores</span>
+                        </TableCell>
+                        <TableCell align="right" className="!px-2 !py-2 font-semibold">{formatNumber(refGrupo.quantidade)}</TableCell>
+                        <TableCell align="right" className="!px-2 !py-2 font-semibold">{formatMoney(refGrupo.valor)}</TableCell>
+                        <TableCell align="right" className="!px-2 !py-2 text-gray-400">-</TableCell>
+                        {lojasTabela.length === 0 ? (
+                          <TableCell align="center" className="!px-1 !py-2">-</TableCell>
+                        ) : lojasTabela.map((loja) => (
+                          <TableCell key={loja.branch_code} align="center" className="!px-1 !py-2 text-gray-400">-</TableCell>
+                        ))}
+                      </TableRow>
+
+                      {/* Cores da referencia */}
+                      {refExpanded && refGrupo.cores.map((corGrupo) => {
+                        const corKey = `${refGrupo.referencia}|${corGrupo.cor}`;
+                        const corExpanded = expandedCores.has(corKey);
+                        return (
+                          <React.Fragment key={corKey}>
+                            {/* Linha da COR */}
+                            <TableRow className="bg-gray-50 hover:bg-gray-100 cursor-pointer" onClick={() => toggleCor(corKey)}>
+                              <TableCell className="!px-2 !py-1.5"></TableCell>
+                              <TableCell className="!px-2 !py-1.5 pl-6">
+                                <span className="font-medium text-[#6B5B95] mr-2">{corExpanded ? '−' : '+'}</span>
+                                <span className="font-medium text-gray-700">{corGrupo.cor}</span>
+                                <span className="ml-2 text-gray-400 text-[10px]">{corGrupo.tamanhos.length} tam</span>
+                              </TableCell>
+                              <TableCell align="right" className="!px-2 !py-1.5">{formatNumber(corGrupo.quantidade)}</TableCell>
+                              <TableCell align="right" className="!px-2 !py-1.5">{formatMoney(corGrupo.valor)}</TableCell>
+                              <TableCell align="right" className="!px-2 !py-1.5 text-gray-400">-</TableCell>
+                              {lojasTabela.length === 0 ? (
+                                <TableCell align="center" className="!px-1 !py-1.5">-</TableCell>
+                              ) : lojasTabela.map((loja) => (
+                                <TableCell key={loja.branch_code} align="center" className="!px-1 !py-1.5 text-gray-400">-</TableCell>
+                              ))}
+                            </TableRow>
+
+                            {/* Tamanhos da cor */}
+                            {corExpanded && corGrupo.tamanhos.map((tam) => {
+                              const lojaMap = new Map(tam.lojas.map((l) => [l.branch_code, l.quantidade]));
+                              return (
+                                <TableRow key={tam.sku} className="hover:bg-blue-50/30">
+                                  <TableCell className="!px-2 !py-1"></TableCell>
+                                  <TableCell className="!px-2 !py-1 pl-12">
+                                    <span className="text-gray-600">{tam.tamanho}</span>
+                                    <span className="ml-2 text-[9px] text-gray-400">{tam.sku}</span>
+                                  </TableCell>
+                                  <TableCell align="right" className="!px-2 !py-1 text-gray-600">{formatNumber(tam.quantidade)}</TableCell>
+                                  <TableCell align="right" className="!px-2 !py-1 text-gray-600">{formatMoney(tam.valor)}</TableCell>
+                                  <TableCell align="right" className="!px-2 !py-1 font-semibold text-red-600">
+                                    {formatDiasSemGiro(tam.dias_sem_giro, tam.ultima_venda, tam.lojas_sem_venda, tam.lojas_total)}
+                                  </TableCell>
+                                  {lojasTabela.length === 0 ? (
+                                    <TableCell align="center" className="!px-1 !py-1">-</TableCell>
+                                  ) : lojasTabela.map((loja) => (
+                                    <TableCell key={loja.branch_code} align="center" className="!px-1 !py-1">
+                                      {formatNumber(lojaMap.get(loja.branch_code) || 0)}
+                                    </TableCell>
+                                  ))}
+                                </TableRow>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })
+              )}
+              {/* Totalizador */}
+              {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
+                <TableRow isHighlighted className="sticky bottom-0 z-10">
+                  <TableCell className="!px-2 !py-2"></TableCell>
+                  <TableCell className="!px-2 !py-2 font-bold">{totalizadorLabel}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2 font-bold">{formatMoney(top10Totais.valor)}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2 font-bold">-</TableCell>
                   {lojasTabela.length === 0 ? (
                     <TableCell align="center" className="!px-1 !py-2">-</TableCell>
                   ) : lojasTabela.map((loja) => (
-                    <TableCell key={`top10-${loja.branch_code}`} align="center" className="!px-1 !py-2 font-bold">
+                    <TableCell key={`total-${loja.branch_code}`} align="center" className="!px-1 !py-2 font-bold">
                       {formatNumber(top10Totais.lojas.get(loja.branch_code) || 0)}
                     </TableCell>
                   ))}
                 </TableRow>
-                {adicionais && adicionais.sku_count > 0 && (
-                  <TableRow>
-                    <TableCell colSpan={3} align="right" className="!px-1.5 !py-2 text-gray-500">
-                      + {formatNumber(adicionais.sku_count)} SKUs adicionais:
-                    </TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-500">-</TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-600">{formatNumber(adicionais.quantidade)}</TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2 text-gray-600 whitespace-normal leading-tight">{formatMoney(adicionais.valor)}</TableCell>
-                    <TableCell align="center" colSpan={Math.max(lojasTabela.length, 1)} className="!px-1.5 !py-2 text-gray-500">
-                      distribuicao similar
-                    </TableCell>
-                  </TableRow>
-                )}
-              </>
-            )}
-          </TableBody>
-        </Table>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </Card>
 
       {data && data.resumo_lojas?.length > 0 && (

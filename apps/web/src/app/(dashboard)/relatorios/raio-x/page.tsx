@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { raioXApi, RaioXFiltro, RaioXResponse, RaioXProdutoSearch } from '@/lib/pcpApi';
 import { Card } from '@/components/ui/Card';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
+
+type Agrupamento = 'referencia' | 'loja';
 
 export default function RaioXPage() {
   const { token } = useAuth();
@@ -31,6 +33,9 @@ export default function RaioXPage() {
     visao: 'analitico',
     agruparPorCor: false,
   });
+
+  // Modo de agrupamento (referencia ou loja)
+  const [agrupamento, setAgrupamento] = useState<Agrupamento>('referencia');
 
   const buscarProdutos = async (search: string = '') => {
     if (!token) {
@@ -128,6 +133,72 @@ export default function RaioXPage() {
     return '';
   };
 
+  // Agrupa dados por loja quando agrupamento='loja'
+  const dadosPorLoja = useMemo(() => {
+    if (!data || agrupamento !== 'loja') return null;
+
+    // Estrutura: Map<branchCode, { branchName, produtos: [...] }>
+    const lojasMap = new Map<number, {
+      branchCode: number;
+      branchName: string;
+      produtos: Array<{
+        referenceCode: string;
+        referenceName: string;
+        cor?: string;
+        totais: {
+          estoqueInicial: number;
+          transferencias: number;
+          vendasVarejo: number;
+          vendasAtacado: number;
+          estoqueFinal: number;
+          cobertura: number;
+        };
+      }>;
+      totais: {
+        estoqueInicial: number;
+        transferencias: number;
+        vendasVarejo: number;
+        vendasAtacado: number;
+        estoqueFinal: number;
+      };
+    }>();
+
+    for (const produto of data.produtos) {
+      for (const loja of produto.lojas) {
+        if (!lojasMap.has(loja.branchCode)) {
+          lojasMap.set(loja.branchCode, {
+            branchCode: loja.branchCode,
+            branchName: loja.branchName,
+            produtos: [],
+            totais: {
+              estoqueInicial: 0,
+              transferencias: 0,
+              vendasVarejo: 0,
+              vendasAtacado: 0,
+              estoqueFinal: 0,
+            },
+          });
+        }
+
+        const lojaData = lojasMap.get(loja.branchCode)!;
+        lojaData.produtos.push({
+          referenceCode: produto.referenceCode,
+          referenceName: produto.referenceName,
+          cor: produto.cor,
+          totais: loja.totais,
+        });
+
+        lojaData.totais.estoqueInicial += loja.totais.estoqueInicial;
+        lojaData.totais.transferencias += loja.totais.transferencias;
+        lojaData.totais.vendasVarejo += loja.totais.vendasVarejo;
+        lojaData.totais.vendasAtacado += loja.totais.vendasAtacado;
+        lojaData.totais.estoqueFinal += loja.totais.estoqueFinal;
+      }
+    }
+
+    return Array.from(lojasMap.values()).sort((a, b) => a.branchCode - b.branchCode);
+  }, [data, agrupamento]);
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -222,7 +293,7 @@ export default function RaioXPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Data Início</label>
             <input
@@ -268,6 +339,18 @@ export default function RaioXPage() {
             </select>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Agrupar por</label>
+            <select
+              value={agrupamento}
+              onChange={(e) => setAgrupamento(e.target.value as Agrupamento)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="referencia">Referência</option>
+              <option value="loja">Loja</option>
+            </select>
+          </div>
+
           <div className="flex items-end">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -302,8 +385,8 @@ export default function RaioXPage() {
         </Card>
       )}
 
-      {/* Resultados */}
-      {data && data.produtos.length > 0 && (
+      {/* Resultados - Agrupado por Referência */}
+      {data && data.produtos.length > 0 && agrupamento === 'referencia' && (
         <div className="space-y-6">
           {data.produtos.map((produto, idx) => (
             <Card key={idx}>
@@ -321,12 +404,24 @@ export default function RaioXPage() {
 
               {produto.lojas.map((loja) => {
                 // Extrair todos os tamanhos disponíveis nesta loja
-                const tamanhos = loja.grades.map(g => g.tamanho);
+                const tamanhos = loja.grades?.map(g => g.tamanho) || [];
 
                 // Criar um mapa para acesso rápido aos dados de cada tamanho
                 const gradesPorTamanho = new Map(
-                  loja.grades.map(g => [g.tamanho, g])
+                  (loja.grades || []).map(g => [g.tamanho, g])
                 );
+
+                // Se não tem tamanhos, pula a loja ou mostra apenas totais
+                if (tamanhos.length === 0 && filtro.visao === 'analitico') {
+                  return (
+                    <div key={loja.branchCode} className="mb-6">
+                      <h4 className="text-md font-semibold text-gray-800 mb-2">
+                        {loja.branchName}
+                      </h4>
+                      <p className="text-sm text-gray-500">Sem dados de grade disponíveis</p>
+                    </div>
+                  );
+                }
 
                 return (
                   <div key={loja.branchCode} className="mb-6">
@@ -529,6 +624,65 @@ export default function RaioXPage() {
                   </TableBody>
                 </Table>
               </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Resultados - Agrupado por Loja */}
+      {data && data.produtos.length > 0 && agrupamento === 'loja' && dadosPorLoja && (
+        <div className="space-y-6">
+          {dadosPorLoja.map((loja) => (
+            <Card key={loja.branchCode}>
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-gray-900">{loja.branchName}</h3>
+                <p className="text-sm text-gray-500">{loja.produtos.length} referências</p>
+              </div>
+
+              <Table className="mb-4">
+                <TableHead>
+                  <TableRow>
+                    <TableCell isHeader>REFERÊNCIA</TableCell>
+                    <TableCell isHeader align="right">EST. INICIAL</TableCell>
+                    <TableCell isHeader align="right">TRANSF.</TableCell>
+                    <TableCell isHeader align="right">V. VAREJO</TableCell>
+                    <TableCell isHeader align="right">V. ATACADO</TableCell>
+                    <TableCell isHeader align="right">EST. FINAL</TableCell>
+                    <TableCell isHeader align="right">COBERTURA</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {loja.produtos.map((produto, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="font-medium">
+                        {produto.referenceCode}
+                        {produto.cor && <span className="text-gray-500 ml-1">({produto.cor})</span>}
+                      </TableCell>
+                      <TableCell align="right">{formatarNumero(produto.totais.estoqueInicial)}</TableCell>
+                      <TableCell align="right">{formatarNumero(produto.totais.transferencias)}</TableCell>
+                      <TableCell align="right">{formatarNumero(produto.totais.vendasVarejo)}</TableCell>
+                      <TableCell align="right">{formatarNumero(produto.totais.vendasAtacado)}</TableCell>
+                      <TableCell align="right">{formatarNumero(produto.totais.estoqueFinal)}</TableCell>
+                      <TableCell
+                        align="right"
+                        className={getCorCobertura(produto.totais.cobertura, data.config)}
+                      >
+                        {formatarCobertura(produto.totais.cobertura)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {/* Total da Loja */}
+                  <TableRow className="bg-yellow-50 font-bold border-t-2">
+                    <TableCell>TOTAL</TableCell>
+                    <TableCell align="right">{formatarNumero(loja.totais.estoqueInicial)}</TableCell>
+                    <TableCell align="right">{formatarNumero(loja.totais.transferencias)}</TableCell>
+                    <TableCell align="right">{formatarNumero(loja.totais.vendasVarejo)}</TableCell>
+                    <TableCell align="right">{formatarNumero(loja.totais.vendasAtacado)}</TableCell>
+                    <TableCell align="right">{formatarNumero(loja.totais.estoqueFinal)}</TableCell>
+                    <TableCell align="right">-</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             </Card>
           ))}
         </div>
