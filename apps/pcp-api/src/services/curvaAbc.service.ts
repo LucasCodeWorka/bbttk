@@ -24,10 +24,11 @@ async function getConfig() {
   const a = Number(config.curvaALimitePercent);
   const b = Number(config.curvaBLimitePercent);
   const c = Number(config.curvaCLimitePercent);
-  if (!(a > 0 && a < b && b < c && c < 100)) {
+  // Curva C vai ate 100% (nao existe mais curva D)
+  if (!(a > 0 && a < b && b < c && c <= 100)) {
     return prisma.pcpCurvaAbcConfig.update({
       where: { relatorio: CURVA_ABC_CONFIG_KEY },
-      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 99 },
+      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 100 },
     });
   }
   return config;
@@ -130,7 +131,7 @@ async function getVendaPorProductCodeMesesFechados(mesesInicio: number, mesesFim
   return mapa;
 }
 
-export type CurvaLetra = 'A' | 'B' | 'C' | 'D';
+export type CurvaLetra = 'A' | 'B' | 'C';
 
 export interface ReferenciaAbc {
   referenceCode: string;
@@ -250,10 +251,10 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     const percent = totalValorGeralBruto > 0 ? (valorBase / totalValorGeralBruto) * 100 : 0;
     const acumulado = totalValorGeralBruto > 0 ? (acumuladoValor / totalValorGeralBruto) * 100 : 0;
     representatividadePorReferencia.set(r.referenceCode, { percent, acumulado });
+    // Curva C vai ate 100% (nao existe mais curva D)
     if (acumulado <= curvaALimitePercent) curvaPorReferencia.set(r.referenceCode, 'A');
     else if (acumulado <= curvaBLimitePercent) curvaPorReferencia.set(r.referenceCode, 'B');
-    else if (acumulado <= curvaCLimitePercent) curvaPorReferencia.set(r.referenceCode, 'C');
-    else curvaPorReferencia.set(r.referenceCode, 'D');
+    else curvaPorReferencia.set(r.referenceCode, 'C');
   });
 
   // Ranking geral (todas as referencias analisadas, independente da curva)
@@ -298,7 +299,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
 
   const totalValorGeral = referencias.reduce((s, r) => s + r.valorReais, 0);
 
-  const curvas: CurvaResumo[] = (['A', 'B', 'C', 'D'] as CurvaLetra[]).map((curva) => {
+  const curvas: CurvaResumo[] = (['A', 'B', 'C'] as CurvaLetra[]).map((curva) => {
     const doGrupo = referencias.filter((r) => r.curva === curva).sort((a, b) => a.rankValor - b.rankValor);
     const quantidade = doGrupo.reduce((s, r) => s + r.qtdVendida, 0);
     const valorReais = doGrupo.reduce((s, r) => s + r.valorReais, 0);
@@ -433,10 +434,10 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
     const percent = totalValorGeralBruto > 0 ? (valorBase / totalValorGeralBruto) * 100 : 0;
     const acumulado = totalValorGeralBruto > 0 ? (acumuladoValor / totalValorGeralBruto) * 100 : 0;
     representatividadePorSku.set(r.sku, { percent, acumulado });
+    // Curva C vai ate 100% (nao existe mais curva D)
     if (acumulado <= curvaALimitePercent) curvaPorSku.set(r.sku, 'A');
     else if (acumulado <= curvaBLimitePercent) curvaPorSku.set(r.sku, 'B');
-    else if (acumulado <= curvaCLimitePercent) curvaPorSku.set(r.sku, 'C');
-    else curvaPorSku.set(r.sku, 'D');
+    else curvaPorSku.set(r.sku, 'C');
   });
 
   const porQtdDesc = [...comMedio].sort((a, b) => b.qtdVendida - a.qtdVendida);
@@ -473,7 +474,7 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
 
   const totalValorGeral = itens.reduce((s, r) => s + r.valorReais, 0);
 
-  const curvas: SkuCurvaResumo[] = (['A', 'B', 'C', 'D'] as CurvaLetra[]).map((curva) => {
+  const curvas: SkuCurvaResumo[] = (['A', 'B', 'C'] as CurvaLetra[]).map((curva) => {
     const doGrupo = itens.filter((r) => r.curva === curva).sort((a, b) => a.rankValor - b.rankValor);
     const quantidade = doGrupo.reduce((s, r) => s + r.qtdVendida, 0);
     const valorReais = doGrupo.reduce((s, r) => s + r.valorReais, 0);

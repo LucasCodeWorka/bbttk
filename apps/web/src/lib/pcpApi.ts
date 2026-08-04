@@ -56,6 +56,7 @@ export interface EstoqueSemGiroResumoItem {
   dias: number;
   label: string;
   sku_count: number;
+  ref_count: number;
   quantidade: number;
   valor: number;
   pct_total: number;
@@ -303,7 +304,7 @@ export interface VisaoGeralExtrasResponse {
     totalSkus: number;
   };
   estoqueSemGiro: { dias: number; label: string; sku_count: number; quantidade: number; valor: number; pct_total: number }[];
-  curvaAbc: { curva: 'A' | 'B' | 'C' | 'D'; percentDoTotal: number }[];
+  curvaAbc: { curva: 'A' | 'B' | 'C'; percentDoTotal: number }[];
 }
 
 export interface VisaoGeralExtrasFiltro {
@@ -344,6 +345,7 @@ export interface PcpGradeReferencia {
   referenceName: string;
   curva: CurvaLetra;
   estoqueTotal: number;
+  emProducao: number;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;
@@ -392,7 +394,7 @@ export interface AnaliseGradeFiltro {
 
 // ---- Curva ABC (produto) ----
 
-export type CurvaLetra = 'A' | 'B' | 'C' | 'D';
+export type CurvaLetra = 'A' | 'B' | 'C';
 
 export interface ReferenciaAbc {
   referenceCode: string;

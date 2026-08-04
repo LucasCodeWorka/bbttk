@@ -186,7 +186,8 @@ export interface UpdateCurvaAbcConfigInput {
   curvaCLimitePercent: number;
 }
 
-// Limiares da Curva ABCD por representatividade acumulada do valor vendido.
+// Limiares da Curva ABC por representatividade acumulada do valor vendido.
+// Curva C vai ate 100% (nao existe mais curva D).
 export async function getCurvaAbcConfig(relatorio: string) {
   const config = await prisma.pcpCurvaAbcConfig.upsert({
     where: { relatorio },
@@ -196,10 +197,11 @@ export async function getCurvaAbcConfig(relatorio: string) {
   const a = Number(config.curvaALimitePercent);
   const b = Number(config.curvaBLimitePercent);
   const c = Number(config.curvaCLimitePercent);
-  if (!(a > 0 && a < b && b < c && c < 100)) {
+  // Valida que os limites estao em ordem crescente e C vai ate 100
+  if (!(a > 0 && a < b && b < c && c <= 100)) {
     return prisma.pcpCurvaAbcConfig.update({
       where: { relatorio },
-      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 99 },
+      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 100 },
     });
   }
   return config;
@@ -217,19 +219,17 @@ export async function updateCurvaAbcConfig(input: UpdateCurvaAbcConfigInput, use
   // reenviado sem edicao no PUT chega aqui como string, nao number. Number(valor) aceita
   // os dois casos sem exigir que o frontend normalize antes.
   const curvaBLimitePercent = Number(input.curvaBLimitePercent);
-  const curvaCLimitePercent = Number(input.curvaCLimitePercent);
-  const limites = [
-    ['curvaALimitePercent', input.curvaALimitePercent],
-    ['curvaBLimitePercent', curvaBLimitePercent],
-    ['curvaCLimitePercent', curvaCLimitePercent],
-  ] as const;
-  for (const [nome, valor] of limites) {
-    if (!Number.isFinite(valor) || valor <= 0 || valor >= 100) {
-      throw new Error(`${nome} precisa ser um numero entre 0 e 100`);
-    }
+  // Curva C sempre vai ate 100% (nao existe mais curva D)
+  const curvaCLimitePercent = 100;
+
+  if (!Number.isFinite(input.curvaALimitePercent) || input.curvaALimitePercent <= 0 || input.curvaALimitePercent >= 100) {
+    throw new Error('curvaALimitePercent precisa ser um numero entre 0 e 100');
   }
-  if (!(input.curvaALimitePercent < curvaBLimitePercent && curvaBLimitePercent < curvaCLimitePercent)) {
-    throw new Error('Os limites precisam estar em ordem crescente: A < B < C');
+  if (!Number.isFinite(curvaBLimitePercent) || curvaBLimitePercent <= 0 || curvaBLimitePercent >= 100) {
+    throw new Error('curvaBLimitePercent precisa ser um numero entre 0 e 100');
+  }
+  if (!(input.curvaALimitePercent < curvaBLimitePercent)) {
+    throw new Error('Os limites precisam estar em ordem crescente: A < B');
   }
 
   const dados = {

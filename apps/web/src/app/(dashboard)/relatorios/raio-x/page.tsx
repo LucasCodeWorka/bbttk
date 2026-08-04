@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { raioXApi, RaioXFiltro, RaioXResponse, RaioXProdutoSearch } from '@/lib/pcpApi';
 import { Card } from '@/components/ui/Card';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
+import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 
 type Agrupamento = 'referencia' | 'loja';
 
@@ -133,6 +134,57 @@ export default function RaioXPage() {
     return '';
   };
 
+  // Resumo consolidado por loja (sempre calculado, independente do modo de agrupamento)
+  const resumoPorLoja = useMemo(() => {
+    if (!data || data.produtos.length === 0) return null;
+
+    const lojasMap = new Map<number, {
+      branchCode: number;
+      branchName: string;
+      estoqueInicial: number;
+      transferencias: number;
+      vendasVarejo: number;
+      vendasAtacado: number;
+      estoqueFinal: number;
+    }>();
+
+    for (const produto of data.produtos) {
+      for (const loja of produto.lojas) {
+        if (!lojasMap.has(loja.branchCode)) {
+          lojasMap.set(loja.branchCode, {
+            branchCode: loja.branchCode,
+            branchName: loja.branchName,
+            estoqueInicial: 0,
+            transferencias: 0,
+            vendasVarejo: 0,
+            vendasAtacado: 0,
+            estoqueFinal: 0,
+          });
+        }
+        const lojaData = lojasMap.get(loja.branchCode)!;
+        lojaData.estoqueInicial += loja.totais.estoqueInicial;
+        lojaData.transferencias += loja.totais.transferencias;
+        lojaData.vendasVarejo += loja.totais.vendasVarejo;
+        lojaData.vendasAtacado += loja.totais.vendasAtacado;
+        lojaData.estoqueFinal += loja.totais.estoqueFinal;
+      }
+    }
+
+    const lojas = Array.from(lojasMap.values()).sort((a, b) => a.branchCode - b.branchCode);
+    const totalGeral = lojas.reduce(
+      (acc, loja) => ({
+        estoqueInicial: acc.estoqueInicial + loja.estoqueInicial,
+        transferencias: acc.transferencias + loja.transferencias,
+        vendasVarejo: acc.vendasVarejo + loja.vendasVarejo,
+        vendasAtacado: acc.vendasAtacado + loja.vendasAtacado,
+        estoqueFinal: acc.estoqueFinal + loja.estoqueFinal,
+      }),
+      { estoqueInicial: 0, transferencias: 0, vendasVarejo: 0, vendasAtacado: 0, estoqueFinal: 0 }
+    );
+
+    return { lojas, totalGeral };
+  }, [data]);
+
   // Agrupa dados por loja quando agrupamento='loja'
   const dadosPorLoja = useMemo(() => {
     if (!data || agrupamento !== 'loja') return null;
@@ -198,6 +250,91 @@ export default function RaioXPage() {
 
     return Array.from(lojasMap.values()).sort((a, b) => a.branchCode - b.branchCode);
   }, [data, agrupamento]);
+
+  // Função para exportar para Excel
+  const handleExportExcel = useCallback(() => {
+    if (!data || data.produtos.length === 0 || !resumoPorLoja) return;
+
+    const dataHoje = new Date().toISOString().split('T')[0];
+
+    // Colunas do resumo por loja
+    const colunasResumo: ExcelColumn[] = [
+      { key: 'branchName', header: 'LOJA', width: 20, type: 'text' },
+      { key: 'estoqueInicial', header: 'EST. INICIAL', width: 12, type: 'number' },
+      { key: 'transferencias', header: 'TRANSF.', width: 12, type: 'number' },
+      { key: 'vendasVarejo', header: 'V. VAREJO', width: 12, type: 'number' },
+      { key: 'vendasAtacado', header: 'V. ATACADO', width: 12, type: 'number' },
+      { key: 'estoqueFinal', header: 'EST. FINAL', width: 12, type: 'number' },
+    ];
+
+    const dadosResumo = resumoPorLoja.lojas.map(loja => ({
+      branchName: loja.branchName,
+      estoqueInicial: loja.estoqueInicial,
+      transferencias: loja.transferencias,
+      vendasVarejo: loja.vendasVarejo,
+      vendasAtacado: loja.vendasAtacado,
+      estoqueFinal: loja.estoqueFinal,
+    }));
+
+    const totaisResumo: Record<string, number | string> = {
+      branchName: 'TOTAL GERAL',
+      estoqueInicial: resumoPorLoja.totalGeral.estoqueInicial,
+      transferencias: resumoPorLoja.totalGeral.transferencias,
+      vendasVarejo: resumoPorLoja.totalGeral.vendasVarejo,
+      vendasAtacado: resumoPorLoja.totalGeral.vendasAtacado,
+      estoqueFinal: resumoPorLoja.totalGeral.estoqueFinal,
+    };
+
+    // Colunas do detalhe por produto
+    const colunasDetalhe: ExcelColumn[] = [
+      { key: 'referenceCode', header: 'REFERÊNCIA', width: 15, type: 'text' },
+      { key: 'referenceName', header: 'DESCRIÇÃO', width: 30, type: 'text' },
+      { key: 'cor', header: 'COR', width: 15, type: 'text' },
+      { key: 'loja', header: 'LOJA', width: 20, type: 'text' },
+      { key: 'estoqueInicial', header: 'EST. INICIAL', width: 12, type: 'number' },
+      { key: 'transferencias', header: 'TRANSF.', width: 12, type: 'number' },
+      { key: 'vendasVarejo', header: 'V. VAREJO', width: 12, type: 'number' },
+      { key: 'vendasAtacado', header: 'V. ATACADO', width: 12, type: 'number' },
+      { key: 'estoqueFinal', header: 'EST. FINAL', width: 12, type: 'number' },
+      { key: 'cobertura', header: 'COBERTURA', width: 12, type: 'number' },
+    ];
+
+    // Montar dados do detalhe (uma linha por produto/loja)
+    const dadosDetalhe: Record<string, unknown>[] = [];
+    for (const produto of data.produtos) {
+      for (const loja of produto.lojas) {
+        dadosDetalhe.push({
+          referenceCode: produto.referenceCode,
+          referenceName: produto.referenceName,
+          cor: produto.cor || '',
+          loja: loja.branchName,
+          estoqueInicial: loja.totais.estoqueInicial,
+          transferencias: loja.totais.transferencias,
+          vendasVarejo: loja.totais.vendasVarejo,
+          vendasAtacado: loja.totais.vendasAtacado,
+          estoqueFinal: loja.totais.estoqueFinal,
+          cobertura: loja.totais.cobertura >= 999 ? '' : loja.totais.cobertura,
+        });
+      }
+    }
+
+    // Exportar com múltiplas abas
+    exportMultiSheetExcel(`RaioX_${dataHoje}`, [
+      {
+        sheetName: 'Resumo por Loja',
+        columns: colunasResumo,
+        data: dadosResumo,
+        title: `Raio X - Resumo por Loja (${filtro.dataInicio} a ${filtro.dataFim})`,
+        totals: totaisResumo,
+      },
+      {
+        sheetName: 'Detalhe',
+        columns: colunasDetalhe,
+        data: dadosDetalhe,
+        title: `Raio X - Detalhe por Produto/Loja (${filtro.dataInicio} a ${filtro.dataFim})`,
+      },
+    ]);
+  }, [data, resumoPorLoja, filtro.dataInicio, filtro.dataFim]);
 
   return (
     <div className="p-6 space-y-6">
@@ -372,6 +509,17 @@ export default function RaioXPage() {
           >
             {loading ? 'Buscando...' : 'Buscar'}
           </button>
+          {data && data.produtos.length > 0 && (
+            <button
+              onClick={handleExportExcel}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Exportar Excel
+            </button>
+          )}
           {selectedProducts.length === 0 && (
             <span className="text-sm text-gray-500 self-center">Selecione pelo menos um produto</span>
           )}
@@ -382,6 +530,45 @@ export default function RaioXPage() {
       {error && (
         <Card className="bg-red-50 border-red-200">
           <p className="text-red-800 text-sm">{error}</p>
+        </Card>
+      )}
+
+      {/* Resumo consolidado por loja */}
+      {resumoPorLoja && (
+        <Card>
+          <h3 className="text-lg font-bold text-gray-900 mb-4">Resumo por Loja</h3>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell isHeader>LOJA</TableCell>
+                <TableCell isHeader align="right">EST. INICIAL</TableCell>
+                <TableCell isHeader align="right">TRANSF.</TableCell>
+                <TableCell isHeader align="right">V. VAREJO</TableCell>
+                <TableCell isHeader align="right">V. ATACADO</TableCell>
+                <TableCell isHeader align="right">EST. FINAL</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {resumoPorLoja.lojas.map((loja) => (
+                <TableRow key={loja.branchCode}>
+                  <TableCell className="font-medium">{loja.branchName}</TableCell>
+                  <TableCell align="right">{formatarNumero(loja.estoqueInicial)}</TableCell>
+                  <TableCell align="right">{formatarNumero(loja.transferencias)}</TableCell>
+                  <TableCell align="right">{formatarNumero(loja.vendasVarejo)}</TableCell>
+                  <TableCell align="right">{formatarNumero(loja.vendasAtacado)}</TableCell>
+                  <TableCell align="right">{formatarNumero(loja.estoqueFinal)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-yellow-50 font-bold border-t-2">
+                <TableCell>TOTAL GERAL</TableCell>
+                <TableCell align="right">{formatarNumero(resumoPorLoja.totalGeral.estoqueInicial)}</TableCell>
+                <TableCell align="right">{formatarNumero(resumoPorLoja.totalGeral.transferencias)}</TableCell>
+                <TableCell align="right">{formatarNumero(resumoPorLoja.totalGeral.vendasVarejo)}</TableCell>
+                <TableCell align="right">{formatarNumero(resumoPorLoja.totalGeral.vendasAtacado)}</TableCell>
+                <TableCell align="right">{formatarNumero(resumoPorLoja.totalGeral.estoqueFinal)}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </Card>
       )}
 

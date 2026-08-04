@@ -23,6 +23,7 @@ export interface EstoqueSemGiroResumoItem {
   dias: number;
   label: string;
   sku_count: number;
+  ref_count: number;
   quantidade: number;
   valor: number;
   pct_total: number;
@@ -309,11 +310,14 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
     const bucketSkus = allSkus.filter((sku) => isInDiasRange(sku.dias_sem_giro, dias));
     const quantidade = bucketSkus.reduce((sum, sku) => sum + sku.quantidade, 0);
     const valor = bucketSkus.reduce((sum, sku) => sum + sku.valor, 0);
+    // Conta referencias unicas neste bucket
+    const refSet = new Set(bucketSkus.map((sku) => sku.referencia));
 
     return {
       dias,
       label: labelDias(dias),
       sku_count: bucketSkus.length,
+      ref_count: refSet.size,
       quantidade,
       valor,
     };

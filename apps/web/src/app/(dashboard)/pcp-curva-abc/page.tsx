@@ -22,12 +22,12 @@ import {
   PcpClassificacaoDimensao,
 } from '@/lib/pcpApi';
 import { cn, formatMoney, formatNumber } from '@/lib/utils';
+import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const CURVA_STYLE: Record<CurvaLetra, { border: string; bg: string; text: string; badge: string }> = {
   A: { border: 'border-l-green-500', bg: 'bg-green-50', text: 'text-green-700', badge: 'bg-green-100 text-green-700' },
   B: { border: 'border-l-gray-400', bg: 'bg-gray-50', text: 'text-gray-700', badge: 'bg-gray-200 text-gray-700' },
   C: { border: 'border-l-red-400', bg: 'bg-red-50', text: 'text-red-700', badge: 'bg-red-100 text-red-700' },
-  D: { border: 'border-l-yellow-400', bg: 'bg-yellow-50', text: 'text-yellow-700', badge: 'bg-yellow-100 text-yellow-700' },
 };
 
 const SORT_OPTIONS = [
@@ -294,7 +294,7 @@ export default function PcpCurvaAbcPage() {
       setData(refData);
       setDataSku(skuData);
     } catch (error) {
-      showToast('Erro ao carregar Curva ABCD', 'error');
+      showToast('Erro ao carregar Curva ABC', 'error');
       console.error(error);
     } finally {
       setIsLoading(false);
@@ -379,12 +379,101 @@ export default function PcpCurvaAbcPage() {
     });
   }, [visao, data, dataSku, curvaSelecionada, busca, ordenarPor, sortDir]);
 
+  // Função para exportar para Excel
+  const handleExportExcel = useCallback(() => {
+    if (itensFiltrados.length === 0) return;
+
+    const dataHoje = new Date().toISOString().split('T')[0];
+    const modoLabel = visao === 'referencia' ? 'Referências' : 'SKUs';
+
+    // Colunas variam conforme visao
+    const colunas: ExcelColumn[] = [
+      { key: 'labelPrincipal', header: visao === 'referencia' ? 'REFERÊNCIA' : 'REF-COR-TAM', width: 18, type: 'text' },
+      { key: 'labelSecundaria', header: visao === 'referencia' ? 'DESCRIÇÃO' : 'SKU', width: 30, type: 'text' },
+      { key: 'curva', header: 'CURVA', width: 8, type: 'text' },
+      { key: 'rankValor', header: 'RANK VALOR', width: 12, type: 'number' },
+      { key: 'representatividadeValor', header: '%', width: 8, type: 'number' },
+      { key: 'representatividadeAcumulada', header: '% ACUM.', width: 10, type: 'number' },
+      { key: 'valorMedioMensal', header: 'MÉDIA R$', width: 14, type: 'number' },
+      { key: 'valorReais', header: 'VALOR 3M R$', width: 14, type: 'number' },
+      { key: 'rankQtd', header: 'RANK QTD', width: 10, type: 'number' },
+    ];
+
+    if (visao === 'referencia') {
+      colunas.push({ key: 'totalSkus', header: 'SKUS', width: 8, type: 'number' });
+      colunas.push({ key: 'mediaPorSku', header: 'MÉD/SKU', width: 10, type: 'number' });
+    }
+
+    colunas.push(
+      { key: 'qtdVendida', header: 'QTD 3M', width: 10, type: 'number' },
+      { key: 'mediaMensal', header: 'MÉD/MÊS', width: 10, type: 'number' },
+      { key: 'giro30dVarejo', header: 'GIRO 30D V', width: 12, type: 'number' },
+      { key: 'giro30dAtacado', header: 'GIRO 30D A', width: 12, type: 'number' },
+      { key: 'estoqueTotal', header: 'EST. TOTAL', width: 12, type: 'number' },
+      { key: 'estoqueVarejo', header: 'EST. VAREJO', width: 12, type: 'number' },
+      { key: 'estoqueAtacado', header: 'EST. ATACADO', width: 14, type: 'number' },
+    );
+
+    const dados = itensFiltrados.map(item => ({
+      labelPrincipal: item.labelPrincipal,
+      labelSecundaria: item.labelSecundaria,
+      curva: item.curva,
+      rankValor: item.rankValor,
+      representatividadeValor: item.representatividadeValor,
+      representatividadeAcumulada: item.representatividadeAcumulada,
+      valorMedioMensal: item.valorMedioMensal,
+      valorReais: item.valorReais,
+      rankQtd: item.rankQtd,
+      totalSkus: item.totalSkus || 0,
+      mediaPorSku: item.mediaPorSku || 0,
+      qtdVendida: item.qtdVendida,
+      mediaMensal: item.mediaMensal,
+      giro30dVarejo: item.giro30dVarejo,
+      giro30dAtacado: item.giro30dAtacado,
+      estoqueTotal: item.estoqueTotal,
+      estoqueVarejo: item.estoqueVarejo,
+      estoqueAtacado: item.estoqueAtacado,
+    }));
+
+    // Linha de totais
+    const totais: Record<string, number | string> = {
+      labelPrincipal: `TOTAL (${itensFiltrados.length} itens)`,
+      labelSecundaria: '',
+      curva: '',
+      rankValor: '',
+      representatividadeValor: '',
+      representatividadeAcumulada: '',
+      valorMedioMensal: itensFiltrados.reduce((sum, r) => sum + r.valorMedioMensal, 0),
+      valorReais: itensFiltrados.reduce((sum, r) => sum + r.valorReais, 0),
+      rankQtd: '',
+      totalSkus: itensFiltrados.reduce((sum, r) => sum + (r.totalSkus || 0), 0),
+      mediaPorSku: '',
+      qtdVendida: itensFiltrados.reduce((sum, r) => sum + r.qtdVendida, 0),
+      mediaMensal: itensFiltrados.reduce((sum, r) => sum + r.mediaMensal, 0),
+      giro30dVarejo: itensFiltrados.reduce((sum, r) => sum + r.giro30dVarejo, 0),
+      giro30dAtacado: itensFiltrados.reduce((sum, r) => sum + r.giro30dAtacado, 0),
+      estoqueTotal: itensFiltrados.reduce((sum, r) => sum + r.estoqueTotal, 0),
+      estoqueVarejo: itensFiltrados.reduce((sum, r) => sum + r.estoqueVarejo, 0),
+      estoqueAtacado: itensFiltrados.reduce((sum, r) => sum + r.estoqueAtacado, 0),
+    };
+
+    exportMultiSheetExcel(`CurvaABC_${modoLabel}_${dataHoje}`, [
+      {
+        sheetName: modoLabel,
+        columns: colunas,
+        data: dados,
+        title: `Curva ABC - ${modoLabel}`,
+        totals: totais,
+      },
+    ]);
+  }, [itensFiltrados, visao]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">PCP</p>
-          <h1 className="text-2xl font-bold text-gray-900">Curva ABCD</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Curva ABC</h1>
           <p className="text-gray-500 text-sm mt-1">
             {visao === 'referencia' ? 'Referencias' : 'SKUs (referencia-cor-tamanho)'} classificados pela media mensal de valor dos ultimos {(visao === 'referencia' ? data?.config.mesesFechados : dataSku?.config.mesesFechados) ?? 3} meses fechados
           </p>
@@ -403,8 +492,7 @@ export default function PcpCurvaAbcPage() {
             <li><strong>Base:</strong> media mensal de valor dos ultimos {(visao === 'referencia' ? data?.config.mesesFechados : dataSku?.config.mesesFechados)} meses fechados.</li>
             <li><strong>Curva A:</strong> ate {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% do valor medio mensal acumulado.</li>
             <li><strong>Curva B:</strong> acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% e ate {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% do valor acumulado.</li>
-            <li><strong>Curva C:</strong> acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% e ate {(visao === 'referencia' ? data : dataSku)?.config.curvaCLimitePercent}% do valor acumulado.</li>
-            <li><strong>Curva D:</strong> restante, acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaCLimitePercent}% do valor acumulado.</li>
+            <li><strong>Curva C:</strong> restante, acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% do valor acumulado.</li>
           </ul>
           <p className="text-xs text-gray-400 mt-2">
             {visao === 'referencia' ? data?.totalAnalisadas : dataSku?.totalAnalisadas} {visao === 'referencia' ? 'referencias' : 'SKUs'} analisados (com venda no periodo).
@@ -414,18 +502,18 @@ export default function PcpCurvaAbcPage() {
 
       <div>
         <h2 className="text-sm font-semibold text-gray-600 mb-2">Resumo por curva</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {isLoading || curvasNormalizadas.length === 0
-            ? [1, 2, 3, 4].map((i) => <Card key={i} className="h-40 animate-pulse bg-gray-50"><span /></Card>)
+            ? [1, 2, 3].map((i) => <Card key={i} className="h-40 animate-pulse bg-gray-50"><span /></Card>)
             : curvasNormalizadas.map((c) => <CurvaCard key={c.curva} resumo={c} />)}
         </div>
       </div>
 
       <div>
         <h2 className="text-sm font-semibold text-gray-600 mb-2">Ultimo item por curva</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {isLoading || curvasNormalizadas.length === 0
-            ? [1, 2, 3, 4].map((i) => <Card key={i} className="h-24 animate-pulse bg-gray-50"><span /></Card>)
+            ? [1, 2, 3].map((i) => <Card key={i} className="h-24 animate-pulse bg-gray-50"><span /></Card>)
             : curvasNormalizadas.map((c) => <UltimaRefCard key={c.curva} resumo={c} />)}
         </div>
       </div>
@@ -445,8 +533,8 @@ export default function PcpCurvaAbcPage() {
             </button>
           ))}
         </div>
-        <div className="inline-grid grid-cols-5 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
-          {(['todas', 'A', 'B', 'C', 'D'] as const).map((c) => (
+        <div className="inline-grid grid-cols-4 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+          {(['todas', 'A', 'B', 'C'] as const).map((c) => (
             <button
               key={c}
               type="button"
@@ -480,6 +568,17 @@ export default function PcpCurvaAbcPage() {
             />
           ))}
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+        {itensFiltrados.length > 0 && (
+          <button
+            onClick={handleExportExcel}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Exportar Excel
+          </button>
+        )}
       </div>
 
       <Card>

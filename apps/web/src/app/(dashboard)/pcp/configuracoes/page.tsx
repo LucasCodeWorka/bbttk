@@ -226,20 +226,21 @@ export default function ConfiguracoesPcpPage() {
   async function handleSalvarCurvaAbc() {
     if (!token || !curvaConfig) return;
     if (!Number.isInteger(curvaConfig.giroDias) || curvaConfig.giroDias <= 0) {
-      showToast('Meses fechados da Curva ABCD precisa ser um numero inteiro positivo', 'error');
+      showToast('Meses fechados da Curva ABC precisa ser um numero inteiro positivo', 'error');
       return;
     }
-    if (!(curvaConfig.curvaALimitePercent < curvaConfig.curvaBLimitePercent && curvaConfig.curvaBLimitePercent < curvaConfig.curvaCLimitePercent)) {
-      showToast('Os limites precisam estar em ordem crescente: A < B < C', 'error');
+    if (!(curvaConfig.curvaALimitePercent < curvaConfig.curvaBLimitePercent)) {
+      showToast('Os limites precisam estar em ordem crescente: A < B', 'error');
       return;
     }
 
     setSalvandoCurva(true);
     try {
-      await pcpConfigApi.updateCurvaAbcConfig(token, curvaConfig);
-      showToast('Regras da Curva ABCD salvas!', 'success');
+      // Curva C é sempre 100% (não existe mais curva D)
+      await pcpConfigApi.updateCurvaAbcConfig(token, { ...curvaConfig, curvaCLimitePercent: 100 });
+      showToast('Regras da Curva ABC salvas!', 'success');
     } catch (error) {
-      showToast('Erro ao salvar Curva ABCD', 'error');
+      showToast('Erro ao salvar Curva ABC', 'error');
       console.error(error);
     } finally {
       setSalvandoCurva(false);
@@ -512,10 +513,10 @@ export default function ConfiguracoesPcpPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Curva ABCD</CardTitle>
+              <CardTitle>Curva ABC</CardTitle>
             </CardHeader>
             <p className="text-sm text-gray-500 -mt-2 mb-4">
-              Classificacao por representatividade acumulada da media mensal de valor dos ultimos meses fechados.
+              Classificacao por representatividade acumulada da media mensal de valor dos ultimos meses fechados. Curva C vai ate 100%.
             </p>
             {curvaConfig && (
               <>
@@ -553,18 +554,8 @@ export default function ConfiguracoesPcpPage() {
                     className="w-36"
                     disabled={isLoading}
                   />
-                  <Input
-                    label="Curva C ate (%)"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="100"
-                    value={curvaConfig.curvaCLimitePercent}
-                    onChange={(e) => setCurvaConfig({ ...curvaConfig, curvaCLimitePercent: Number(e.target.value) })}
-                    className="w-36"
-                    disabled={isLoading}
-                  />
                 </div>
+                <p className="text-xs text-gray-400 mt-2">Curva C = restante ate 100% (nao existe mais curva D).</p>
                 <div className="flex justify-end mt-4 pt-4 border-t">
                   <Button onClick={handleSalvarCurvaAbc} isLoading={salvandoCurva} size="sm" disabled={isLoading}>
                     Salvar

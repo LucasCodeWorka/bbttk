@@ -1,10 +1,10 @@
-import https from 'https';
+﻿import https from 'https';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database.js';
 
 const API_BASE_URL = process.env.TOTVS_API_URL || 'https://www30.bhan.com.br:9443/api/totvsmoda';
 
-// Agent que ignora SSL (necessário para API TOTVS)
+// Agent que ignora SSL (necessÃ¡rio para API TOTVS)
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
@@ -155,10 +155,36 @@ async function getProductCodesRelevantes(): Promise<number[]> {
   return rows.map((r) => r.product_code).filter((c): c is number => c !== null);
 }
 
-interface SyncCustoPrecoResumo {
+export interface SyncCustoPrecoOptions {
+  dryRun?: boolean;
+  sequential?: boolean;
+  onProgress?: (event: SyncCustoPrecoProgress) => void;
+  pageSize?: number;
+}
+
+export interface SyncCustoPrecoResumo {
   produtos: number;
   linhas: number;
   codigosAtivos: { code: number; name: string }[];
+  duracaoMs: number;
+  dryRun: boolean;
+}
+export interface SyncCustoPrecoProgress {
+  stage?: 'request' | 'page' | 'retry';
+  tipo: 'custo' | 'preco';
+  chunkIndex: number;
+  totalChunks: number;
+  page: number;
+  productCodesInChunk: number;
+  linhasPagina: number;
+  linhasTotal: number;
+  produtosTotal: number;
+  hasNext: boolean;
+  duracaoMs: number;
+  pageDurationMs: number;
+  dryRun: boolean;
+  tentativa?: number;
+  erro?: string;
 }
 
 // Sincroniza custo OU preco (mesmo formato de chamada e resposta na API do TOTVS,
@@ -172,10 +198,14 @@ async function syncCustoOuPreco(
   tipo: 'custo' | 'preco',
   branches: number[],
   codigosTentativa: number[],
-  productCodes: number[]
+  productCodes: number[],
+  options: SyncCustoPrecoOptions = {}
 ): Promise<SyncCustoPrecoResumo> {
+  const startedAt = Date.now();
+  const dryRun = !!options.dryRun;
+
   if (productCodes.length === 0) {
-    return { produtos: 0, linhas: 0, codigosAtivos: [] };
+    return { produtos: 0, linhas: 0, codigosAtivos: [], duracaoMs: 0, dryRun };
   }
 
   const endpoint = tipo === 'custo' ? 'costs' : 'prices';
@@ -195,20 +225,47 @@ async function syncCustoOuPreco(
   // deles com 502 depois de ~75-110s; pageSize=100 fica dentro do limite). Sequencial
   // (nao paralelo) porque testamos requests concorrentes e o tempo de cada uma piora
   // muito (contencao do lado do TOTVS), aumentando o risco de 502 em vez de acelerar.
-  const PAGE_SIZE = 100;
+  const pageSizeEnv = Number(process.env.TOTVS_CUSTO_PRECO_PAGE_SIZE);
+  const PAGE_SIZE = options.pageSize ?? (Number.isFinite(pageSizeEnv) && pageSizeEnv > 0 ? pageSizeEnv : 50);
   const MAX_TENTATIVAS = 4;
   // O TOTVS rejeita com HTTP 400 (ListExceeded) se filter.productCodeList passar de 900
   // itens - testado ao vivo. Divide o universo de produtos relevantes em lotes de 900,
   // cada lote com sua propria paginacao completa.
   const PRODUCT_CODE_CHUNK = 900;
+  const totalChunks = Math.ceil(productCodes.length / PRODUCT_CODE_CHUNK);
 
   for (let chunkStart = 0; chunkStart < productCodes.length; chunkStart += PRODUCT_CODE_CHUNK) {
-  const filter = { productCodeList: productCodes.slice(chunkStart, chunkStart + PRODUCT_CODE_CHUNK) };
+  const chunkProductCodes = productCodes.slice(chunkStart, chunkStart + PRODUCT_CODE_CHUNK);
+  const chunkIndex = Math.floor(chunkStart / PRODUCT_CODE_CHUNK) + 1;
+  const filter = { productCodeList: chunkProductCodes };
   let page = 1;
   let hasNext = true;
 
   while (hasNext) {
-    let response: Response | null = null;
+    const pageStartedAt = Date.now();
+    options.onProgress?.({
+      stage: 'request',
+      tipo,
+      chunkIndex,
+      totalChunks,
+      page,
+      productCodesInChunk: chunkProductCodes.length,
+      linhasPagina: 0,
+      linhasTotal: linhas,
+      produtosTotal: produtosVistos.size,
+      hasNext: true,
+      duracaoMs: Date.now() - startedAt,
+      pageDurationMs: 0,
+      dryRun,
+    });
+    let data: {
+      hasNext?: boolean;
+      items?: Array<{
+        productCode: number;
+        costs?: Array<{ branchCode: number; costCode: number; costName?: string; cost: number }>;
+        prices?: Array<{ branchCode: number; priceCode: number; priceName?: string; price: number }>;
+      }>;
+    } | null = null;
     let ultimoErro = '';
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
       try {
@@ -227,31 +284,48 @@ async function syncCustoOuPreco(
           // @ts-ignore
           agent: httpsAgent,
         });
-        if (tentativaResponse.ok) {
-          response = tentativaResponse;
+        if (!tentativaResponse.ok) {
+          ultimoErro = `HTTP ${tentativaResponse.status} ${(await tentativaResponse.text().catch(() => '')).slice(0, 200)}`;
+        } else {
+          data = (await tentativaResponse.json()) as {
+            hasNext?: boolean;
+            items?: Array<{
+              productCode: number;
+              costs?: Array<{ branchCode: number; costCode: number; costName?: string; cost: number }>;
+              prices?: Array<{ branchCode: number; priceCode: number; priceName?: string; price: number }>;
+            }>;
+          };
           break;
         }
-        ultimoErro = `HTTP ${tentativaResponse.status} ${(await tentativaResponse.text().catch(() => '')).slice(0, 200)}`;
       } catch (error) {
         ultimoErro = error instanceof Error ? error.message : String(error);
       }
-      // Backoff simples - 502 do gateway TOTVS costuma ser transitorio (timeout de
-      // processamento do lado deles, nao erro permanente).
-      if (tentativa < MAX_TENTATIVAS) await new Promise((r) => setTimeout(r, tentativa * 3000));
+      // Backoff simples - 502/ECONNRESET do gateway TOTVS costuma ser transitorio.
+      if (tentativa < MAX_TENTATIVAS) {
+        options.onProgress?.({
+          stage: 'retry',
+          tipo,
+          chunkIndex,
+          totalChunks,
+          page,
+          productCodesInChunk: chunkProductCodes.length,
+          linhasPagina: 0,
+          linhasTotal: linhas,
+          produtosTotal: produtosVistos.size,
+          hasNext: true,
+          duracaoMs: Date.now() - startedAt,
+          pageDurationMs: Date.now() - pageStartedAt,
+          dryRun,
+          tentativa,
+          erro: ultimoErro,
+        });
+        await new Promise((r) => setTimeout(r, tentativa * 3000));
+      }
     }
 
-    if (!response) {
+    if (!data) {
       throw new Error(`Erro ao sincronizar ${tipo} do TOTVS (pagina ${page}) apos ${MAX_TENTATIVAS} tentativas: ${ultimoErro}`);
     }
-
-    const data = (await response.json()) as {
-      hasNext?: boolean;
-      items?: Array<{
-        productCode: number;
-        costs?: Array<{ branchCode: number; costCode: number; costName?: string; cost: number }>;
-        prices?: Array<{ branchCode: number; priceCode: number; priceName?: string; price: number }>;
-      }>;
-    };
 
     // Junta todas as linhas da pagina pra gravar em UM INSERT so (upsert linha a linha
     // seria ~1,6 milhao de round-trips pro banco no catalogo inteiro - inviavel).
@@ -274,32 +348,50 @@ async function syncCustoOuPreco(
 
     // Lotes de 2000 linhas por INSERT (6 colunas x 2000 = 12000 parametros, bem abaixo
     // do limite de 65535 do Postgres por query - 15000 linhas numa pagina cheia
-    // estourariam o limite se fosse tudo num INSERT so).
-    for (let i = 0; i < linhasPagina.length; i += 2000) {
-      const lote = linhasPagina.slice(i, i + 2000);
-      if (tipo === 'custo') {
-        await prisma.$executeRaw`
-          INSERT INTO produto_custos (product_code, branch_code, cost_code, cost_name, valor, synced_at)
-          VALUES ${Prisma.join(
-            lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.code}, ${l.name}, ${l.valor}, now())`)
-          )}
-          ON CONFLICT (product_code, branch_code, cost_code)
-          DO UPDATE SET cost_name = EXCLUDED.cost_name, valor = EXCLUDED.valor, synced_at = now()
-        `;
-      } else {
-        await prisma.$executeRaw`
-          INSERT INTO produto_precos (product_code, branch_code, price_code, price_name, valor, synced_at)
-          VALUES ${Prisma.join(
-            lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.code}, ${l.name}, ${l.valor}, now())`)
-          )}
-          ON CONFLICT (product_code, branch_code, price_code)
-          DO UPDATE SET price_name = EXCLUDED.price_name, valor = EXCLUDED.valor, synced_at = now()
-        `;
+    // estourariam o limite se fosse tudo num INSERT so). No dry-run, chama a API e
+    // conta as linhas, mas nao grava nada no banco.
+    if (!dryRun) {
+      for (let i = 0; i < linhasPagina.length; i += 2000) {
+        const lote = linhasPagina.slice(i, i + 2000);
+        if (tipo === 'custo') {
+          await prisma.$executeRaw`
+            INSERT INTO produto_custos (product_code, branch_code, cost_code, cost_name, valor, synced_at)
+            VALUES ${Prisma.join(
+              lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.code}, ${l.name}, ${l.valor}, now())`)
+            )}
+            ON CONFLICT (product_code, branch_code, cost_code)
+            DO UPDATE SET cost_name = EXCLUDED.cost_name, valor = EXCLUDED.valor, synced_at = now()
+          `;
+        } else {
+          await prisma.$executeRaw`
+            INSERT INTO produto_precos (product_code, branch_code, price_code, price_name, valor, synced_at)
+            VALUES ${Prisma.join(
+              lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.code}, ${l.name}, ${l.valor}, now())`)
+            )}
+            ON CONFLICT (product_code, branch_code, price_code)
+            DO UPDATE SET price_name = EXCLUDED.price_name, valor = EXCLUDED.valor, synced_at = now()
+          `;
+        }
       }
     }
     linhas += linhasPagina.length;
 
     hasNext = !!data.hasNext;
+    options.onProgress?.({
+      stage: 'page',
+      tipo,
+      chunkIndex,
+      totalChunks,
+      page,
+      productCodesInChunk: chunkProductCodes.length,
+      linhasPagina: linhasPagina.length,
+      linhasTotal: linhas,
+      produtosTotal: produtosVistos.size,
+      hasNext,
+      duracaoMs: Date.now() - startedAt,
+      pageDurationMs: Date.now() - pageStartedAt,
+      dryRun,
+    });
     page++;
   }
   }
@@ -308,19 +400,28 @@ async function syncCustoOuPreco(
     produtos: produtosVistos.size,
     linhas,
     codigosAtivos: [...codigosAtivos.entries()].map(([code, name]) => ({ code, name })),
+    duracaoMs: Date.now() - startedAt,
+    dryRun,
   };
 }
 
-// Busca o universo de product_code relevante UMA vez so e sincroniza custo + preco em
-// paralelo pra esse universo - evita recalcular a mesma query duas vezes (custo e preco
-// sincronizam produtos identicos).
-export async function syncCustosEPrecos(): Promise<{ custos: SyncCustoPrecoResumo; precos: SyncCustoPrecoResumo }> {
+// Busca o universo de product_code relevante UMA vez so e sincroniza custo + preco.
+// Por padrao mantem o comportamento historico em paralelo; o script diario usa
+// sequential=true para medir o tempo de cada endpoint sem um interferir no outro.
+export async function syncCustosEPrecos(options: SyncCustoPrecoOptions = {}): Promise<{ productCodes: number; custos: SyncCustoPrecoResumo; precos: SyncCustoPrecoResumo }> {
   const productCodes = await getProductCodesRelevantes();
+
+  if (options.sequential) {
+    const custos = await syncCustoOuPreco('custo', FILIAIS_RELATORIO_BASE, COST_CODES_TENTATIVA, productCodes, options);
+    const precos = await syncCustoOuPreco('preco', FILIAIS_RELATORIO_BASE, PRICE_CODES_TENTATIVA, productCodes, options);
+    return { productCodes: productCodes.length, custos, precos };
+  }
+
   const [custos, precos] = await Promise.all([
-    syncCustoOuPreco('custo', FILIAIS_RELATORIO_BASE, COST_CODES_TENTATIVA, productCodes),
-    syncCustoOuPreco('preco', FILIAIS_RELATORIO_BASE, PRICE_CODES_TENTATIVA, productCodes),
+    syncCustoOuPreco('custo', FILIAIS_RELATORIO_BASE, COST_CODES_TENTATIVA, productCodes, options),
+    syncCustoOuPreco('preco', FILIAIS_RELATORIO_BASE, PRICE_CODES_TENTATIVA, productCodes, options),
   ]);
-  return { custos, precos };
+  return { productCodes: productCodes.length, custos, precos };
 }
 
 interface OrderItemApi {
@@ -471,3 +572,10 @@ export async function garantirClassificacaoAtualizada(): Promise<void> {
     console.error('Erro ao checar classificacao de operacoes novas:', error);
   }
 }
+
+
+
+
+
+
+

@@ -21,6 +21,7 @@ import {
 } from '@/lib/pcpApi';
 import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
 import { cn, formatMoney, formatNumber } from '@/lib/utils';
+import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const STATUS_STYLE = {
   saudavel: 'bg-green-100 text-green-700',
@@ -338,6 +339,7 @@ export default function PcpAnaliseGradePage() {
       case 'referenceCode': return ref.referenceCode || '';
       case 'curva': return ref.curva || '';
       case 'estoqueTotal': return ref.estoqueTotal || 0;
+      case 'emProducao': return ref.emProducao || 0;
       case 'vendaMes1': return ref.vendaMes1 || 0;
       case 'vendaMes2': return ref.vendaMes2 || 0;
       case 'vendaMes3': return ref.vendaMes3 || 0;
@@ -464,6 +466,100 @@ export default function PcpAnaliseGradePage() {
     return { tamanhos, linhas, riscoCoberturaMeses };
   }, [data, heatmapLimit, heatmapSortKey, heatmapSortDir]);
 
+  // Função para exportar para Excel
+  const handleExportExcel = useCallback(() => {
+    if (!data || data.referencias.length === 0) return;
+
+    const dataHoje = new Date().toISOString().split('T')[0];
+    const mesesLabels = data.config.meses || ['Mes 1', 'Mes 2', 'Mes 3'];
+
+    // Aba 1: Referencias
+    const colunasRefs: ExcelColumn[] = [
+      { key: 'referenceCode', header: 'REFERÊNCIA', width: 15, type: 'text' },
+      { key: 'referenceName', header: 'DESCRIÇÃO', width: 35, type: 'text' },
+      { key: 'curva', header: 'CURVA', width: 8, type: 'text' },
+      { key: 'estoqueTotal', header: 'ESTOQUE', width: 12, type: 'number' },
+      { key: 'emProducao', header: 'EM PROD.', width: 12, type: 'number' },
+      { key: 'vendaMes1', header: mesesLabels[0], width: 12, type: 'number' },
+      { key: 'vendaMes2', header: mesesLabels[1], width: 12, type: 'number' },
+      { key: 'vendaMes3', header: mesesLabels[2], width: 12, type: 'number' },
+      { key: 'mediaMensal', header: 'MÉDIA MENSAL', width: 14, type: 'number' },
+      { key: 'coberturaGeral', header: 'COBERTURA', width: 12, type: 'number' },
+      { key: 'totalSkus', header: 'SKUS', width: 8, type: 'number' },
+      { key: 'skusEmRisco', header: 'SKUS RISCO', width: 12, type: 'number' },
+      { key: 'percentGradeEmRisco', header: '% RISCO', width: 10, type: 'number' },
+      { key: 'status', header: 'STATUS', width: 12, type: 'text' },
+    ];
+
+    const dadosRefs = referenciasSorted.map(r => ({
+      referenceCode: r.referenceCode,
+      referenceName: r.referenceName,
+      curva: r.curva,
+      estoqueTotal: r.estoqueTotal,
+      emProducao: r.emProducao || 0,
+      vendaMes1: r.vendaMes1,
+      vendaMes2: r.vendaMes2,
+      vendaMes3: r.vendaMes3,
+      mediaMensal: r.mediaMensal,
+      coberturaGeral: r.coberturaGeral ?? '',
+      totalSkus: r.totalSkus,
+      skusEmRisco: r.skusEmRisco,
+      percentGradeEmRisco: r.percentGradeEmRisco,
+      status: STATUS_LABEL[r.status] || r.status,
+    }));
+
+    // Aba 2: SKUs detalhados
+    const colunasSkus: ExcelColumn[] = [
+      { key: 'referenceCode', header: 'REFERÊNCIA', width: 15, type: 'text' },
+      { key: 'refCorTam', header: 'REF-COR-TAM', width: 25, type: 'text' },
+      { key: 'sku', header: 'SKU', width: 18, type: 'text' },
+      { key: 'cor', header: 'COR', width: 15, type: 'text' },
+      { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' },
+      { key: 'estoque', header: 'ESTOQUE', width: 12, type: 'number' },
+      { key: 'vendaMes1', header: mesesLabels[0], width: 12, type: 'number' },
+      { key: 'vendaMes2', header: mesesLabels[1], width: 12, type: 'number' },
+      { key: 'vendaMes3', header: mesesLabels[2], width: 12, type: 'number' },
+      { key: 'mediaMensal', header: 'MÉDIA MENSAL', width: 14, type: 'number' },
+      { key: 'cobertura', header: 'COBERTURA', width: 12, type: 'number' },
+      { key: 'status', header: 'STATUS', width: 12, type: 'text' },
+    ];
+
+    const dadosSkus: Record<string, unknown>[] = [];
+    for (const ref of data.referencias) {
+      for (const d of ref.detalhes) {
+        dadosSkus.push({
+          referenceCode: ref.referenceCode,
+          refCorTam: d.refCorTam,
+          sku: d.sku,
+          cor: d.cor,
+          tamanho: d.tamanho,
+          estoque: d.estoque,
+          vendaMes1: d.vendaMes1,
+          vendaMes2: d.vendaMes2,
+          vendaMes3: d.vendaMes3,
+          mediaMensal: d.mediaMensal,
+          cobertura: d.cobertura ?? '',
+          status: STATUS_LABEL[d.status] || d.status,
+        });
+      }
+    }
+
+    exportMultiSheetExcel(`AnaliseGrade_${dataHoje}`, [
+      {
+        sheetName: 'Referências',
+        columns: colunasRefs,
+        data: dadosRefs,
+        title: 'Análise de Grade - Referências',
+      },
+      {
+        sheetName: 'SKUs Detalhados',
+        columns: colunasSkus,
+        data: dadosSkus,
+        title: 'Análise de Grade - Detalhe por SKU',
+      },
+    ]);
+  }, [data, referenciasSorted]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -507,6 +603,17 @@ export default function PcpAnaliseGradePage() {
           placeholder="Codigo da referencia"
         />
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+        {data && data.referencias.length > 0 && (
+          <button
+            onClick={handleExportExcel}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Exportar Excel
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -631,6 +738,7 @@ export default function PcpAnaliseGradePage() {
               <ThSortPcp label="Referencia" sortKeyName="referenceCode" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <ThSortPcp label="Curva" sortKeyName="curva" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" />
               <ThSortPcp label="Estoque" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+              <ThSortPcp label="Em Prod." sortKeyName="emProducao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Pecas em Producao (O.P. abertas)" />
               <ThSortPcp label={meses[0]} sortKeyName="vendaMes1" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
               <ThSortPcp label={meses[1]} sortKeyName="vendaMes2" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
               <ThSortPcp label={meses[2]} sortKeyName="vendaMes3" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
@@ -645,11 +753,11 @@ export default function PcpAnaliseGradePage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
+                <TableCell colSpan={13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
             ) : referenciasSorted.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
+                <TableCell colSpan={13} align="center" className="py-8 text-gray-500">Nenhuma referencia encontrada</TableCell>
               </TableRow>
             ) : (
               referenciasSorted.map((r) => {
@@ -666,6 +774,7 @@ export default function PcpAnaliseGradePage() {
                       </TableCell>
                       <TableCell align="center"><Badge value={r.curva} className={CURVA_STYLE[r.curva]} /></TableCell>
                       <TableCell align="right">{formatNumber(r.estoqueTotal)}</TableCell>
+                      <TableCell align="right">{r.emProducao > 0 ? formatNumber(r.emProducao) : '-'}</TableCell>
                       <TableCell align="right">{formatNumber(r.vendaMes1)}</TableCell>
                       <TableCell align="right">{formatNumber(r.vendaMes2)}</TableCell>
                       <TableCell align="right">{formatNumber(r.vendaMes3)}</TableCell>
@@ -678,7 +787,7 @@ export default function PcpAnaliseGradePage() {
                     </TableRow>
                     {expandida && (
                       <TableRow>
-                        <TableCell colSpan={12} className="bg-gray-50 p-4">
+                        <TableCell colSpan={13} className="bg-gray-50 p-4">
                           <DetalheReferencia referencia={r} />
                         </TableCell>
                       </TableRow>

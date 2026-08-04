@@ -16,6 +16,7 @@ import {
   pcpApi,
 } from '@/lib/pcpApi';
 import { cn, formatMoney, formatNumber } from '@/lib/utils';
+import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 // Estrutura agrupada por REF > Cor > Tamanho
 interface GrupoRef {
@@ -24,6 +25,8 @@ interface GrupoRef {
   quantidade: number;
   valor: number;
   cores: GrupoCor[];
+  // Totais por loja para a referência inteira
+  lojasTotais: Map<number, number>;
 }
 
 interface GrupoCor {
@@ -31,6 +34,8 @@ interface GrupoCor {
   quantidade: number;
   valor: number;
   tamanhos: GrupoTamanho[];
+  // Totais por loja para esta cor
+  lojasTotais: Map<number, number>;
 }
 
 interface GrupoTamanho {
@@ -70,7 +75,7 @@ const CARD_COLORS = [
   'border-l-4 border-l-[var(--bbtk-red)]',
   'border-l-4 border-l-[var(--bbtk-green)]',
   'border-l-4 border-l-[var(--bbtk-yellow)]',
-  'border-l-4 border-l-[var(--bbtk-purple)]',
+  'border-l-4 border-l-[var(--bbtk-turquoise)]',
 ];
 
 function shortLojaName(name: string, branchCode: number) {
@@ -266,6 +271,7 @@ export default function PcpNovoPage() {
           quantidade: 0,
           valor: 0,
           cores: [],
+          lojasTotais: new Map(),
         });
       }
 
@@ -273,13 +279,29 @@ export default function PcpNovoPage() {
       refGrupo.quantidade += sku.quantidade;
       refGrupo.valor += sku.valor;
 
+      // Acumular totais por loja no nível REF
+      for (const loja of sku.lojas) {
+        refGrupo.lojasTotais.set(
+          loja.branch_code,
+          (refGrupo.lojasTotais.get(loja.branch_code) || 0) + loja.quantidade
+        );
+      }
+
       let corGrupo = refGrupo.cores.find(c => c.cor === cor);
       if (!corGrupo) {
-        corGrupo = { cor, quantidade: 0, valor: 0, tamanhos: [] };
+        corGrupo = { cor, quantidade: 0, valor: 0, tamanhos: [], lojasTotais: new Map() };
         refGrupo.cores.push(corGrupo);
       }
       corGrupo.quantidade += sku.quantidade;
       corGrupo.valor += sku.valor;
+
+      // Acumular totais por loja no nível COR
+      for (const loja of sku.lojas) {
+        corGrupo.lojasTotais.set(
+          loja.branch_code,
+          (corGrupo.lojasTotais.get(loja.branch_code) || 0) + loja.quantidade
+        );
+      }
 
       corGrupo.tamanhos.push({
         tamanho,
@@ -391,6 +413,87 @@ export default function PcpNovoPage() {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
   }
 
+  // Função para exportar para Excel
+  function handleExportExcel() {
+    if (!data || data.top_skus.length === 0) return;
+
+    const dataHoje = new Date().toISOString().split('T')[0];
+
+    // Colunas base
+    const colunas: ExcelColumn[] = [
+      { key: 'referencia', header: 'REFERÊNCIA', width: 15, type: 'text' },
+      { key: 'descricao', header: 'DESCRIÇÃO', width: 35, type: 'text' },
+      { key: 'sku', header: 'SKU', width: 20, type: 'text' },
+      { key: 'grade', header: 'GRADE', width: 20, type: 'text' },
+      { key: 'cor', header: 'COR', width: 15, type: 'text' },
+      { key: 'quantidade', header: 'QTD', width: 10, type: 'number' },
+      { key: 'valor', header: 'VALOR R$', width: 14, type: 'number' },
+      { key: 'dias_sem_giro', header: 'DIAS SEM GIRO', width: 14, type: 'number' },
+      { key: 'ultima_venda', header: 'ÚLTIMA VENDA', width: 16, type: 'text' },
+    ];
+
+    // Adicionar colunas por loja
+    for (const loja of lojasTabela) {
+      colunas.push({
+        key: `loja_${loja.branch_code}`,
+        header: shortLojaName(loja.branch_name, loja.branch_code),
+        width: 8,
+        type: 'number',
+      });
+    }
+
+    // Montar dados
+    const dados = data.top_skus.map(sku => {
+      const row: Record<string, unknown> = {
+        referencia: sku.referencia,
+        descricao: sku.descricao,
+        sku: sku.sku,
+        grade: sku.grade,
+        cor: sku.cor_de_para || '',
+        quantidade: sku.quantidade,
+        valor: sku.valor,
+        dias_sem_giro: sku.dias_sem_giro >= 9999 ? '' : sku.dias_sem_giro,
+        ultima_venda: sku.ultima_venda ? formatDateTime(sku.ultima_venda) : 'Nunca',
+      };
+
+      for (const loja of lojasTabela) {
+        const qtd = sku.lojas.find(l => l.branch_code === loja.branch_code)?.quantidade || 0;
+        row[`loja_${loja.branch_code}`] = qtd;
+      }
+
+      return row;
+    });
+
+    // Linha de totais
+    const totais: Record<string, number | string> = {
+      referencia: 'TOTAL',
+      descricao: '',
+      sku: '',
+      grade: '',
+      cor: '',
+      quantidade: data.top_skus.reduce((sum, s) => sum + s.quantidade, 0),
+      valor: data.top_skus.reduce((sum, s) => sum + s.valor, 0),
+      dias_sem_giro: '',
+      ultima_venda: '',
+    };
+
+    for (const loja of lojasTabela) {
+      totais[`loja_${loja.branch_code}`] = data.top_skus.reduce((sum, s) => {
+        const qtd = s.lojas.find(l => l.branch_code === loja.branch_code)?.quantidade || 0;
+        return sum + qtd;
+      }, 0);
+    }
+
+    exportToExcel({
+      filename: `EstoqueSemGiro_${faixaDiasLabel(diasSelecionado).replace(/\s+/g, '_')}_${dataHoje}`,
+      sheetName: 'Estoque Sem Giro',
+      title: `Estoque Sem Giro - ${faixaDiasLabel(diasSelecionado)}`,
+      columns: colunas,
+      data: dados,
+      totals: totais,
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -445,6 +548,7 @@ export default function PcpNovoPage() {
           dias: option.value,
           label: option.value > 90 ? '> 90 dias' : `${option.value} dias`,
           sku_count: 0,
+          ref_count: 0,
           quantidade: 0,
           valor: 0,
           pct_total: 0,
@@ -467,6 +571,9 @@ export default function PcpNovoPage() {
                 <CardValue className="mt-2">
                   {isLoading ? '-' : `${formatNumber(item.sku_count)} SKUs`}
                 </CardValue>
+                <p className="text-xs text-gray-500">
+                  {isLoading ? '-' : `${formatNumber(item.ref_count)} referencias`}
+                </p>
                 <p className="text-sm text-gray-600 mt-1">
                   {formatNumber(item.quantidade)} pc - {formatMoney(item.valor)}
                 </p>
@@ -503,6 +610,17 @@ export default function PcpNovoPage() {
           className="w-52"
         />
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
+        {data && data.top_skus.length > 0 && (
+          <button
+            onClick={handleExportExcel}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Exportar Excel
+          </button>
+        )}
       </div>
 
       {erro && (
@@ -541,26 +659,26 @@ export default function PcpNovoPage() {
         {/* Layout hierarquico REF > Cor > Tamanho */}
         <div className={cn('overflow-auto', tableNeedsScroll && 'max-h-[600px]')}>
           <Table tableClassName="text-xs">
-            <TableHead className="sticky top-0 z-10 bg-white">
-              <TableRow>
-                <TableCell isHeader className="w-8 !px-2"></TableCell>
-                <TableCell isHeader className="min-w-[200px] !px-2">Referencia / Cor / Tamanho</TableCell>
-                <TableCell isHeader align="right" className="!px-2 w-20">Qtd</TableCell>
-                <TableCell isHeader align="right" className="!px-2 w-28">Valor</TableCell>
-                <TableCell isHeader align="right" className="!px-2 w-24">Sem Giro</TableCell>
-                <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-blue-50 text-blue-800 !px-2">
+            <TableHead className="sticky top-0 z-10">
+              <TableRow className="bg-white border-b-2 border-[var(--bbtk-red)]">
+                <TableCell isHeader className="w-8 !px-2 text-gray-700"></TableCell>
+                <TableCell isHeader className="min-w-[200px] !px-2 text-gray-700">Referencia / Cor / Tamanho</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-20 text-gray-700">Qtd</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-28 text-gray-700">Valor</TableCell>
+                <TableCell isHeader align="right" className="!px-2 w-24 text-gray-700">Sem Giro</TableCell>
+                <TableCell isHeader align="center" colSpan={Math.max(lojasTabela.length, 1)} className="bg-gray-50 text-gray-700 !px-2">
                   Distribuicao por Loja
                 </TableCell>
               </TableRow>
               {lojasTabela.length > 0 && (
-                <TableRow>
-                  <TableCell isHeader className="!px-2"></TableCell>
-                  <TableCell isHeader className="!px-2"></TableCell>
-                  <TableCell isHeader className="!px-2"></TableCell>
-                  <TableCell isHeader className="!px-2"></TableCell>
-                  <TableCell isHeader className="!px-2"></TableCell>
+                <TableRow className="bg-gray-50 border-b border-gray-200">
+                  <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
+                  <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
+                  <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
+                  <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
+                  <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
                   {lojasTabela.map((loja) => (
-                    <TableCell key={loja.branch_code} isHeader align="center" title={loja.branch_name} className="bg-blue-50 text-blue-800 !px-1 !py-1 text-[10px]">
+                    <TableCell key={loja.branch_code} isHeader align="center" title={loja.branch_name} className="bg-gray-50 text-gray-600 !px-1 !py-1 text-[10px]">
                       {shortLojaName(loja.branch_name, loja.branch_code)}
                     </TableCell>
                   ))}
@@ -585,23 +703,28 @@ export default function PcpNovoPage() {
                   const refExpanded = expandedRefs.has(refGrupo.referencia);
                   return (
                     <React.Fragment key={refGrupo.referencia}>
-                      {/* Linha da REFERENCIA */}
-                      <TableRow className="bg-gray-100 hover:bg-gray-200 cursor-pointer" onClick={() => toggleRef(refGrupo.referencia)}>
+                      {/* Linha da REFERENCIA - fundo leve */}
+                      <TableRow className="bg-gray-50 hover:bg-gray-100 cursor-pointer border-b border-gray-200" onClick={() => toggleRef(refGrupo.referencia)}>
                         <TableCell className="!px-2 !py-2">
-                          <span className="font-bold text-[#6B5B95]">{refExpanded ? '−' : '+'}</span>
+                          <span className="font-semibold text-gray-700">{refExpanded ? '−' : '+'}</span>
                         </TableCell>
                         <TableCell className="!px-2 !py-2">
-                          <span className="font-bold text-gray-900">{refGrupo.referencia}</span>
-                          <span className="ml-2 text-gray-500 text-[10px]">{refGrupo.cores.length} cores</span>
+                          <span className="font-semibold text-gray-800">{refGrupo.referencia}</span>
+                          <span className="ml-2 text-gray-400 text-[10px]">{refGrupo.cores.length} cores</span>
                         </TableCell>
-                        <TableCell align="right" className="!px-2 !py-2 font-semibold">{formatNumber(refGrupo.quantidade)}</TableCell>
-                        <TableCell align="right" className="!px-2 !py-2 font-semibold">{formatMoney(refGrupo.valor)}</TableCell>
+                        <TableCell align="right" className="!px-2 !py-2 font-semibold text-gray-700">{formatNumber(refGrupo.quantidade)}</TableCell>
+                        <TableCell align="right" className="!px-2 !py-2 font-semibold text-gray-700">{formatMoney(refGrupo.valor)}</TableCell>
                         <TableCell align="right" className="!px-2 !py-2 text-gray-400">-</TableCell>
                         {lojasTabela.length === 0 ? (
-                          <TableCell align="center" className="!px-1 !py-2">-</TableCell>
-                        ) : lojasTabela.map((loja) => (
-                          <TableCell key={loja.branch_code} align="center" className="!px-1 !py-2 text-gray-400">-</TableCell>
-                        ))}
+                          <TableCell align="center" className="!px-1 !py-2 text-gray-400">-</TableCell>
+                        ) : lojasTabela.map((loja) => {
+                          const qtd = refGrupo.lojasTotais.get(loja.branch_code) || 0;
+                          return (
+                            <TableCell key={loja.branch_code} align="center" className="!px-1 !py-2 font-semibold text-gray-700">
+                              {qtd > 0 ? formatNumber(qtd) : <span className="text-gray-400">-</span>}
+                            </TableCell>
+                          );
+                        })}
                       </TableRow>
 
                       {/* Cores da referencia */}
@@ -610,46 +733,64 @@ export default function PcpNovoPage() {
                         const corExpanded = expandedCores.has(corKey);
                         return (
                           <React.Fragment key={corKey}>
-                            {/* Linha da COR */}
-                            <TableRow className="bg-gray-50 hover:bg-gray-100 cursor-pointer" onClick={() => toggleCor(corKey)}>
+                            {/* Linha da COR - fundo branco */}
+                            <TableRow className="bg-white hover:bg-gray-50 cursor-pointer border-b border-gray-100" onClick={() => toggleCor(corKey)}>
                               <TableCell className="!px-2 !py-1.5"></TableCell>
                               <TableCell className="!px-2 !py-1.5 pl-6">
-                                <span className="font-medium text-[#6B5B95] mr-2">{corExpanded ? '−' : '+'}</span>
+                                <span className="font-medium text-gray-400 mr-2">{corExpanded ? '−' : '+'}</span>
                                 <span className="font-medium text-gray-700">{corGrupo.cor}</span>
                                 <span className="ml-2 text-gray-400 text-[10px]">{corGrupo.tamanhos.length} tam</span>
                               </TableCell>
-                              <TableCell align="right" className="!px-2 !py-1.5">{formatNumber(corGrupo.quantidade)}</TableCell>
-                              <TableCell align="right" className="!px-2 !py-1.5">{formatMoney(corGrupo.valor)}</TableCell>
+                              <TableCell align="right" className="!px-2 !py-1.5 font-medium text-gray-600">{formatNumber(corGrupo.quantidade)}</TableCell>
+                              <TableCell align="right" className="!px-2 !py-1.5 font-medium text-gray-600">{formatMoney(corGrupo.valor)}</TableCell>
                               <TableCell align="right" className="!px-2 !py-1.5 text-gray-400">-</TableCell>
                               {lojasTabela.length === 0 ? (
-                                <TableCell align="center" className="!px-1 !py-1.5">-</TableCell>
-                              ) : lojasTabela.map((loja) => (
-                                <TableCell key={loja.branch_code} align="center" className="!px-1 !py-1.5 text-gray-400">-</TableCell>
-                              ))}
+                                <TableCell align="center" className="!px-1 !py-1.5 text-gray-400">-</TableCell>
+                              ) : lojasTabela.map((loja) => {
+                                const qtd = corGrupo.lojasTotais.get(loja.branch_code) || 0;
+                                return (
+                                  <TableCell key={loja.branch_code} align="center" className="!px-1 !py-1.5 font-medium text-gray-600">
+                                    {qtd > 0 ? formatNumber(qtd) : <span className="text-gray-400">-</span>}
+                                  </TableCell>
+                                );
+                              })}
                             </TableRow>
 
-                            {/* Tamanhos da cor */}
+                            {/* Tamanhos da cor - fundo branco */}
                             {corExpanded && corGrupo.tamanhos.map((tam) => {
                               const lojaMap = new Map(tam.lojas.map((l) => [l.branch_code, l.quantidade]));
+                              const nuncaVendeu = (tam.lojas_sem_venda > 0 && tam.lojas_sem_venda === tam.lojas_total) || !tam.ultima_venda || tam.dias_sem_giro >= 9999;
+                              // Formatacao condicional para coluna Sem Giro - cores suaves
+                              const semGiroStyle = nuncaVendeu
+                                ? 'bg-red-50 text-red-600 font-semibold'
+                                : tam.dias_sem_giro > 90
+                                  ? 'bg-orange-50 text-orange-600 font-medium'
+                                  : tam.dias_sem_giro > 60
+                                    ? 'bg-yellow-50 text-yellow-700 font-medium'
+                                    : 'bg-green-50 text-green-600 font-medium';
                               return (
-                                <TableRow key={tam.sku} className="hover:bg-blue-50/30">
+                                <TableRow key={tam.sku} className="bg-white hover:bg-gray-50 border-b border-gray-100">
                                   <TableCell className="!px-2 !py-1"></TableCell>
                                   <TableCell className="!px-2 !py-1 pl-12">
-                                    <span className="text-gray-600">{tam.tamanho}</span>
+                                    <span className="text-gray-700 font-medium">{tam.tamanho}</span>
                                     <span className="ml-2 text-[9px] text-gray-400">{tam.sku}</span>
                                   </TableCell>
-                                  <TableCell align="right" className="!px-2 !py-1 text-gray-600">{formatNumber(tam.quantidade)}</TableCell>
-                                  <TableCell align="right" className="!px-2 !py-1 text-gray-600">{formatMoney(tam.valor)}</TableCell>
-                                  <TableCell align="right" className="!px-2 !py-1 font-semibold text-red-600">
+                                  <TableCell align="right" className="!px-2 !py-1 font-medium text-gray-600">{formatNumber(tam.quantidade)}</TableCell>
+                                  <TableCell align="right" className="!px-2 !py-1 font-medium text-gray-600">{formatMoney(tam.valor)}</TableCell>
+                                  <TableCell align="right" className={cn('!px-2 !py-1', semGiroStyle)}>
                                     {formatDiasSemGiro(tam.dias_sem_giro, tam.ultima_venda, tam.lojas_sem_venda, tam.lojas_total)}
                                   </TableCell>
                                   {lojasTabela.length === 0 ? (
-                                    <TableCell align="center" className="!px-1 !py-1">-</TableCell>
-                                  ) : lojasTabela.map((loja) => (
-                                    <TableCell key={loja.branch_code} align="center" className="!px-1 !py-1">
-                                      {formatNumber(lojaMap.get(loja.branch_code) || 0)}
-                                    </TableCell>
-                                  ))}
+                                    <TableCell align="center" className="!px-1 !py-1 text-gray-400">-</TableCell>
+                                  ) : lojasTabela.map((loja) => {
+                                    const qtd = lojaMap.get(loja.branch_code) || 0;
+                                    // Celulas de estoque sem formatacao condicional colorida
+                                    return (
+                                      <TableCell key={loja.branch_code} align="center" className={cn('!px-1 !py-1', qtd === 0 ? 'text-gray-400' : 'font-medium text-gray-600')}>
+                                        {qtd > 0 ? formatNumber(qtd) : '-'}
+                                      </TableCell>
+                                    );
+                                  })}
                                 </TableRow>
                               );
                             })}
@@ -660,18 +801,18 @@ export default function PcpNovoPage() {
                   );
                 })
               )}
-              {/* Totalizador */}
+              {/* Totalizador - verde suave */}
               {!isLoading && data && data.top_skus.length > 0 && top10Totais && (
-                <TableRow isHighlighted className="sticky bottom-0 z-10">
-                  <TableCell className="!px-2 !py-2"></TableCell>
-                  <TableCell className="!px-2 !py-2 font-bold">{totalizadorLabel}</TableCell>
-                  <TableCell align="right" className="!px-2 !py-2 font-bold">{formatNumber(top10Totais.quantidade)}</TableCell>
-                  <TableCell align="right" className="!px-2 !py-2 font-bold">{formatMoney(top10Totais.valor)}</TableCell>
-                  <TableCell align="right" className="!px-2 !py-2 font-bold">-</TableCell>
+                <TableRow className="sticky bottom-0 z-10 bg-[var(--bbtk-green)]/10 border-t-2 border-[var(--bbtk-green)]">
+                  <TableCell className="!px-2 !py-2.5 bg-[var(--bbtk-green)]/10"></TableCell>
+                  <TableCell className="!px-2 !py-2.5 font-semibold text-gray-800 bg-[var(--bbtk-green)]/10">{totalizadorLabel}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2.5 font-semibold text-gray-800 bg-[var(--bbtk-green)]/10">{formatNumber(top10Totais.quantidade)}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2.5 font-semibold text-gray-800 bg-[var(--bbtk-green)]/10">{formatMoney(top10Totais.valor)}</TableCell>
+                  <TableCell align="right" className="!px-2 !py-2.5 font-semibold text-gray-400 bg-[var(--bbtk-green)]/10">-</TableCell>
                   {lojasTabela.length === 0 ? (
-                    <TableCell align="center" className="!px-1 !py-2">-</TableCell>
+                    <TableCell align="center" className="!px-1 !py-2.5 bg-[var(--bbtk-green)]/10">-</TableCell>
                   ) : lojasTabela.map((loja) => (
-                    <TableCell key={`total-${loja.branch_code}`} align="center" className="!px-1 !py-2 font-bold">
+                    <TableCell key={`total-${loja.branch_code}`} align="center" className="!px-1 !py-2.5 font-semibold text-gray-800 bg-[var(--bbtk-green)]/10">
                       {formatNumber(top10Totais.lojas.get(loja.branch_code) || 0)}
                     </TableCell>
                   ))}

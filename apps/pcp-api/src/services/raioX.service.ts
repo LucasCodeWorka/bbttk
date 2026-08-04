@@ -300,18 +300,15 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     };
   }
 
-  // Busca as lojas a serem analisadas
+  // Busca as lojas a serem analisadas (inclui Fabrica para capturar vendas atacado)
   let lojasQuery: number[];
 
   if (filtro.lojas && filtro.lojas.length > 0) {
     // Usa as lojas especificadas no filtro
     lojasQuery = filtro.lojas;
   } else {
-    // Busca todas as lojas (exceto FABRICA)
+    // Busca todas as lojas (INCLUI Fabrica para capturar vendas atacado)
     const todasLojas = await prisma.branches.findMany({
-      where: {
-        branch_code: { not: FABRICA_BRANCH_CODE },
-      },
       orderBy: { branch_code: 'asc' },
     });
     lojasQuery = todasLojas.map(l => l.branch_code);

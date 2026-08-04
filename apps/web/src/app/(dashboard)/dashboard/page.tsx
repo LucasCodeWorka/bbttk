@@ -15,7 +15,7 @@ import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
 import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
-import { exportToXlsx, XlsxCellStyle } from '@/lib/exportXlsx';
+import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
@@ -467,8 +467,21 @@ export default function DashboardPage() {
   }
 
 
+  // Retorna string formatada para uso visual (ex: "12,3%")
   function formatarPercentualExportacao(value: number): string {
     return `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)}%`;
+  }
+
+  // Retorna numero arredondado para export Excel (ex: 12.3)
+  function percentualNumerico(value: number): number | string {
+    if (!Number.isFinite(value)) return '';
+    return Math.round(value * 10) / 10;
+  }
+
+  // Retorna numero arredondado para export Excel (ex: 1234.56)
+  function valorNumerico(value: number | null | undefined): number | string {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '';
+    return Math.round(value * 100) / 100;
   }
 
   function calcularPctProjecao(projecaoValor: number | undefined, metaValor: number): number | null {
@@ -485,110 +498,151 @@ export default function DashboardPage() {
       </Badge>
     );
   }
-  function estiloAtingimentoMeta(pct: number): XlsxCellStyle {
-    const atingimento = Math.max(0, pct);
-    return atingimento >= 100 ? 'success' : atingimento > 90 ? 'warning' : 'danger';
-  }
-
-  function estiloVariacao(value: number): XlsxCellStyle {
-    return value > 0 ? 'success' : value < 0 ? 'danger' : 'neutral';
-  }
-
-  function estiloDevolucao(pct: number): XlsxCellStyle {
-    return pct > 10 ? 'danger' : pct > 5 ? 'warning' : 'neutral';
-  }
-
-  function estiloLinhaTotal(f: LinhaComparativo): XlsxCellStyle | undefined {
-    return f.isTotal ? 'total' : undefined;
-  }
-
-  function estiloAntigo(f: LinhaComparativo): XlsxCellStyle {
-    return f.isTotal ? 'totalMuted' : 'muted';
-  }
   function exportarComparativo() {
     const linhaTotal = criarLinhaTotalComparativo();
     const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
 
-    exportToXlsx(
-      `comparativo-filiais-${dataInicio}-a-${dataFim}`,
-      [
-        { header: 'Filial', value: (f: LinhaComparativo) => f.branch_name, style: estiloLinhaTotal },
-        { header: 'Meta', value: (f: LinhaComparativo) => formatMoney(f.meta.valor) },
-        { header: 'Faturamento', value: (f: LinhaComparativo) => formatMoney(f.atual.faturamento) },
-        { header: '% Meta', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(Math.max(0, f.meta.pct)), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloAtingimentoMeta(f.meta.pct) },
-        { header: 'Faturamento Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.faturamento), style: estiloAntigo },
-        { header: 'Var % Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.faturamento), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.faturamento) },
-        { header: '%TT Faturamento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_faturamento), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
-        { header: 'Projecao', value: (f: LinhaComparativo) => f.proj ? formatMoney(f.proj.projecao) : '' },
-        { header: '% Proj', value: (f: LinhaComparativo) => { const pct = calcularPctProjecao(f.proj?.projecao, f.meta.valor); return pct === null ? '' : formatarPercentualExportacao(pct); }, style: (f: LinhaComparativo) => { const pct = calcularPctProjecao(f.proj?.projecao, f.meta.valor); return pct === null ? estiloLinhaTotal(f) : estiloAtingimentoMeta(pct); } },
-        { header: 'PA', value: (f: LinhaComparativo) => f.atual.pa },
-        { header: 'PA Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pa, style: estiloAntigo },
-        { header: 'Var % PA', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.pa), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.pa) },
-        { header: 'TM', value: (f: LinhaComparativo) => formatMoney(f.atual.tm) },
-        { header: 'TM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.tm), style: estiloAntigo },
-        { header: 'Var % TM', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.tm), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.tm) },
-        { header: 'Meta Dia', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatMoney(f.meta.meta_dia) },
-        { header: 'Pecas', value: (f: LinhaComparativo) => f.atual.pecas },
-        { header: 'Pecas Ant.', value: (f: LinhaComparativo) => f.ano_anterior.pecas, style: estiloAntigo },
-        { header: 'Debito para Meta', value: (f: LinhaComparativo) => f.debitoMeta === null ? '' : formatMoney(f.debitoMeta) },
-        { header: '%TT Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.atual.pct_tt_pecas), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
-        { header: 'Var % Pecas', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pecas), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.pecas) },
-        { header: 'PM', value: (f: LinhaComparativo) => formatMoney(f.atual.pm) },
-        { header: 'PM Ant.', value: (f: LinhaComparativo) => formatMoney(f.ano_anterior.pm), style: estiloAntigo },
-        { header: 'Var % PM', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.pm), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.pm) },
-        { header: 'Clientes', value: (f: LinhaComparativo) => f.atual.clientes },
-        { header: 'Clientes Ant.', value: (f: LinhaComparativo) => f.ano_anterior.clientes, style: estiloAntigo },
-        { header: 'Var % Clientes', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.variacao.clientes), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloVariacao(f.variacao.clientes) },
-        { header: 'Atendimento', value: (f: LinhaComparativo) => f.atual.transacoes },
-        { header: 'Atend. Ant.', value: (f: LinhaComparativo) => f.ano_anterior.transacoes, style: estiloAntigo },
-        { header: 'Var % Atendimento', value: (f: LinhaComparativo) => formatarPercentualExportacao(f.variacao.transacoes), style: (f: LinhaComparativo) => estiloVariacao(f.variacao.transacoes) },
-        { header: 'Devolucoes', value: (f: LinhaComparativo) => formatMoney(f.devolucoes.valor) },
-        { header: 'Qtde Dev', value: (f: LinhaComparativo) => f.devolucoes.qtde },
-        { header: '% Dev', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.devolucoes.pct), style: (f: LinhaComparativo) => f.isTotal ? 'total' : estiloDevolucao(f.devolucoes.pct) },
-        { header: '% CN', value: (f: LinhaComparativo) => f.isTotal ? '-' : formatarPercentualExportacao(f.clientes_novos.pct), style: (f: LinhaComparativo) => f.isTotal ? 'total' : 'muted' },
-        { header: 'Clientes Novos', value: (f: LinhaComparativo) => f.clientes_novos.qtde },
-        { header: 'Faturamento CN', value: (f: LinhaComparativo) => formatMoney(f.clientes_novos.faturamento) },
-        { header: 'Vs Ano Ant.', value: (f: LinhaComparativo) => f.proj ? formatarPercentualExportacao(f.proj.variacao_vs_ano_anterior) : '', style: (f: LinhaComparativo) => f.proj ? estiloVariacao(f.proj.variacao_vs_ano_anterior) : estiloLinhaTotal(f) },
-        { header: 'Bate Meta', value: (f: LinhaComparativo) => f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao', style: (f: LinhaComparativo) => f.isTotal ? 'total' : f.bateMeta === null ? undefined : f.bateMeta ? 'success' : 'danger' },
-      ],
-      linhasExportacao,
-      { sheetName: 'Comparativo por filial', rowStyle: estiloLinhaTotal }
-    );
-  }
-  function exportarRankingVendedores() {
-    const linhasExportacao = vendedoresRanking.map((v, i) => ({ ...v, posicao: i + 1, isTotal: false }));
-    const linhasComTotal = [
-      ...linhasExportacao,
-      {
-        posicao: 'TOTAL',
-        seller_name: 'TOTAL',
-        faturamento: totaisVendedoresRanking.faturamento,
-        meta: totaisVendedoresRanking.meta,
-        debito_meta: totaisVendedoresRanking.debitoMeta,
-        pct_meta: totaisVendedoresRanking.pctMeta,
-        pct_proj: totaisVendedoresRanking.pctProj,
-        pa: totaisVendedoresRanking.pa,
-        tm: totaisVendedoresRanking.tm,
-        isTotal: true,
-      },
+    const colunas: ExcelColumn[] = [
+      { key: 'branch_name', header: 'Filial', width: 20, type: 'text' },
+      { key: 'meta_valor', header: 'Meta', width: 14, type: 'currency' },
+      { key: 'faturamento', header: 'Faturamento', width: 14, type: 'currency' },
+      { key: 'pct_meta', header: '% Meta', width: 10, type: 'percent' },
+      { key: 'fat_ant', header: 'Fat. Ant.', width: 14, type: 'currency' },
+      { key: 'var_fat', header: 'Var % Fat.', width: 12, type: 'percent' },
+      { key: 'pct_tt_fat', header: '%TT Fat.', width: 10, type: 'percent' },
+      { key: 'projecao', header: 'Projecao', width: 14, type: 'currency' },
+      { key: 'pct_proj', header: '% Proj', width: 10, type: 'percent' },
+      { key: 'pa', header: 'PA', width: 8, type: 'number' },
+      { key: 'pa_ant', header: 'PA Ant.', width: 8, type: 'number' },
+      { key: 'var_pa', header: 'Var % PA', width: 10, type: 'percent' },
+      { key: 'tm', header: 'TM', width: 12, type: 'currency' },
+      { key: 'tm_ant', header: 'TM Ant.', width: 12, type: 'currency' },
+      { key: 'var_tm', header: 'Var % TM', width: 10, type: 'percent' },
+      { key: 'meta_dia', header: 'Meta Dia', width: 12, type: 'currency' },
+      { key: 'pecas', header: 'Pecas', width: 10, type: 'number' },
+      { key: 'pecas_ant', header: 'Pecas Ant.', width: 10, type: 'number' },
+      { key: 'debito_meta', header: 'Debito Meta', width: 14, type: 'currency' },
+      { key: 'pct_tt_pecas', header: '%TT Pecas', width: 10, type: 'percent' },
+      { key: 'var_pecas', header: 'Var % Pecas', width: 12, type: 'percent' },
+      { key: 'pm', header: 'PM', width: 12, type: 'currency' },
+      { key: 'pm_ant', header: 'PM Ant.', width: 12, type: 'currency' },
+      { key: 'var_pm', header: 'Var % PM', width: 10, type: 'percent' },
+      { key: 'clientes', header: 'Clientes', width: 10, type: 'number' },
+      { key: 'clientes_ant', header: 'Clientes Ant.', width: 12, type: 'number' },
+      { key: 'var_clientes', header: 'Var % Clientes', width: 14, type: 'percent' },
+      { key: 'atendimento', header: 'Atendimento', width: 12, type: 'number' },
+      { key: 'atend_ant', header: 'Atend. Ant.', width: 12, type: 'number' },
+      { key: 'var_atend', header: 'Var % Atend.', width: 12, type: 'percent' },
+      { key: 'devolucoes', header: 'Devolucoes', width: 14, type: 'currency' },
+      { key: 'qtde_dev', header: 'Qtde Dev', width: 10, type: 'number' },
+      { key: 'pct_dev', header: '% Dev', width: 10, type: 'percent' },
+      { key: 'pct_cn', header: '% CN', width: 10, type: 'percent' },
+      { key: 'clientes_novos', header: 'Clientes Novos', width: 14, type: 'number' },
+      { key: 'fat_cn', header: 'Fat. CN', width: 14, type: 'currency' },
+      { key: 'vs_ano_ant', header: 'Vs Ano Ant.', width: 12, type: 'percent' },
+      { key: 'bate_meta', header: 'Bate Meta', width: 10, type: 'text' },
     ];
 
-    exportToXlsx(
-      `ranking-vendedores-${dataInicio}-a-${dataFim}`,
-      [
-        { header: '#', value: (v: typeof linhasComTotal[number]) => v.posicao, style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : v.posicao === 1 ? 'rankGold' : v.posicao === 2 ? 'rankSilver' : v.posicao === 3 ? 'rankBronze' : undefined },
-        { header: 'Vendedor', value: (v: typeof linhasComTotal[number]) => v.seller_name, style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-        { header: 'Faturamento', value: (v: typeof linhasComTotal[number]) => formatMoney(v.faturamento), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-        { header: 'Meta', value: (v: typeof linhasComTotal[number]) => formatMoney(v.meta), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-        { header: 'Debito', value: (v: typeof linhasComTotal[number]) => formatMoney(v.debito_meta), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-        { header: '% Meta', value: (v: typeof linhasComTotal[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_meta) : '', style: (v: typeof linhasComTotal[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_meta) : v.isTotal ? 'total' : undefined },
-        { header: '% Proj', value: (v: typeof linhasComTotal[number]) => v.meta > 0 ? formatarPercentualExportacao(v.pct_proj) : '', style: (v: typeof linhasComTotal[number]) => v.meta > 0 ? estiloAtingimentoMeta(v.pct_proj) : v.isTotal ? 'total' : undefined },
-        { header: 'PA', value: (v: typeof linhasComTotal[number]) => v.pa.toFixed(2), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-        { header: 'TM', value: (v: typeof linhasComTotal[number]) => formatMoney(v.tm), style: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined },
-      ],
-      linhasComTotal,
-      { sheetName: 'Ranking vendedores', rowStyle: (v: typeof linhasComTotal[number]) => v.isTotal ? 'total' : undefined }
-    );
+    const dados = linhasExportacao.map(f => {
+      const pctProj = calcularPctProjecao(f.proj?.projecao, f.meta.valor);
+      return {
+        branch_name: f.branch_name,
+        meta_valor: valorNumerico(f.meta.valor),
+        faturamento: valorNumerico(f.atual.faturamento),
+        pct_meta: f.isTotal ? '' : percentualNumerico(Math.max(0, f.meta.pct)),
+        fat_ant: valorNumerico(f.ano_anterior.faturamento),
+        var_fat: percentualNumerico(f.variacao.faturamento),
+        pct_tt_fat: percentualNumerico(f.atual.pct_tt_faturamento),
+        projecao: f.proj ? valorNumerico(f.proj.projecao) : '',
+        pct_proj: pctProj === null ? '' : percentualNumerico(pctProj),
+        pa: f.atual.pa,
+        pa_ant: f.ano_anterior.pa,
+        var_pa: f.isTotal ? '' : percentualNumerico(f.variacao.pa),
+        tm: valorNumerico(f.atual.tm),
+        tm_ant: valorNumerico(f.ano_anterior.tm),
+        var_tm: f.isTotal ? '' : percentualNumerico(f.variacao.tm),
+        meta_dia: f.isTotal ? '' : valorNumerico(f.meta.meta_dia),
+        pecas: f.atual.pecas,
+        pecas_ant: f.ano_anterior.pecas,
+        debito_meta: valorNumerico(f.debitoMeta),
+        pct_tt_pecas: percentualNumerico(f.atual.pct_tt_pecas),
+        var_pecas: percentualNumerico(f.variacao.pecas),
+        pm: valorNumerico(f.atual.pm),
+        pm_ant: valorNumerico(f.ano_anterior.pm),
+        var_pm: percentualNumerico(f.variacao.pm),
+        clientes: f.atual.clientes,
+        clientes_ant: f.ano_anterior.clientes,
+        var_clientes: f.isTotal ? '' : percentualNumerico(f.variacao.clientes),
+        atendimento: f.atual.transacoes,
+        atend_ant: f.ano_anterior.transacoes,
+        var_atend: percentualNumerico(f.variacao.transacoes),
+        devolucoes: valorNumerico(f.devolucoes.valor),
+        qtde_dev: f.devolucoes.qtde,
+        pct_dev: f.isTotal ? '' : percentualNumerico(f.devolucoes.pct),
+        pct_cn: f.isTotal ? '' : percentualNumerico(f.clientes_novos.pct),
+        clientes_novos: f.clientes_novos.qtde,
+        fat_cn: valorNumerico(f.clientes_novos.faturamento),
+        vs_ano_ant: f.proj ? percentualNumerico(f.proj.variacao_vs_ano_anterior) : '',
+        bate_meta: f.isTotal || f.bateMeta === null ? '' : f.bateMeta ? 'Sim' : 'Nao',
+      };
+    });
+
+    exportMultiSheetExcel(`comparativo-filiais-${dataInicio}-a-${dataFim}`, [
+      {
+        sheetName: 'Comparativo por filial',
+        columns: colunas,
+        data: dados,
+        title: `Comparativo por Filial - ${dataInicio} a ${dataFim}`,
+      },
+    ]);
+  }
+
+  function exportarRankingVendedores() {
+    const colunas: ExcelColumn[] = [
+      { key: 'posicao', header: '#', width: 6, type: 'number' },
+      { key: 'seller_name', header: 'Vendedor', width: 25, type: 'text' },
+      { key: 'faturamento', header: 'Faturamento', width: 14, type: 'currency' },
+      { key: 'meta', header: 'Meta', width: 14, type: 'currency' },
+      { key: 'debito_meta', header: 'Debito', width: 14, type: 'currency' },
+      { key: 'pct_meta', header: '% Meta', width: 10, type: 'percent' },
+      { key: 'pct_proj', header: '% Proj', width: 10, type: 'percent' },
+      { key: 'pa', header: 'PA', width: 8, type: 'number' },
+      { key: 'tm', header: 'TM', width: 12, type: 'currency' },
+    ];
+
+    const dados = vendedoresRanking.map((v, i) => ({
+      posicao: i + 1,
+      seller_name: v.seller_name,
+      faturamento: valorNumerico(v.faturamento),
+      meta: valorNumerico(v.meta),
+      debito_meta: valorNumerico(v.debito_meta),
+      pct_meta: v.meta > 0 ? percentualNumerico(v.pct_meta) : '',
+      pct_proj: v.meta > 0 ? percentualNumerico(v.pct_proj) : '',
+      pa: Math.round(v.pa * 100) / 100,
+      tm: valorNumerico(v.tm),
+    }));
+
+    const totais: Record<string, number | string> = {
+      posicao: '',
+      seller_name: 'TOTAL',
+      faturamento: valorNumerico(totaisVendedoresRanking.faturamento),
+      meta: valorNumerico(totaisVendedoresRanking.meta),
+      debito_meta: valorNumerico(totaisVendedoresRanking.debitoMeta),
+      pct_meta: percentualNumerico(totaisVendedoresRanking.pctMeta),
+      pct_proj: percentualNumerico(totaisVendedoresRanking.pctProj),
+      pa: Math.round(totaisVendedoresRanking.pa * 100) / 100,
+      tm: valorNumerico(totaisVendedoresRanking.tm),
+    };
+
+    exportMultiSheetExcel(`ranking-vendedores-${dataInicio}-a-${dataFim}`, [
+      {
+        sheetName: 'Ranking vendedores',
+        columns: colunas,
+        data: dados,
+        title: `Ranking de Vendedores - ${dataInicio} a ${dataFim}`,
+        totals: totais,
+      },
+    ]);
   }
   function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);

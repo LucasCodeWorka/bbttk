@@ -41,12 +41,22 @@ const styleIds: Record<XlsxCellStyle, number> = {
 };
 
 function escapeXml(value: string): string {
-  return value
+  // Remove caracteres de controle inválidos em XML (exceto tab, newline, carriage return)
+  const cleaned = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return cleaned
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeSheetName(name: string): string {
+  // Excel não permite: \ / ? * [ ] : no nome da planilha
+  // Máximo 31 caracteres
+  return name
+    .replace(/[\\/\?\*\[\]:]/g, '_')
+    .slice(0, 31) || 'Dados';
 }
 
 function columnName(index: number): string {
@@ -259,7 +269,7 @@ export function exportToXlsx<T>(
   const options = typeof sheetNameOrOptions === 'string'
     ? { sheetName: sheetNameOrOptions }
     : sheetNameOrOptions;
-  const safeSheetName = escapeXml((options.sheetName || 'Dados').slice(0, 31) || 'Dados');
+  const safeSheetName = escapeXml(sanitizeSheetName(options.sheetName || 'Dados'));
   const files = [
     {
       path: '[Content_Types].xml',

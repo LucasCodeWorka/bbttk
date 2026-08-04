@@ -13,11 +13,11 @@ import { FILIAIS } from '@/lib/utils';
 
 const RELATORIO = 'gestao_transferencia';
 
-// Cores da paleta BBTK para o dashboard - cores mais vivas (maior opacidade)
+// Cores da paleta BBTK - suaves
 const STATUS_COLORS = {
-  ruptura: { bg: 'bg-[#CC222E]/20', text: 'text-[#CC222E]', bar: 'bg-[#CC222E]', label: 'Ruptura', cellBg: 'bg-[#CC222E]/30' },
-  ok: { bg: 'bg-[#F5A623]/20', text: 'text-[#F5A623]', bar: 'bg-[#F5A623]', label: 'Equilibrio', cellBg: 'bg-[#F5A623]/30' },
-  excesso: { bg: 'bg-[#6B5B95]/20', text: 'text-[#6B5B95]', bar: 'bg-[#6B5B95]', label: 'Excesso', cellBg: 'bg-[#6B5B95]/30' },
+  ruptura: { bg: 'bg-[#CC222E]/10', text: 'text-[#CC222E]', bar: 'bg-[#CC222E]/20', barText: 'text-[#CC222E]', label: 'Ruptura', cellBg: 'bg-[#CC222E]/15' },
+  ok: { bg: 'bg-[#F5A623]/10', text: 'text-[#b37a1a]', bar: 'bg-[#F5A623]/25', barText: 'text-[#996a15]', label: 'Equilibrio', cellBg: 'bg-[#F5A623]/20' },
+  excesso: { bg: 'bg-[#3498DB]/10', text: 'text-[#2980b9]', bar: 'bg-[#3498DB]/20', barText: 'text-[#2471a3]', label: 'Excesso', cellBg: 'bg-[#3498DB]/15' },
 };
 
 export default function TransferenciaPage() {
@@ -198,10 +198,7 @@ export default function TransferenciaPage() {
 
   function getBgClass(status: 'ruptura' | 'ok' | 'excesso' | null): string {
     if (!status) return '';
-    // Cores mais vivas para melhor visualizacao
-    if (status === 'ruptura') return 'bg-[#CC222E]/30';
-    if (status === 'ok') return 'bg-[#F5A623]/30';
-    return 'bg-[#6B5B95]/30';
+    return STATUS_COLORS[status].cellBg;
   }
 
   function toNumber(value: unknown): number {
@@ -275,7 +272,8 @@ export default function TransferenciaPage() {
       : lojasOptions;
 
     const porLoja: Record<number, { ruptura: number; ok: number; excesso: number }> = {};
-    const totais = { ruptura: 0, ok: 0, excesso: 0 };
+    // Para totais gerais, usar Sets para contar SKUs distintos
+    const skusDistintos = { ruptura: new Set<string>(), ok: new Set<string>(), excesso: new Set<string>() };
 
     lojasParaDash.forEach(l => {
       porLoja[l.value as number] = { ruptura: 0, ok: 0, excesso: 0 };
@@ -301,11 +299,20 @@ export default function TransferenciaPage() {
           // So conta se o status esta no filtro
           if (status && statusParaMostrar.includes(status)) {
             porLoja[loja.branchCode][status]++;
-            totais[status]++;
+            // Para totais, usar chave unica do SKU (ref + cor + tamanho)
+            const skuKey = `${grupo.referencia}|${grupo.cor || ''}|${tamanho}`;
+            skusDistintos[status].add(skuKey);
           }
         });
       });
     });
+
+    // Totais sao SKUs distintos
+    const totais = {
+      ruptura: skusDistintos.ruptura.size,
+      ok: skusDistintos.ok.size,
+      excesso: skusDistintos.excesso.size,
+    };
 
     const maxTotal = Math.max(...Object.values(porLoja).map(v => v.ruptura + v.ok + v.excesso), 1);
 
@@ -340,8 +347,8 @@ export default function TransferenciaPage() {
   function ThSort({ label, sortKey: key, align = 'left', className = '' }: { label: string; sortKey: string; align?: 'left' | 'center' | 'right'; className?: string }) {
     const isActive = sortKey === key;
     return (
-      <TableCell isHeader align={align} className={`cursor-pointer select-none ${className} ${isActive ? 'bg-[#6B5B95]/10' : 'hover:bg-gray-50'}`} onClick={() => handleSort(key)}>
-        <span className={isActive ? 'text-[#6B5B95] font-semibold' : 'text-gray-700'}>
+      <TableCell isHeader align={align} className={`cursor-pointer select-none ${className} ${isActive ? 'bg-gray-100' : 'hover:bg-gray-50'}`} onClick={() => handleSort(key)}>
+        <span className={isActive ? 'text-gray-900 font-semibold' : 'text-gray-700'}>
           {label}
           {isActive && <span className="ml-1 text-xs">{sortDir === 'asc' ? '▲' : '▼'}</span>}
         </span>
@@ -398,7 +405,7 @@ export default function TransferenciaPage() {
                     const pct = (counts[status] / maxTotal) * 100;
                     return (
                       <div key={status} className={`${STATUS_COLORS[status].bar} flex items-center justify-center`} style={{ width: `${pct}%` }}>
-                        <span className="text-xs text-white font-medium">{counts[status]}</span>
+                        <span className={`text-xs font-semibold ${STATUS_COLORS[status].barText}`}>{counts[status]}</span>
                       </div>
                     );
                   })}
@@ -465,15 +472,15 @@ export default function TransferenciaPage() {
           </div>
         </div>
         {/* Container com altura maxima e scroll vertical/horizontal */}
-        <div className="overflow-auto max-h-[600px] border border-gray-200 rounded-lg">
+        <div className="overflow-auto max-h-[600px] border border-[#E5E7EB] rounded-lg">
           <Table className="overflow-visible" tableClassName="text-xs">
-            <TableHead className="sticky top-0 z-20 bg-white shadow-sm">
+            <TableHead className="sticky top-0 z-20 bg-[#F3F4F6] border-b border-[#E5E7EB]">
               <TableRow>
-                <TableCell isHeader className="sticky left-0 bg-white z-30 w-10"></TableCell>
-                <ThSort label="REF" sortKey="referencia" className="sticky left-10 bg-white z-30 min-w-[100px]" />
-                <ThSort label="COR" sortKey="cor" className="sticky left-[140px] bg-white z-30 min-w-[80px]" />
-                <TableCell isHeader className="sticky left-[220px] bg-white z-30 min-w-[100px]">LOJA</TableCell>
-                {tamanhosOrdenados.map(t => <ThSort key={t} label={t} sortKey={t} align="center" className="min-w-[50px]" />)}
+                <TableCell isHeader className="sticky left-0 bg-[#F3F4F6] z-30 w-10 text-[#374151]"></TableCell>
+                <ThSort label="REF" sortKey="referencia" className="sticky left-10 bg-[#F3F4F6] z-30 min-w-[100px] text-[#374151]" />
+                <ThSort label="COR" sortKey="cor" className="sticky left-[140px] bg-[#F3F4F6] z-30 min-w-[80px] text-[#374151]" />
+                <TableCell isHeader className="sticky left-[220px] bg-[#F3F4F6] z-30 min-w-[100px] text-[#374151]">LOJA</TableCell>
+                {tamanhosOrdenados.map(t => <ThSort key={t} label={t} sortKey={t} align="center" className="min-w-[50px] text-[#374151]" />)}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -485,23 +492,25 @@ export default function TransferenciaPage() {
 
                 return (
                   <React.Fragment key={grupoKey}>
-                    <TableRow className="bg-gray-50 font-medium">
-                      <TableCell className="sticky left-0 bg-gray-50 z-10">
-                        <button onClick={() => toggleGrupo(grupoKey)} className="text-gray-500 hover:text-[#6B5B95] font-bold w-6 h-6 flex items-center justify-center">
+                    {/* Linha do grupo (REF/COR) - cinza claro */}
+                    <TableRow className="bg-[#F5F6F7] border-b border-[#E5E7EB]">
+                      <TableCell className="sticky left-0 bg-[#F5F6F7] z-10">
+                        <button onClick={() => toggleGrupo(grupoKey)} className="text-[#374151] hover:text-[#111827] font-bold w-6 h-6 flex items-center justify-center">
                           {expandido ? '−' : '+'}
                         </button>
                       </TableCell>
-                      <TableCell className="sticky left-10 bg-gray-50 z-10">{grupo.referencia}</TableCell>
-                      <TableCell className="sticky left-[140px] bg-gray-50 z-10 text-gray-600">{grupo.cor || '-'}</TableCell>
-                      <TableCell className="sticky left-[220px] bg-gray-50 z-10 text-gray-500 text-xs">TOTAL</TableCell>
-                      {tamanhosOrdenados.map(t => <TableCell key={t} align="center" className="bg-gray-50">{toNumber(totais[t]) > 0 ? totais[t] : '-'}</TableCell>)}
+                      <TableCell className="sticky left-10 bg-[#F5F6F7] z-10 font-bold text-[#374151]">{grupo.referencia}</TableCell>
+                      <TableCell className="sticky left-[140px] bg-[#F5F6F7] z-10 font-semibold text-[#374151]">{grupo.cor || '-'}</TableCell>
+                      <TableCell className="sticky left-[220px] bg-[#F5F6F7] z-10 text-[#9CA3AF] text-xs font-medium">TOTAL</TableCell>
+                      {tamanhosOrdenados.map(t => <TableCell key={t} align="center" className="bg-[#F5F6F7] font-bold text-[#374151]">{toNumber(totais[t]) > 0 ? totais[t] : <span className="text-[#9CA3AF]">-</span>}</TableCell>)}
                     </TableRow>
+                    {/* Linhas de lojas expandidas */}
                     {expandido && getLojasFiltradasDoGrupo(grupo).map(loja => (
-                      <TableRow key={`${grupoKey}-${loja.branchCode}`}>
+                      <TableRow key={`${grupoKey}-${loja.branchCode}`} className="bg-white hover:bg-[#F9FAFB] border-b border-[#E5E7EB]">
                         <TableCell className="sticky left-0 bg-white z-10"></TableCell>
                         <TableCell className="sticky left-10 bg-white z-10"></TableCell>
                         <TableCell className="sticky left-[140px] bg-white z-10"></TableCell>
-                        <TableCell className="sticky left-[220px] bg-white z-10 pl-4 text-gray-700">{FILIAIS[loja.branchCode] || loja.branchName}</TableCell>
+                        <TableCell className="sticky left-[220px] bg-white z-10 pl-4 text-[#374151] font-medium">{FILIAIS[loja.branchCode] || loja.branchName}</TableCell>
                         {tamanhosOrdenados.map(t => {
                           const qtd = toNumber(loja.estoquePorTamanho[t]);
                           const cobertura = toNumber(loja.coberturaPorTamanho[t]);
@@ -509,7 +518,7 @@ export default function TransferenciaPage() {
                           // So aplica cor se o status estiver selecionado no filtro
                           const statusFiltrado = status && (statusSelecionados.length === 3 || statusSelecionados.includes(status));
                           return (
-                            <TableCell key={t} align="center" className={`${statusFiltrado ? getBgClass(status) : ''} ${qtd === 0 ? 'text-gray-300' : ''}`}>
+                            <TableCell key={t} align="center" className={`${statusFiltrado ? getBgClass(status) : ''} ${qtd === 0 ? 'text-[#9CA3AF]' : 'font-bold text-[#374151]'}`}>
                               {qtd > 0 ? qtd : '-'}
                             </TableCell>
                           );
@@ -555,11 +564,11 @@ export default function TransferenciaPage() {
                     }
                   }}
                   placeholder="Digite codigo ou descricao da referencia..."
-                  className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#6B5B95] focus:border-transparent"
+                  className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--bbtk-red)] focus:border-transparent"
                 />
                 {isSearching && (
                   <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                    <svg className="animate-spin h-4 w-4 text-[#6B5B95]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <svg className="animate-spin h-4 w-4 text-[var(--bbtk-red)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
@@ -581,7 +590,7 @@ export default function TransferenciaPage() {
                         <div className="font-medium text-gray-900">{ref.referencia}</div>
                         <div className="text-xs text-gray-600 truncate">
                           {ref.descricao}
-                          {ref.cor && <span className="ml-2 text-[#6B5B95]">({ref.cor})</span>}
+                          {ref.cor && <span className="ml-2 text-gray-500">({ref.cor})</span>}
                         </div>
                       </button>
                     );
@@ -602,7 +611,7 @@ export default function TransferenciaPage() {
                   >
                     <div className="flex-1">
                       <span className="text-sm font-medium text-gray-900">{ref.referencia}</span>
-                      {ref.cor && <span className="ml-2 text-xs text-[#6B5B95]">({ref.cor})</span>}
+                      {ref.cor && <span className="ml-2 text-xs text-gray-500">({ref.cor})</span>}
                     </div>
                     <button
                       type="button"
@@ -660,7 +669,7 @@ export default function TransferenciaPage() {
             className="w-52"
           />
           <label className="flex items-center gap-2 cursor-pointer pb-2">
-            <input type="checkbox" checked={agruparPorCor} onChange={(e) => setAgruparPorCor(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-[#6B5B95] focus:ring-[#6B5B95]" />
+            <input type="checkbox" checked={agruparPorCor} onChange={(e) => setAgruparPorCor(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-[var(--bbtk-red)] focus:ring-[var(--bbtk-red)]" />
             <span className="text-sm text-gray-700">Separar por cor</span>
           </label>
           <Button onClick={buscar} isLoading={isLoading}>Atualizar</Button>
@@ -671,7 +680,7 @@ export default function TransferenciaPage() {
         <Card>
           <div className="flex items-center justify-center py-12">
             <div className="flex items-center gap-3">
-              <svg className="animate-spin h-5 w-5 text-[#6B5B95]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin h-5 w-5 text-[var(--bbtk-red)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -707,11 +716,11 @@ export default function TransferenciaPage() {
             </span>
             <span>
               <span className="font-medium">Cobertura:</span>{' '}
-              <span className="text-[#CC222E]">Ruptura &lt; {limiteVerde}d</span>
+              <span className="text-[#CC222E] font-medium">Ruptura &lt; {limiteVerde}d</span>
               {' | '}
-              <span className="text-[#F5A623]">Equilibrio {limiteVerde}-{limiteAmarelo}d</span>
+              <span className="text-[#b37a1a] font-medium">Equilibrio {limiteVerde}-{limiteAmarelo}d</span>
               {' | '}
-              <span className="text-[#6B5B95]">Excesso &gt; {limiteAmarelo}d</span>
+              <span className="text-[#2980b9] font-medium">Excesso &gt; {limiteAmarelo}d</span>
             </span>
             <span>
               <span className="font-medium">Giro:</span> Estoque / (Vendas / {diasAnalise} dias)

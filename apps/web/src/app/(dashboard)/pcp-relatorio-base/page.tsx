@@ -27,6 +27,7 @@ import {
 import { pcpConfigApi, PcpMetaVisaoGeral } from '@/lib/api';
 import { cn, formatDate, formatMoney, formatNumber } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
+import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const DIMENSAO_OPTIONS = [
   { value: 'linha', label: 'Por linha (Básico/Coleção)' },
@@ -628,21 +629,89 @@ export default function PcpRelatorioBasePage() {
       });
       const colunasExport = completo.colunas;
       const skuRows = completo.rows.flatMap((r) => r.skus);
-      const columns = [
-        ...COLUNAS_SKU_DETALHE.map((c) => ({
-          header: c.label,
-          value: (r: RelatorioBaseRow) => {
-            const rendered = c.render(r);
-            return typeof rendered === 'string' || typeof rendered === 'number' ? rendered : (r as any)[c.key] ?? '-';
-          },
-        })),
-        ...colunasExport.flatMap((c) => [
-          { header: `${c.label} - GIRO`, value: (r: RelatorioBaseRow) => r.branches[c.branchCode]?.giro ?? 0 },
-          { header: `${c.label} - EST`, value: (r: RelatorioBaseRow) => r.branches[c.branchCode]?.est ?? 0 },
-          { header: `${c.label} - COB`, value: (r: RelatorioBaseRow) => r.branches[c.branchCode]?.cob ?? '' },
-        ]),
+
+      // Montar colunas para Excel
+      const colunas: ExcelColumn[] = [
+        { key: 'sku', header: 'SKU', width: 20, type: 'text' },
+        { key: 'cor', header: 'COR', width: 15, type: 'text' },
+        { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' },
+        { key: 'descricao', header: 'DESCRIÇÃO', width: 35, type: 'text' },
+        { key: 'status', header: 'STATUS', width: 12, type: 'text' },
+        { key: 'codigo', header: 'CÓDIGO', width: 10, type: 'number' },
+        { key: 'categoria', header: 'CATEGORIA', width: 15, type: 'text' },
+        { key: 'linha', header: 'LINHA', width: 12, type: 'text' },
+        { key: 'genero', header: 'GÊNERO', width: 12, type: 'text' },
+        { key: 'modelo', header: 'MODELO', width: 12, type: 'text' },
+        { key: 'lancamento', header: 'LANÇ', width: 10, type: 'text' },
+        { key: 'ultimaEntrada', header: 'ÚLT. ENTRADA', width: 14, type: 'text' },
+        { key: 'custo', header: 'CUSTO', width: 12, type: 'number' },
+        { key: 'pdvAtual', header: 'PDV ATUAL', width: 12, type: 'number' },
+        { key: 'pdvRealVar', header: 'PDV REAL VAR', width: 14, type: 'number' },
+        { key: 'markupVar', header: 'MKUP VAR', width: 12, type: 'number' },
+        { key: 'pdvRealAta', header: 'PDV REAL ATA', width: 14, type: 'number' },
+        { key: 'markupAta', header: 'MKUP ATA', width: 12, type: 'number' },
+        { key: 'estTt', header: 'EST. TT', width: 10, type: 'number' },
+        { key: 'emProducao', header: 'EM PROD.', width: 10, type: 'number' },
+        { key: 'giroTt1', header: 'GIRO TT 1', width: 10, type: 'number' },
+        { key: 'giroTt3', header: 'GIRO TT 3', width: 10, type: 'number' },
+        { key: 'giroTt6', header: 'GIRO TT 6', width: 10, type: 'number' },
       ];
-      exportToCsv('relatorio-base-pcp', columns, skuRows);
+
+      // Adicionar colunas por filial
+      for (const c of colunasExport) {
+        colunas.push(
+          { key: `giro_${c.branchCode}`, header: `${c.label} GIRO`, width: 10, type: 'number' },
+          { key: `est_${c.branchCode}`, header: `${c.label} EST`, width: 10, type: 'number' },
+          { key: `cob_${c.branchCode}`, header: `${c.label} COB`, width: 10, type: 'number' },
+        );
+      }
+
+      // Montar dados
+      const dados = skuRows.map((r) => {
+        const row: Record<string, unknown> = {
+          sku: r.sku,
+          cor: r.cor,
+          tamanho: r.tamanho,
+          descricao: r.descricao,
+          status: r.status || '',
+          codigo: r.codigo ?? '',
+          categoria: r.categoria || '',
+          linha: r.linha || '',
+          genero: r.genero || '',
+          modelo: r.modelo || '',
+          lancamento: r.lancamento || '',
+          ultimaEntrada: r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '',
+          custo: r.custo ?? '',
+          pdvAtual: r.pdvAtual ?? '',
+          pdvRealVar: r.pdvRealVar ?? '',
+          markupVar: r.markupVar ?? '',
+          pdvRealAta: r.pdvRealAta ?? '',
+          markupAta: r.markupAta ?? '',
+          estTt: r.estTt,
+          emProducao: r.emProducao,
+          giroTt1: r.giroTt1,
+          giroTt3: r.giroTt3,
+          giroTt6: r.giroTt6,
+        };
+
+        for (const c of colunasExport) {
+          const dados = r.branches[c.branchCode];
+          row[`giro_${c.branchCode}`] = dados?.giro ?? 0;
+          row[`est_${c.branchCode}`] = dados?.est ?? 0;
+          row[`cob_${c.branchCode}`] = dados?.cob ?? '';
+        }
+
+        return row;
+      });
+
+      const dataHoje = new Date().toISOString().split('T')[0];
+      exportToExcel({
+        filename: `RelatorioBase_${dataHoje}`,
+        sheetName: 'Relatório Base',
+        title: 'Relatório Base PCP - Estoque e Giro por SKU',
+        columns: colunas,
+        data: dados,
+      });
     } catch (error) {
       showToast('Erro ao exportar Excel', 'error');
       console.error(error);

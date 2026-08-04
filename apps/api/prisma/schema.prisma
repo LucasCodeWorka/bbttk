@@ -354,6 +354,27 @@ model ProdutoPreco {
   @@map("produto_precos")
 }
 
+model ProdutoCustoPrecoSkuFilial {
+  id            BigInt   @id @default(autoincrement())
+  productSku    String   @map("product_sku") @db.VarChar(50)
+  productCode   Int      @map("product_code")
+  branchCode    Int      @map("branch_code")
+  costCode      Int      @map("cost_code")
+  costName      String?  @map("cost_name") @db.VarChar(100)
+  custo         Decimal  @db.Decimal(15, 4)
+  priceCode     Int      @map("price_code")
+  priceName     String?  @map("price_name") @db.VarChar(100)
+  preco         Decimal  @db.Decimal(15, 4)
+  markup        Decimal? @db.Decimal(15, 4)
+  margemPercent Decimal? @map("margem_percent") @db.Decimal(15, 4)
+  syncedAt      DateTime @default(now()) @map("synced_at") @db.Timestamp(6)
+
+  @@unique([productSku, branchCode, costCode, priceCode])
+  @@index([productCode])
+  @@index([branchCode])
+  @@map("produto_custo_preco_sku_filial")
+}
+
 // Snapshot do que esta "em producao" agora (Ordens de Producao do TOTVS ainda nao
 // finalizadas: status 10=Aguardando, 20=Em Andamento), quantidade PENDENTE de cada
 // item da O.P. (production-order/v2/orders/search, expand=items), somada por

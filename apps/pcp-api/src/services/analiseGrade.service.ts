@@ -211,16 +211,16 @@ async function getCurvaConfig() {
   const a = Number(config.curvaALimitePercent);
   const b = Number(config.curvaBLimitePercent);
   const c = Number(config.curvaCLimitePercent);
-  if (!(a > 0 && a < b && b < c && c < 100)) {
+  if (!(a > 0 && a < b && b < c && c <= 100)) {
     return prisma.pcpCurvaAbcConfig.update({
       where: { relatorio: CURVA_ABC_CONFIG_KEY },
-      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 99 },
+      data: { curvaALimitePercent: 80, curvaBLimitePercent: 95, curvaCLimitePercent: 100 },
     });
   }
   return config;
 }
 
-type CurvaLetra = 'A' | 'B' | 'C' | 'D';
+type CurvaLetra = 'A' | 'B' | 'C';
 type StatusReferencia = 'saudavel' | 'atencao' | 'critica';
 
 function buildRefCorTam(row: GradeRawRow): string {
@@ -244,8 +244,20 @@ function prioridade(curva: CurvaLetra, status: StatusReferencia): number {
   return 6;
 }
 
+// Quantidade em producao por product_code (soma de todas as filiais)
+async function getEmProducaoPorProductCode(): Promise<Map<number, number>> {
+  const rows = await prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
+    SELECT product_code, SUM(quantidade) AS quantidade
+    FROM produto_em_producao
+    GROUP BY product_code
+  `;
+  const mapa = new Map<number, number>();
+  for (const r of rows) mapa.set(r.product_code, decimalToNumber(r.quantidade));
+  return mapa;
+}
+
 export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
-  const [rawRows, vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig, saldoPorFilialPorReferencia] = await Promise.all([
+  const [rawRows, vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig, saldoPorFilialPorReferencia, emProducaoPorProductCode] = await Promise.all([
     getGradeRawRows(filtro),
     getVendasMensaisPorProductCode(filtro),
     getMesesFechadosLabels(),
@@ -256,12 +268,14 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       update: {},
     }),
     getSaldoPorFilial(filtro),
+    getEmProducaoPorProductCode(),
   ]);
   const riscoCoberturaMeses = decimalToNumber(relatorioConfig.riscoCoberturaMeses) || RISCO_COBERTURA_MESES_DEFAULT;
 
   const refs = new Map<string, {
     referenceName: string;
     estoque: number;
+    emProducao: number;
     vendaMes1: number;
     vendaMes2: number;
     vendaMes3: number;
@@ -284,6 +298,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
     const atual = refs.get(row.reference_code) || {
       referenceName: row.reference_name || row.reference_code,
       estoque: 0,
+      emProducao: 0,
       vendaMes1: 0,
       vendaMes2: 0,
       vendaMes3: 0,
@@ -294,11 +309,13 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
     };
     const venda = row.product_code !== null ? vendasPorProductCode.get(row.product_code) : undefined;
     const estoque = decimalToNumber(row.estoque);
+    const emProducao = row.product_code !== null ? emProducaoPorProductCode.get(row.product_code) || 0 : 0;
     const vendaMes1 = decimalToNumber(venda?.venda_mes_1);
     const vendaMes2 = decimalToNumber(venda?.venda_mes_2);
     const vendaMes3 = decimalToNumber(venda?.venda_mes_3);
 
     atual.estoque += estoque;
+    atual.emProducao += emProducao;
     atual.vendaMes1 += vendaMes1;
     atual.vendaMes2 += vendaMes2;
     atual.vendaMes3 += vendaMes3;
@@ -326,10 +343,10 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
     .forEach(([referenceCode, dados]) => {
       acumuladoValorMedio += Math.max(0, (dados.valorMes1 + dados.valorMes2 + dados.valorMes3) / MESES_FECHADOS);
       const acumuladoPercent = totalValorMedio > 0 ? (acumuladoValorMedio / totalValorMedio) * 100 : 0;
+      // Curva C vai ate 100% (nao existe mais curva D)
       if (acumuladoPercent <= Number(curvaConfig.curvaALimitePercent)) curvaPorReferencia.set(referenceCode, 'A');
       else if (acumuladoPercent <= Number(curvaConfig.curvaBLimitePercent)) curvaPorReferencia.set(referenceCode, 'B');
-      else if (acumuladoPercent <= Number(curvaConfig.curvaCLimitePercent)) curvaPorReferencia.set(referenceCode, 'C');
-      else curvaPorReferencia.set(referenceCode, 'D');
+      else curvaPorReferencia.set(referenceCode, 'C');
     });
 
   let skusEmRiscoTotal = 0;
@@ -367,8 +384,9 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
     return {
       referenceCode,
       referenceName: dados.referenceName,
-      curva: curvaPorReferencia.get(referenceCode) || 'D',
+      curva: curvaPorReferencia.get(referenceCode) || 'C',
       estoqueTotal: round(dados.estoque, 0),
+      emProducao: round(dados.emProducao, 0),
       vendaMes1: round(dados.vendaMes1, 0),
       vendaMes2: round(dados.vendaMes2, 0),
       vendaMes3: round(dados.vendaMes3, 0),
@@ -378,7 +396,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       skusEmRisco,
       percentGradeEmRisco,
       status,
-      prioridade: prioridade(curvaPorReferencia.get(referenceCode) || 'D', status),
+      prioridade: prioridade(curvaPorReferencia.get(referenceCode) || 'C', status),
       detalhes: detalhes.sort((a, b) => {
         if (a.status !== b.status) return a.status === 'risco' ? -1 : 1;
         return a.cor.localeCompare(b.cor) || a.tamanho.localeCompare(b.tamanho);
