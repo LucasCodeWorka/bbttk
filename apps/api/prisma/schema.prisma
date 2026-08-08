@@ -383,7 +383,7 @@ model ProdutoCustoPrecoSkuFilial {
 // de upsert incremental - uma O.P. que finalizou/cancelou tem que sumir daqui, nao so
 // parar de ser atualizada, e nao da pra saber isso so olhando o que "nao veio" na
 // pagina atual sem comparar contra o estado inteiro anterior.
-model ProdutoEmProducao {
+model OpsEmProducao {
   id          Int      @id @default(autoincrement())
   productCode Int      @map("product_code")
   branchCode  Int      @map("branch_code")
@@ -392,7 +392,7 @@ model ProdutoEmProducao {
 
   @@unique([productCode, branchCode])
   @@index([productCode])
-  @@map("produto_em_producao")
+  @@map("ops_em_producao")
 }
 
 model PcpCoberturaIdealFilial {
@@ -674,3 +674,4 @@ model dim_vendedor {
   created_at             DateTime? @default(now()) @db.Timestamp(6)
   updated_at             DateTime? @default(now()) @db.Timestamp(6)
 }
+

@@ -11,7 +11,10 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "sync:custo-preco-sku-filial": "tsx src/scripts/sync-custo-preco-sku-filial.ts",
-    "sync:custo-preco-sku-filial:dryrun": "tsx src/scripts/sync-custo-preco-sku-filial.ts --dry-run"
+    "sync:custo-preco-sku-filial:dryrun": "tsx src/scripts/sync-custo-preco-sku-filial.ts --dry-run",
+    "sync:em-producao": "tsx src/scripts/sync-em-producao.ts",
+    "sync:em-producao:dryrun": "tsx src/scripts/sync-em-producao.ts --dry-run",
+    "sync:em-producao:dryrun-detalhado": "tsx src/scripts/sync-em-producao.ts --dry-run --detalhado"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

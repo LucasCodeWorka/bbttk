@@ -244,11 +244,11 @@ function prioridade(curva: CurvaLetra, status: StatusReferencia): number {
   return 6;
 }
 
-// Quantidade em producao por product_code (soma de todas as filiais)
+// Quantidade pendente em producao por product_code (soma dos itens de OP)
 async function getEmProducaoPorProductCode(): Promise<Map<number, number>> {
   const rows = await prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT product_code, SUM(quantidade) AS quantidade
-    FROM produto_em_producao
+    SELECT product_code, SUM(quantidade_pendente) AS quantidade
+    FROM ops_em_producao
     GROUP BY product_code
   `;
   const mapa = new Map<number, number>();
@@ -481,3 +481,4 @@ export async function getCurvaAbcTamanho(filtro: AnaliseGradeFiltro = {}) {
 
   return { meses: CURVA_ABC_TAMANHO_MESES, linhas: resultado };
 }
+
