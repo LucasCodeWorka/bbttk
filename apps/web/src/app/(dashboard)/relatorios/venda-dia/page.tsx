@@ -30,9 +30,9 @@ const TIPO_CLASSIFICACAO_OPTIONS: { value: VendaDiaTipoClassificacao; label: str
 // Limpa o nome da loja removendo "BEBETENKITE" e códigos numéricos
 function cleanBranchName(name: string): string {
   return name
-    .replace(/BEBETENKITE\s*/gi, '')
-    .replace(/^\d+\s*[-–]\s*/, '')
-    .replace(/^\s*[-–]\s*/, '')
+    .replace(/^\s*\d+\s*\p{Pd}?\s*/u, '')
+    .replace(/\bBEBETENKITE\b\s*\p{Pd}?\s*/giu, '')
+    .replace(/^\s*\p{Pd}\s*/u, '')
     .trim();
 }
 
@@ -350,7 +350,7 @@ export default function VendaDiaPage() {
     if (!filtros) return [];
     return filtros.lojas.map(l => ({
       branch_code: l.branchCode,
-      branch_name: l.label,
+      branch_name: cleanBranchName(l.label) || l.label,
     }));
   }, [filtros]);
 
