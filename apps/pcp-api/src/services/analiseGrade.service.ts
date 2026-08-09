@@ -286,7 +286,9 @@ function prioridade(curva: CurvaLetra, status: StatusReferencia): number {
   return 6;
 }
 
-// Quantidade em producao por product_code (soma de todas as filiais)
+// Quantidade pendente em producao por product_code (soma dos itens de OP abertas,
+// tabela detalhada ops_em_producao - ver totvs.service.ts syncEmProducao). productCodes
+// restringe ao universo ja filtrado por classificacao (null = sem filtro aplicado).
 async function getEmProducaoPorProductCode(productCodes: number[] | null = null): Promise<Map<number, number>> {
   const filtroProductCode =
     productCodes === null
@@ -296,8 +298,8 @@ async function getEmProducaoPorProductCode(productCodes: number[] | null = null)
         : Prisma.sql`AND product_code IN (${Prisma.join(productCodes)})`;
 
   const rows = await prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT product_code, SUM(quantidade) AS quantidade
-    FROM produto_em_producao
+    SELECT product_code, SUM(quantidade_pendente) AS quantidade
+    FROM ops_em_producao
     WHERE 1=1 ${filtroProductCode}
     GROUP BY product_code
   `;
@@ -559,3 +561,4 @@ export async function getCurvaAbcTamanho(filtro: AnaliseGradeFiltro = {}) {
 
   return { meses: CURVA_ABC_TAMANHO_MESES, linhas: resultado };
 }
+

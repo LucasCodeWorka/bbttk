@@ -80,7 +80,7 @@ export interface RelatorioBaseRow {
   markupAta: number | null;
   estDisponivel: null;
   // Soma das quantidades pendentes de Ordens de Producao abertas do product_code, em
-  // todas as filiais (sincronizado via produto_em_producao - ver totvs.service.ts
+  // todas as filiais (sincronizado via ops_em_producao - ver totvs.service.ts
   // syncEmProducao). Diferente de custo/preco, e sempre um numero real (0 quando nao
   // tem O.P. aberta), nao "ainda nao sincronizado".
   emProducao: number;
@@ -376,13 +376,13 @@ async function getUltimaEntradaRows(productCodes: number[] | null): Promise<Arra
 }
 
 // Quantidade pendente de Ordens de Producao abertas, somada em todas as filiais - a
-// tabela produto_em_producao ja vem por product_code x branch_code (sincronizada via
+// tabela ops_em_producao vem detalhada por OP + product_code (sincronizada via
 // totvs.service.ts syncEmProducao), aqui so agrega pro nivel do relatorio (que mostra
-// "Em Producao" como 1 numero so por SKU, sem quebrar por loja).
+// "Em Producao" como 1 numero so por SKU, sem quebrar por OP/loja).
 async function getEmProducaoRows(productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT product_code, SUM(quantidade) AS quantidade
-    FROM produto_em_producao
+    SELECT product_code, SUM(quantidade_pendente) AS quantidade
+    FROM ops_em_producao
     WHERE 1=1 ${filtroProductCode(productCodes)}
     GROUP BY product_code
   `;
@@ -629,14 +629,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acc.valorEstoque += valores.valorEstoque;
     mapa.set(chave, acc);
   }
-  // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
+  // BÃ¡sico RenovÃ¡vel entra separado de BÃ¡sico (pedido do usuario); resto da linha
   // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
   // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
   function linhaBucket(linha: string | null): string | null {
     const l = linha?.trim().toUpperCase();
-    if (l === 'BASICA') return 'Básico';
-    if (l === 'BASICA RENOVAVEL') return 'Básico Renovável';
-    if (l === 'STYLE') return 'Coleção';
+    if (l === 'BASICA') return 'BÃ¡sico';
+    if (l === 'BASICA RENOVAVEL') return 'BÃ¡sico RenovÃ¡vel';
+    if (l === 'STYLE') return 'ColeÃ§Ã£o';
     return null;
   }
 
@@ -1016,9 +1016,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
     estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
-    coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
-    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
-    coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
+    coberturaBasico: coberturaPorLabel(matrizLinha, 'BÃ¡sico'),
+    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'BÃ¡sico RenovÃ¡vel'),
+    coberturaColecao: coberturaPorLabel(matrizLinha, 'ColeÃ§Ã£o'),
     referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
     statusBreakdown,
   };
@@ -1080,3 +1080,4 @@ export async function getFiltrosRelatorioBase() {
     colunas: RELATORIO_BASE_BRANCH_ORDER,
   };
 }
+

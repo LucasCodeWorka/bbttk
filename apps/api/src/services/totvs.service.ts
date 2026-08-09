@@ -514,6 +514,10 @@ interface OrderApi {
   branchCode: number;
   orderCode: number;
   status: number;
+  estimatedDeliveryDate?: string | null;
+  insertDate?: string | null;
+  lastChangeDate?: string | null;
+  startMovimentDate?: string | null;
   items?: OrderItemApi[] | null;
 }
 
@@ -527,6 +531,20 @@ export interface SyncEmProducaoResumo {
   linhas: number;
 }
 
+interface EmProducaoDetalheLinha {
+  branchCode: number;
+  orderCode: number;
+  status: number;
+  dtInicio: string | null;
+  dtPrevisao: string | null;
+  insertDate: string | null;
+  lastChangeDate: string | null;
+  productCode: number;
+  quantidadeOp: number;
+  quantidadeFinalizada: number;
+  quantidadePendente: number;
+}
+
 // Sincroniza o snapshot de "em producao" (Ordens de Producao do TOTVS ainda abertas) -
 // production-order/v2/orders/search com expand=items, soma pendingQuantity de cada
 // item por productCode x branchCode (a O.P. inteira pertence a uma filial/unidade
@@ -534,8 +552,8 @@ export interface SyncEmProducaoResumo {
 // relevantes - o volume de O.P. aberta e pequeno (nao e o catalogo inteiro), da pra
 // trazer tudo numa paginacao so.
 export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
-  const agregado = new Map<string, { productCode: number; branchCode: number; quantidade: number }>();
-  const ordensVistas = new Set<number>();
+  const linhas: EmProducaoDetalheLinha[] = [];
+  const ordensVistas = new Set<string>();
 
   const PAGE_SIZE = 100;
   const MAX_TENTATIVAS = 4;
@@ -555,8 +573,6 @@ export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            // filter.branchCodeList e obrigatorio pra essa API (testado ao vivo: 400
-            // EmptyField sem ele) - mesma lista de filiais reais usada em custo/preco.
             filter: { statusList: STATUS_EM_PRODUCAO, branchCodeList: FILIAIS_RELATORIO_BASE },
             expand: 'items',
             page,
@@ -583,14 +599,23 @@ export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
     const data = (await response.json()) as { hasNext?: boolean; items?: OrderApi[] };
 
     for (const ordem of data.items || []) {
-      ordensVistas.add(ordem.branchCode * 10_000_000 + ordem.orderCode);
+      ordensVistas.add(`${ordem.branchCode}-${ordem.orderCode}`);
       for (const item of ordem.items || []) {
         const pendente = item.pendingQuantity ?? 0;
-        if (!pendente || pendente <= 0) continue;
-        const chave = `${item.productCode}-${ordem.branchCode}`;
-        const acumulado = agregado.get(chave) || { productCode: item.productCode, branchCode: ordem.branchCode, quantidade: 0 };
-        acumulado.quantidade += pendente;
-        agregado.set(chave, acumulado);
+        if (item.productCode == null || !pendente || pendente <= 0) continue;
+        linhas.push({
+          branchCode: ordem.branchCode,
+          orderCode: ordem.orderCode,
+          status: ordem.status,
+          dtInicio: ordem.startMovimentDate ?? ordem.insertDate ?? null,
+          dtPrevisao: ordem.estimatedDeliveryDate ?? null,
+          insertDate: ordem.insertDate ?? null,
+          lastChangeDate: ordem.lastChangeDate ?? null,
+          productCode: item.productCode,
+          quantidadeOp: item.quantity ?? 0,
+          quantidadeFinalizada: item.finishedQuantity ?? 0,
+          quantidadePendente: pendente,
+        });
       }
     }
 
@@ -598,20 +623,41 @@ export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
     page++;
   }
 
-  const linhas = [...agregado.values()];
-
-  // Regrava a tabela inteira dentro de uma transacao (DELETE + INSERT) - snapshot do
-  // que esta aberto AGORA, nao upsert incremental (O.P. finalizada/cancelada precisa
-  // sumir, nao so parar de ser atualizada).
   await prisma.$transaction(async (tx) => {
-    await tx.produtoEmProducao.deleteMany({});
+    await tx.$executeRawUnsafe('DELETE FROM ops_em_producao');
     for (let i = 0; i < linhas.length; i += 2000) {
       const lote = linhas.slice(i, i + 2000);
       if (lote.length === 0) continue;
       await tx.$executeRaw`
-        INSERT INTO produto_em_producao (product_code, branch_code, quantidade, synced_at)
+        INSERT INTO ops_em_producao (
+          branch_code,
+          order_code,
+          status,
+          dt_inicio,
+          dt_previsao,
+          insert_date,
+          last_change_date,
+          product_code,
+          quantidade_op,
+          quantidade_finalizada,
+          quantidade_pendente,
+          synced_at
+        )
         VALUES ${Prisma.join(
-          lote.map((l) => Prisma.sql`(${l.productCode}, ${l.branchCode}, ${l.quantidade}, now())`)
+          lote.map((l) => Prisma.sql`(
+            ${l.branchCode},
+            ${l.orderCode},
+            ${l.status},
+            ${l.dtInicio}::timestamp,
+            ${l.dtPrevisao}::timestamp,
+            ${l.insertDate}::timestamp,
+            ${l.lastChangeDate}::timestamp,
+            ${l.productCode},
+            ${l.quantidadeOp},
+            ${l.quantidadeFinalizada},
+            ${l.quantidadePendente},
+            now()
+          )`)
         )}
       `;
     }
@@ -651,6 +697,8 @@ export async function garantirClassificacaoAtualizada(): Promise<void> {
     console.error('Erro ao checar classificacao de operacoes novas:', error);
   }
 }
+
+
 
 
 

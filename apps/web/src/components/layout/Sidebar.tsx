@@ -90,6 +90,12 @@ const iconRaioX = (
   </svg>
 );
 
+const iconVendaDia = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+  </svg>
+);
+
 const navEntries: NavEntry[] = [
   { type: 'link', label: 'Inicio', href: '/inicio', icon: iconInicio },
   {
@@ -140,7 +146,10 @@ const navEntries: NavEntry[] = [
     icon: iconRelatorios,
     items: [
       { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
+      { label: 'Em Producao', href: '/relatorios/em-producao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Performance Colecao', href: '/pcp-performance-colecao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Venda do Dia', href: '/relatorios/venda-dia', icon: iconVendaDia, moduleKey: 'pcp_servico' },
     ],
   },
 ];

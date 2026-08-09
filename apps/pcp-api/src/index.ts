@@ -10,6 +10,9 @@ import analiseGradeRoutes from './routes/analiseGrade.routes.js';
 import curvaAbcRoutes from './routes/curvaAbc.routes.js';
 import raioXRoutes from './routes/raioX.routes.js';
 import transferenciaRoutes from './routes/transferencia.routes.js';
+import performanceColecaoRoutes from './routes/performanceColecao.routes.js';
+import emProducaoRoutes from './routes/emProducao.routes.js';
+import vendaDiaRoutes from './routes/vendaDia.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -28,6 +31,9 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRou
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), raioXRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), transferenciaRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), performanceColecaoRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDiaRoutes);
 
 async function start() {
   try {

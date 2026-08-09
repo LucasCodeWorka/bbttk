@@ -375,24 +375,31 @@ model ProdutoCustoPrecoSkuFilial {
   @@map("produto_custo_preco_sku_filial")
 }
 
-// Snapshot do que esta "em producao" agora (Ordens de Producao do TOTVS ainda nao
-// finalizadas: status 10=Aguardando, 20=Em Andamento), quantidade PENDENTE de cada
-// item da O.P. (production-order/v2/orders/search, expand=items), somada por
-// product_code x branch_code (filial/unidade fabril dona da O.P.). Tabela e sempre
-// REGRAVADA por inteiro a cada sync (DELETE + INSERT dentro de uma transacao) em vez
-// de upsert incremental - uma O.P. que finalizou/cancelou tem que sumir daqui, nao so
-// parar de ser atualizada, e nao da pra saber isso so olhando o que "nao veio" na
-// pagina atual sem comparar contra o estado inteiro anterior.
-model ProdutoEmProducao {
-  id          Int      @id @default(autoincrement())
-  productCode Int      @map("product_code")
-  branchCode  Int      @map("branch_code")
-  quantidade  Decimal  @db.Decimal(15, 4)
-  syncedAt    DateTime @default(now()) @map("synced_at")
+// Snapshot detalhado do que esta "em producao" agora (Ordens de Producao do TOTVS
+// ainda nao finalizadas: status 5=Bloqueada, 10=Aguardando, 20=Em Andamento) - 1 linha
+// por item de O.P. (production-order/v2/orders/search, expand=items), nao agregado -
+// mantem order_code/status/datas/quantidade_op/finalizada/pendente por linha (ver
+// totvs.service.ts syncEmProducao). Tabela e sempre REGRAVADA por inteiro a cada sync
+// (DELETE + INSERT dentro de uma transacao) em vez de upsert incremental - uma O.P.
+// que finalizou/cancelou tem que sumir daqui, nao so parar de ser atualizada.
+model OpsEmProducao {
+  id                   Int       @id @default(autoincrement())
+  branchCode           Int       @map("branch_code")
+  orderCode            Int       @map("order_code")
+  status               Int?
+  dtInicio             DateTime? @map("dt_inicio")
+  dtPrevisao           DateTime? @map("dt_previsao")
+  insertDate           DateTime? @map("insert_date")
+  lastChangeDate       DateTime? @map("last_change_date")
+  productCode          Int       @map("product_code")
+  quantidadeOp         Decimal   @default(0) @map("quantidade_op") @db.Decimal(15, 4)
+  quantidadeFinalizada Decimal   @default(0) @map("quantidade_finalizada") @db.Decimal(15, 4)
+  quantidadePendente   Decimal   @map("quantidade_pendente") @db.Decimal(15, 4)
+  syncedAt             DateTime  @default(now()) @map("synced_at")
 
-  @@unique([productCode, branchCode])
-  @@index([productCode])
-  @@map("produto_em_producao")
+  @@index([productCode, branchCode], map: "ops_em_producao_product_branch_idx")
+  @@index([branchCode, orderCode], map: "ops_em_producao_order_idx")
+  @@map("ops_em_producao")
 }
 
 model PcpCoberturaIdealFilial {
@@ -674,3 +681,4 @@ model dim_vendedor {
   created_at             DateTime? @default(now()) @db.Timestamp(6)
   updated_at             DateTime? @default(now()) @db.Timestamp(6)
 }
+

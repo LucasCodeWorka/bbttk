@@ -32,7 +32,7 @@ export interface PcpClassificacaoOpcao {
 }
 
 export interface PcpClassificacaoDimensao {
-  chave: 'categoria' | 'linha' | 'genero' | 'status';
+  chave: 'categoria' | 'linha' | 'genero' | 'status' | 'statusProduto';
   label: string;
   opcoes: PcpClassificacaoOpcao[];
 }
@@ -578,6 +578,182 @@ export const curvaAbcApi = {
   },
 };
 
+// ---- Em Producao ----
+
+export interface EmProducaoFiltro {
+  status?: number[];
+  colecao?: string[];
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  statusProduto?: string[];
+  search?: string;
+  dataInicio?: string;
+  considerarSemReferencia?: boolean;
+}
+
+export interface EmProducaoRow {
+  id: number;
+  branchCode: number;
+  branchName: string;
+  orderCode: number;
+  status: number;
+  statusLabel: string;
+  dtInicio: string | null;
+  dtPrevisao: string | null;
+  insertDate: string | null;
+  lastChangeDate: string | null;
+  productCode: number;
+  referenceCode: string | null;
+  descricao: string;
+  cor: string | null;
+  tamanho: string | null;
+  colecao: string | null;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  statusProduto: string | null;
+  quantidadeOp: number;
+  quantidadeFinalizada: number;
+  quantidadePendente: number;
+  percentFinalizado: number;
+  diasEmProcesso: number | null;
+  diasAtraso: number;
+  syncedAt: string | null;
+}
+
+export interface EmProducaoResponse {
+  atualizadoEm: string | null;
+  kpis: {
+    ordens: number;
+    linhas: number;
+    referencias: number;
+    produtos: number;
+    quantidadeOp: number;
+    quantidadeFinalizada: number;
+    quantidadePendente: number;
+    percentFinalizado: number;
+    ordensAtrasadas: number;
+    quantidadeAtrasada: number;
+  };
+  statusResumo: Array<{ status: number; statusLabel: string; ordens: number; quantidadePendente: number }>;
+  rows: EmProducaoRow[];
+}
+
+export interface EmProducaoFiltrosResponse {
+  status: Array<{ valor: number; label: string; qtd: number }>;
+  colecoes: PcpClassificacaoOpcao[];
+  classificacoes: PcpClassificacaoDimensao[];
+  lojas: Array<{ branchCode: number; label: string; qtd: number }>;
+}
+
+export const emProducaoApi = {
+  getEmProducao: (token: string, filtro: EmProducaoFiltro = {}) => {
+    const params = new URLSearchParams();
+    if (filtro.search) params.set('search', filtro.search);
+    if (filtro.dataInicio) params.set('dataInicio', filtro.dataInicio);
+    if (filtro.considerarSemReferencia !== undefined) params.set('considerarSemReferencia', String(filtro.considerarSemReferencia));
+    appendList(params, 'status', filtro.status);
+    appendList(params, 'colecao', filtro.colecao);
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'statusProduto', filtro.statusProduto);
+    const query = params.toString();
+    return fetchPcpApi<EmProducaoResponse>(`/api/pcp/em-producao${query ? `?${query}` : ''}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<EmProducaoFiltrosResponse>('/api/pcp/em-producao/filtros', { token }),
+};
+// ---- Performance Colecao ----
+
+export interface PerformanceColecaoFiltro {
+  dataInicio: string;
+  dataFim: string;
+  colecao?: string[];
+  branches?: number[];
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  status?: string[];
+  search?: string;
+}
+
+export interface PerformanceColecaoRow {
+  grupo: string | null;
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  custo: number | null;
+  pdvVarejo: number | null;
+  markupVarejo: number | null;
+  pdvAtacado: number | null;
+  markupAtacado: number | null;
+  entrouDpa: string | null;
+  qtdeProduzida: number;
+  vendaMes1: number;
+  vendaMes2: number;
+  vendaMes3: number;
+  valorMes1: number;
+  valorMes2: number;
+  valorMes3: number;
+  estoqueFinal: number;
+  giro: number | null;
+  totalVendaValor: number;
+  totalVendaCusto: number;
+  totalEstoqueCusto: number;
+  totalEstoqueVenda: number;
+}
+
+export interface PerformanceColecaoResponse {
+  config: {
+    precoCustoBranchCode: number;
+    custoCode: number;
+    pdvVarejoCode: number;
+    pdvAtacadoCode: number;
+  };
+  periodo: { dataInicio: string; dataFim: string; meses: string[] };
+  kpis: {
+    referencias: number;
+    qtdeProduzida: number;
+    qtdeVendida: number;
+    estoqueFinal: number;
+    totalVendaValor: number;
+    totalVendaCusto: number;
+    totalEstoqueCusto: number;
+    totalEstoqueVenda: number;
+    participacaoColecaoPercent: number;
+    giroMedioPercent: number | null;
+  };
+  rows: PerformanceColecaoRow[];
+}
+
+export interface PerformanceColecaoFiltrosResponse {
+  colecoes: PcpClassificacaoOpcao[];
+  classificacoes: PcpClassificacaoDimensao[];
+  lojas: { branchCode: number; label: string }[];
+}
+
+export const performanceColecaoApi = {
+  getPerformance: (token: string, filtro: PerformanceColecaoFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    if (filtro.search) params.set('search', filtro.search);
+    appendList(params, 'colecao', filtro.colecao);
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
+    return fetchPcpApi<PerformanceColecaoResponse>(`/api/pcp/performance-colecao?${params.toString()}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<PerformanceColecaoFiltrosResponse>('/api/pcp/performance-colecao/filtros', { token }),
+};
 // ---- Raio X ----
 
 export interface RaioXFiltro {
@@ -713,4 +889,79 @@ export const transferenciaApi = {
     params.set('limit', String(limit));
     return fetchPcpApi<ReferenciaSearchResult[]>(`/api/pcp/transferencia/referencias?${params.toString()}`, { token });
   },
+};
+
+// ---- Venda do Dia por Classificação ----
+
+export type VendaDiaTipoClassificacao = 'categoria' | 'linha' | 'colecao' | 'status';
+
+export interface VendaDiaFiltro {
+  tipoClassificacao: VendaDiaTipoClassificacao;
+  classificacaoValores?: string[];
+  branches?: number[];
+  agruparLojas?: boolean;
+}
+
+export interface VendaDiaLinha {
+  branchCode: number | null;
+  branchName: string;
+  branchAbrev: string;
+  estoqueDiaAnterior: number;
+  vendaDiaAnterior: number;
+  vendaUltimaSemana: number;
+  vendaMes: number;
+  giroMes: number | null;
+}
+
+export interface VendaDiaKpis {
+  estoqueTotal: number;
+  vendaDiaAnteriorTotal: number;
+  vendaUltimaSemanaTotal: number;
+  vendaMesTotal: number;
+  giroMesTotal: number | null;
+  ticketMedioDia: number | null;
+  ticketMedioSemana: number | null;
+  ticketMedioMes: number | null;
+}
+
+export interface VendaDiaResponse {
+  dataReferencia: string;
+  periodoSemana: { inicio: string; fim: string };
+  periodoMes: { inicio: string; fim: string };
+  tipoClassificacao: VendaDiaTipoClassificacao;
+  classificacaoSelecionada: string[];
+  agrupadoPorLoja: boolean;
+  kpis: VendaDiaKpis;
+  linhas: VendaDiaLinha[];
+}
+
+export interface VendaDiaClassificacaoOpcao {
+  tipo: VendaDiaTipoClassificacao;
+  label: string;
+  opcoes: { valor: string; qtd_skus: number }[];
+}
+
+export interface VendaDiaFiltrosResponse {
+  classificacoes: VendaDiaClassificacaoOpcao[];
+  lojas: { branchCode: number; label: string; abrev: string }[];
+}
+
+export const vendaDiaApi = {
+  getVendaDia: (token: string, filtro: VendaDiaFiltro) => {
+    const params = new URLSearchParams();
+    params.set('tipoClassificacao', filtro.tipoClassificacao);
+    if (filtro.classificacaoValores && filtro.classificacaoValores.length > 0) {
+      params.set('classificacaoValores', filtro.classificacaoValores.join(','));
+    }
+    if (filtro.branches && filtro.branches.length > 0) {
+      params.set('branches', filtro.branches.join(','));
+    }
+    if (filtro.agruparLojas !== undefined) {
+      params.set('agruparLojas', String(filtro.agruparLojas));
+    }
+    return fetchPcpApi<VendaDiaResponse>(`/api/pcp/venda-dia?${params.toString()}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<VendaDiaFiltrosResponse>('/api/pcp/venda-dia/filtros', { token }),
 };

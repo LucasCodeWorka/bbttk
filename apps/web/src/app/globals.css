@@ -127,3 +127,7 @@ optgroup {
 .animate-fillbar.paused {
   animation-play-state: paused;
 }
+
+.scrollbar-x-hidden::-webkit-scrollbar:horizontal {
+  height: 0;
+}
