@@ -201,12 +201,13 @@ interface EstoqueRow {
 // Estoque atual por SKU x filial - mesma regra de dedup da tabela analitica externa
 // (PROMPT_TABELA_ANALITICA_PCP_ESTOQUE_SEM_GIRO.md): captura mais recente por
 // product_sku+branch_code+stock_code, depois soma.
-async function getEstoqueRows(): Promise<EstoqueRow[]> {
+async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[]> {
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, product_code, branch_code, stock, captured_at
       FROM prd_saldo
+      WHERE 1=1 ${filtroProductSku(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT product_sku, product_code, branch_code,
@@ -223,7 +224,7 @@ interface ProductCodeAggRow {
 }
 
 // Giro (peca vendida, liquido de devolucao) por product_code x filial, ultimos `dias` dias
-async function getGiroRows(dias: number): Promise<ProductCodeAggRow[]> {
+async function getGiroRows(dias: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code, t.branch_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -232,13 +233,14 @@ async function getGiroRows(dias: number): Promise<ProductCodeAggRow[]> {
     WHERE t.transaction_date >= CURRENT_DATE - make_interval(days => ${dias}::int)
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code, t.branch_code
   `;
 }
 
 // Giro do canal Atacado (channel-split real, so branch_code=2), mesmo padrao de
 // getVendasFabricaDividida/getDevolucoesFabricaDividida em vendas.service.ts
-async function getGiroAtacadoRows(dias: number): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getGiroAtacadoRows(dias: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -249,13 +251,14 @@ async function getGiroAtacadoRows(dias: number): Promise<Array<{ product_code: n
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
       AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
   `;
 }
 
 // Total vendido por product_code x filial nos ultimos `meses` meses - denominador da
 // cobertura (media_mensal = total / meses).
-async function getVendaPorMesesRows(meses: number): Promise<ProductCodeAggRow[]> {
+async function getVendaPorMesesRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code, t.branch_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -264,13 +267,14 @@ async function getVendaPorMesesRows(meses: number): Promise<ProductCodeAggRow[]>
     WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code, t.branch_code
   `;
 }
 
 // Total vendido do canal Atacado nos ultimos `meses` meses - usado como denominador da
 // cobertura do Atacado quando atacadoCoberturaBase = 'atacado_only'.
-async function getVendaAtacadoPorMesesRows(meses: number): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -281,12 +285,13 @@ async function getVendaAtacadoPorMesesRows(meses: number): Promise<Array<{ produ
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
       AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
   `;
 }
 
 // Giro TT de rede (soma de todas as filiais) por product_code, nas janelas de 1/3/6 meses
-async function getGiroTtRows(meses: number): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -295,6 +300,7 @@ async function getGiroTtRows(meses: number): Promise<Array<{ product_code: numbe
     WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
   `;
 }
@@ -309,7 +315,7 @@ interface CustoPrecoRow {
 // Custo/PDV real (var/ata) por product_code, na "loja de referencia" configurada -
 // custo/preco no TOTVS sao por filial, mas o Relatorio Base mostra 1 valor so por SKU
 // (decisao do Configurador do PCP: apps/web/.../pcp/relatorio-base-config/page.tsx).
-async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number, pdvVarejoCode: number, pdvAtacadoCode: number): Promise<CustoPrecoRow[]> {
+async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number, pdvVarejoCode: number, pdvAtacadoCode: number, productCodes: number[] | null): Promise<CustoPrecoRow[]> {
   return prisma.$queryRaw<CustoPrecoRow[]>`
     SELECT
       base.product_code,
@@ -317,9 +323,9 @@ async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number
       pv.valor AS pdv_var,
       pa.valor AS pdv_ata
     FROM (
-      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${precoCustoBranchCode}
+      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
       UNION
-      SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${precoCustoBranchCode}
+      SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
     ) base
     LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${precoCustoBranchCode} AND c.cost_code = ${custoCode}
     LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${precoCustoBranchCode} AND pv.price_code = ${pdvVarejoCode}
@@ -342,10 +348,11 @@ function markupPercentual(preco: number | null, custo: number | null): number | 
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 const CUSTO_ULTIMA_COMPRA_CODE = 2;
 
-async function getCustoUltimaCompraRows(precoCustoBranchCode: number): Promise<Array<{ product_code: number; valor: Decimal }>> {
+async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
     WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
+      ${filtroProductCode(productCodes)}
   `;
 }
 
@@ -356,13 +363,14 @@ async function getCustoUltimaCompraRows(precoCustoBranchCode: number): Promise<A
 // pegar o max"). Devolucao (operation_mode='3') tambem e operations_type='E' mas ja e
 // tratada em separado no resto do sistema - aqui entra igual, pois fisicamente tambem
 // e uma entrada de mercadoria no estoque daquela filial.
-async function getUltimaEntradaRows(): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
+async function getUltimaEntradaRows(productCodes: number[] | null): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
   return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada: Date }>>`
     SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
     WHERE t.status = 4 AND co.operations_type = 'E'
+      ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
   `;
 }
@@ -371,10 +379,11 @@ async function getUltimaEntradaRows(): Promise<Array<{ product_code: number; ult
 // tabela produto_em_producao ja vem por product_code x branch_code (sincronizada via
 // totvs.service.ts syncEmProducao), aqui so agrega pro nivel do relatorio (que mostra
 // "Em Producao" como 1 numero so por SKU, sem quebrar por loja).
-async function getEmProducaoRows(): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getEmProducaoRows(productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT product_code, SUM(quantidade) AS quantidade
     FROM produto_em_producao
+    WHERE 1=1 ${filtroProductCode(productCodes)}
     GROUP BY product_code
   `;
 }
@@ -426,6 +435,29 @@ function buildIdentidadeFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
 }
 
+// Restringe as queries auxiliares (venda/giro/custo/em producao) ao universo ja
+// filtrado por getIdentidadeRows - antes elas escaneavam o catalogo INTEIRO sempre,
+// entao aplicar mais filtros de classificacao nao acelerava nada (o filtro so
+// afetava a query de identidade, o resto continuava caro do mesmo jeito). null =
+// sem restricao (nenhum filtro de classificacao aplicado, mantem o universo
+// completo como antes). Array vazio = filtro aplicado mas sem produto nenhum
+// batendo, forca "AND FALSE" em vez de acidentalmente virar "sem filtro".
+function filtroProductCodeTi(codes: number[] | null): Prisma.Sql {
+  if (codes === null) return Prisma.empty;
+  if (codes.length === 0) return Prisma.sql`AND FALSE`;
+  return Prisma.sql`AND ti.product_code IN (${Prisma.join(codes)})`;
+}
+function filtroProductCode(codes: number[] | null): Prisma.Sql {
+  if (codes === null) return Prisma.empty;
+  if (codes.length === 0) return Prisma.sql`AND FALSE`;
+  return Prisma.sql`AND product_code IN (${Prisma.join(codes)})`;
+}
+function filtroProductSku(skus: string[] | null): Prisma.Sql {
+  if (skus === null) return Prisma.empty;
+  if (skus.length === 0) return Prisma.sql`AND FALSE`;
+  return Prisma.sql`AND product_sku IN (${Prisma.join(skus)})`;
+}
+
 async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<IdentidadeRow[]> {
   const filtroSql = buildIdentidadeFiltro(filtro);
 
@@ -457,8 +489,24 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const config = await getConfig();
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
 
+  // Busca identidade PRIMEIRO (respeitando os filtros de classificacao/busca), depois
+  // usa o resultado pra restringir as queries auxiliares (venda/giro/custo/em
+  // producao) ao mesmo universo - antes elas sempre escaneavam o catalogo inteiro,
+  // entao aplicar mais filtros nao acelerava nada (causa real da lentidao "com varios
+  // filtros"). branches NAO entra nessa restricao (so afeta quais colunas aparecem,
+  // nao o universo de produtos), entao so ativa a restricao quando ha filtro de
+  // classificacao/busca de verdade - evita montar uma lista IN(...) enorme (~catalogo
+  // inteiro) sem necessidade quando o usuario nao filtrou por classificacao nenhuma.
+  const identidadeRows = await getIdentidadeRows(filtro);
+  const temFiltroClassificacao = !!(
+    filtro.categoria?.length || filtro.linha?.length || filtro.genero?.length || filtro.status?.length || filtro.search?.trim()
+  );
+  const productCodesFiltro = temFiltroClassificacao
+    ? [...new Set(identidadeRows.map((r) => r.product_code).filter((c): c is number => c !== null))]
+    : null;
+  const productSkusFiltro = temFiltroClassificacao ? identidadeRows.map((r) => r.product_sku) : null;
+
   const [
-    identidadeRows,
     estoqueRows,
     giroRows,
     giroAtacadoRows,
@@ -473,20 +521,19 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     emProducaoRows,
     venda12mRows,
   ] = await Promise.all([
-    getIdentidadeRows(filtro),
-    getEstoqueRows(),
-    getGiroRows(config.giroDias),
-    getGiroAtacadoRows(config.giroDias),
-    getVendaPorMesesRows(config.coberturaMeses),
-    config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses) : Promise.resolve([]),
-    getGiroTtRows(1),
-    getGiroTtRows(3),
-    getGiroTtRows(6),
-    getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode),
-    getUltimaEntradaRows(),
-    getCustoUltimaCompraRows(config.precoCustoBranchCode),
-    getEmProducaoRows(),
-    getVendaPorMesesRows(12),
+    getEstoqueRows(productSkusFiltro),
+    getGiroRows(config.giroDias, productCodesFiltro),
+    getGiroAtacadoRows(config.giroDias, productCodesFiltro),
+    getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro),
+    config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro) : Promise.resolve([]),
+    getGiroTtRows(1, productCodesFiltro),
+    getGiroTtRows(3, productCodesFiltro),
+    getGiroTtRows(6, productCodesFiltro),
+    getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
+    getUltimaEntradaRows(productCodesFiltro),
+    getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
+    getEmProducaoRows(productCodesFiltro),
+    getVendaPorMesesRows(12, productCodesFiltro),
   ]);
 
   // Mapas auxiliares product_sku -> ... e product_code -> ...

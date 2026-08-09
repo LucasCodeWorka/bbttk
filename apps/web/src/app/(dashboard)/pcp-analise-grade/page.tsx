@@ -73,6 +73,7 @@ const HEATMAP_STATUS_LABEL: Record<HeatmapStatus, string> = {
 
 interface CelulaHeatmap {
   estoque: number;
+  emProducao: number;
   mediaMensal: number;
   cobertura: number | null;
   status: HeatmapStatus;
@@ -82,10 +83,11 @@ interface CelulaHeatmap {
 // tamanho x referencia (nao entra a dimensao cor), diferente da "Matriz por cor e
 // tamanho" do drill-down que mostra cada cor separada.
 function agregarPorTamanho(detalhes: PcpGradeDetalheSku[], riscoCoberturaMeses: number): Map<string, CelulaHeatmap> {
-  const soma = new Map<string, { estoque: number; mediaMensal: number }>();
+  const soma = new Map<string, { estoque: number; emProducao: number; mediaMensal: number }>();
   for (const d of detalhes) {
-    const atual = soma.get(d.tamanho) || { estoque: 0, mediaMensal: 0 };
+    const atual = soma.get(d.tamanho) || { estoque: 0, emProducao: 0, mediaMensal: 0 };
     atual.estoque += d.estoque;
+    atual.emProducao += d.emProducao;
     atual.mediaMensal += d.mediaMensal;
     soma.set(d.tamanho, atual);
   }
@@ -98,7 +100,7 @@ function agregarPorTamanho(detalhes: PcpGradeDetalheSku[], riscoCoberturaMeses: 
     else if (cobertura !== null && cobertura < riscoCoberturaMeses) status = 'vermelho';
     else if (cobertura !== null && cobertura < riscoCoberturaMeses * 2) status = 'amarelo';
     else status = 'verde';
-    mapa.set(tamanho, { estoque: valores.estoque, mediaMensal: valores.mediaMensal, cobertura, status });
+    mapa.set(tamanho, { estoque: valores.estoque, emProducao: valores.emProducao, mediaMensal: valores.mediaMensal, cobertura, status });
   }
   return mapa;
 }
@@ -244,6 +246,7 @@ function DetalheReferencia({ referencia }: { referencia: PcpGradeReferencia }) {
                     >
                       <div className="font-semibold">{STATUS_LABEL[celula.status]}</div>
                       <div>Est: {formatNumber(celula.estoque)}</div>
+                      {celula.emProducao > 0 && <div>Em Prod: {formatNumber(celula.emProducao)}</div>}
                       <div>V: {formatNumber(celula.vendaMes1)} / {formatNumber(celula.vendaMes2)} / {formatNumber(celula.vendaMes3)}</div>
                       <div>Med: {formatNumber(celula.mediaMensal)}</div>
                       <div>Cob: {coberturaLabel(celula.cobertura)}</div>
@@ -714,9 +717,12 @@ export default function PcpAnaliseGradePage() {
                         key={tamanho}
                         align="center"
                         className={cn('font-semibold', HEATMAP_STATUS_STYLE[celula.status])}
-                        title={`${HEATMAP_STATUS_LABEL[celula.status]} - cobertura ${coberturaLabel(celula.cobertura)} - media mensal ${formatNumber(celula.mediaMensal)}`}
+                        title={`${HEATMAP_STATUS_LABEL[celula.status]} - cobertura ${coberturaLabel(celula.cobertura)} - media mensal ${formatNumber(celula.mediaMensal)}${celula.emProducao > 0 ? ` - em producao ${formatNumber(celula.emProducao)}` : ''}`}
                       >
                         {formatNumber(celula.estoque)}
+                        {celula.emProducao > 0 && (
+                          <span className="block text-[10px] font-normal opacity-75">+{formatNumber(celula.emProducao)} prod.</span>
+                        )}
                       </TableCell>
                     );
                   })}

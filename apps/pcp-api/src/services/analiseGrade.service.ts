@@ -64,7 +64,37 @@ function buildFiltroSql(filtro: AnaliseGradeFiltro): Prisma.Sql {
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
 }
 
-async function getGradeRawRows(filtro: AnaliseGradeFiltro): Promise<GradeRawRow[]> {
+// Busca so os product_sku que batem no filtro de classificacao/referencia/cor, direto
+// em produto_analitico (tabela pequena, sem tocar prd_saldo) - usado pra restringir a
+// CTE cara sobre prd_saldo em getGradeRawRows/getSaldoPorFilial, que antes SEMPRE
+// escaneava a tabela inteira de snapshots independente do filtro aplicado (o filtro so
+// entrava depois, no JOIN final com produto_analitico, sem baratear a CTE em si - essa
+// e a causa real de "com varios filtros continua demorando"). null = sem filtro de
+// classificacao, mantem o comportamento antigo (sem restricao).
+async function getSkusFiltrados(filtro: AnaliseGradeFiltro): Promise<string[] | null> {
+  const temFiltro = !!(
+    filtro.referencia?.trim() || filtro.categoria?.length || filtro.linha?.length || filtro.genero?.length || filtro.status?.length || filtro.cor?.length
+  );
+  if (!temFiltro) return null;
+  const filtroSql = buildFiltroSql(filtro);
+  const rows = await prisma.$queryRaw<Array<{ product_sku: string }>>`
+    SELECT a.product_sku
+    FROM produto_analitico a
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${filtroSql}
+  `;
+  return rows.map((r) => r.product_sku);
+}
+
+function filtroProductSkuAG(skus: string[] | null): Prisma.Sql {
+  if (skus === null) return Prisma.empty;
+  if (skus.length === 0) return Prisma.sql`AND FALSE`;
+  return Prisma.sql`AND product_sku IN (${Prisma.join(skus)})`;
+}
+
+async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[] | null): Promise<GradeRawRow[]> {
   const filtroSql = buildFiltroSql(filtro);
   const filtroBranch = filtro.branches?.length
     ? Prisma.sql`AND branch_code IN (${Prisma.join(filtro.branches)})`
@@ -75,7 +105,7 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro): Promise<GradeRawRow[
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, branch_code, stock
       FROM prd_saldo
-      WHERE 1=1 ${filtroBranch}
+      WHERE 1=1 ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     estoque_sku AS (
@@ -110,7 +140,7 @@ interface SaldoFilialRow {
 // Saldo fisico (estoque real na loja/filial, nao venda/canal) por referencia - mesmo
 // "ultimo_saldo" de getGradeRawRows, so que sem colapsar o branch_code no meio do
 // caminho. Usado pra secao "Saldo por Filial" do drill-down de cada referencia.
-async function getSaldoPorFilial(filtro: AnaliseGradeFiltro): Promise<Map<string, Map<number, number>>> {
+async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string[] | null): Promise<Map<string, Map<number, number>>> {
   const filtroSql = buildFiltroSql(filtro);
   const filtroBranch = filtro.branches?.length
     ? Prisma.sql`AND branch_code IN (${Prisma.join(filtro.branches)})`
@@ -121,7 +151,7 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro): Promise<Map<string
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, branch_code, stock
       FROM prd_saldo
-      WHERE 1=1 ${filtroBranch}
+      WHERE 1=1 ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     saldo_sku_filial AS (
@@ -148,10 +178,21 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro): Promise<Map<string
   return mapa;
 }
 
-async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}): Promise<Map<number, VendaMensalRow>> {
+// productCodes: restringe ao universo ja filtrado por categoria/linha/genero/status/cor
+// (extraido de getGradeRawRows) - null = sem filtro de classificacao aplicado, mantem
+// o universo completo. Antes essa query sempre escaneava transacoes/transacao_itens
+// pra TODOS os product_code vendidos nos ultimos 3 meses, entao filtro de
+// classificacao nao acelerava nada (o piso de tempo dessa query era sempre o mesmo).
+async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}, productCodes: number[] | null = null): Promise<Map<number, VendaMensalRow>> {
   const filtroBranch = filtro.branches?.length
     ? Prisma.sql`AND t.branch_code IN (${Prisma.join(filtro.branches)})`
     : Prisma.empty;
+  const filtroProductCode =
+    productCodes === null
+      ? Prisma.empty
+      : productCodes.length === 0
+        ? Prisma.sql`AND FALSE`
+        : Prisma.sql`AND ti.product_code IN (${Prisma.join(productCodes)})`;
 
   const rows = await prisma.$queryRaw<VendaMensalRow[]>`
     WITH limites AS (
@@ -181,6 +222,7 @@ async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}): 
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroBranch}
+      ${filtroProductCode}
     GROUP BY ti.product_code
   `;
 
@@ -245,10 +287,18 @@ function prioridade(curva: CurvaLetra, status: StatusReferencia): number {
 }
 
 // Quantidade em producao por product_code (soma de todas as filiais)
-async function getEmProducaoPorProductCode(): Promise<Map<number, number>> {
+async function getEmProducaoPorProductCode(productCodes: number[] | null = null): Promise<Map<number, number>> {
+  const filtroProductCode =
+    productCodes === null
+      ? Prisma.empty
+      : productCodes.length === 0
+        ? Prisma.sql`AND FALSE`
+        : Prisma.sql`AND product_code IN (${Prisma.join(productCodes)})`;
+
   const rows = await prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT product_code, SUM(quantidade) AS quantidade
     FROM produto_em_producao
+    WHERE 1=1 ${filtroProductCode}
     GROUP BY product_code
   `;
   const mapa = new Map<number, number>();
@@ -257,9 +307,23 @@ async function getEmProducaoPorProductCode(): Promise<Map<number, number>> {
 }
 
 export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
-  const [rawRows, vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig, saldoPorFilialPorReferencia, emProducaoPorProductCode] = await Promise.all([
-    getGradeRawRows(filtro),
-    getVendasMensaisPorProductCode(filtro),
+  // Busca so os SKUs que batem no filtro de classificacao PRIMEIRO (query leve, so
+  // produto_analitico) - usada pra restringir a CTE cara sobre prd_saldo em
+  // getGradeRawRows/getSaldoPorFilial (antes sempre escaneava a tabela de snapshots
+  // inteira, o filtro so entrava depois no JOIN final, sem baratear a CTE em si - essa
+  // e a causa real da lentidao "com varios filtros continua demorando"). Depois usa o
+  // product_code do resultado pra restringir vendas/em-producao ao mesmo universo.
+  // branches fica de fora dessa restricao (so afeta o estoque mostrado, nao quais SKUs
+  // aparecem).
+  const productSkusFiltro = await getSkusFiltrados(filtro);
+  const rawRows = await getGradeRawRows(filtro, productSkusFiltro);
+  const temFiltroClassificacao = productSkusFiltro !== null;
+  const productCodesFiltro = temFiltroClassificacao
+    ? [...new Set(rawRows.map((r) => r.product_code).filter((c): c is number => c !== null))]
+    : null;
+
+  const [vendasPorProductCode, mesesLabels, curvaConfig, relatorioConfig, saldoPorFilialPorReferencia, emProducaoPorProductCode] = await Promise.all([
+    getVendasMensaisPorProductCode(filtro, productCodesFiltro),
     getMesesFechadosLabels(),
     getCurvaConfig(),
     prisma.pcpRelatorioConfig.upsert({
@@ -267,8 +331,8 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       create: { relatorio: RELATORIO_BASE_CONFIG_KEY },
       update: {},
     }),
-    getSaldoPorFilial(filtro),
-    getEmProducaoPorProductCode(),
+    getSaldoPorFilial(filtro, productSkusFiltro),
+    getEmProducaoPorProductCode(productCodesFiltro),
   ]);
   const riscoCoberturaMeses = decimalToNumber(relatorioConfig.riscoCoberturaMeses) || RISCO_COBERTURA_MESES_DEFAULT;
 
@@ -288,6 +352,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       cor: string;
       tamanho: string;
       estoque: number;
+      emProducao: number;
       vendaMes1: number;
       vendaMes2: number;
       vendaMes3: number;
@@ -328,6 +393,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       cor: row.color_name?.trim() || row.color_code?.trim() || 'SEM COR',
       tamanho: row.size,
       estoque,
+      emProducao,
       vendaMes1,
       vendaMes2,
       vendaMes3,
@@ -364,6 +430,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
       return {
         ...sku,
         estoque: round(sku.estoque, 0),
+        emProducao: round(sku.emProducao, 0),
         vendaMes1: round(sku.vendaMes1, 0),
         vendaMes2: round(sku.vendaMes2, 0),
         vendaMes3: round(sku.vendaMes3, 0),
@@ -432,7 +499,14 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
   };
 }
 
-async function getGiroPorProductCode(meses: number): Promise<Map<number, number>> {
+async function getGiroPorProductCode(meses: number, productCodes: number[] | null = null): Promise<Map<number, number>> {
+  const filtroProductCode =
+    productCodes === null
+      ? Prisma.empty
+      : productCodes.length === 0
+        ? Prisma.sql`AND FALSE`
+        : Prisma.sql`AND ti.product_code IN (${Prisma.join(productCodes)})`;
+
   const rows = await prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -440,6 +514,7 @@ async function getGiroPorProductCode(meses: number): Promise<Map<number, number>
     ${OPERACAO_JOIN}
     WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
       AND t.status = 4 AND ${SALE_OPERATION_FILTER}
+      ${filtroProductCode}
     GROUP BY ti.product_code
   `;
   const mapa = new Map<number, number>();
@@ -448,10 +523,13 @@ async function getGiroPorProductCode(meses: number): Promise<Map<number, number>
 }
 
 export async function getCurvaAbcTamanho(filtro: AnaliseGradeFiltro = {}) {
-  const [rawRows, giroPorProductCode] = await Promise.all([
-    getGradeRawRows(filtro),
-    getGiroPorProductCode(CURVA_ABC_TAMANHO_MESES),
-  ]);
+  const productSkusFiltro = await getSkusFiltrados(filtro);
+  const rawRows = await getGradeRawRows(filtro, productSkusFiltro);
+  const temFiltroClassificacao = productSkusFiltro !== null;
+  const productCodesFiltro = temFiltroClassificacao
+    ? [...new Set(rawRows.map((r) => r.product_code).filter((c): c is number => c !== null))]
+    : null;
+  const giroPorProductCode = await getGiroPorProductCode(CURVA_ABC_TAMANHO_MESES, productCodesFiltro);
 
   const productCodesPorTamanho = new Map<string, Set<number>>();
   for (const row of rawRows) {

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import * as pcpConfigService from '../services/pcpConfig.service.js';
-import { syncCustosEPrecos, syncEmProducao } from '../services/totvs.service.js';
+import { syncEmProducao, iniciarCustoPrecoSyncJob, getCustoPrecoSyncJobStatus } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -47,15 +47,17 @@ router.get('/pcp-config/codigos', async (_req: Request, res: Response) => {
 });
 
 // Resincroniza custo e preco de todos os produtos direto da API do TOTVS
-// (product/v2/costs|prices/search) - roda sob demanda, pode demorar (~130 chamadas
-// paginadas cobrindo o catalogo inteiro).
-router.post('/pcp-config/sincronizar-custos-precos', async (_req: Request, res: Response) => {
-  try {
-    const { custos, precos } = await syncCustosEPrecos();
-    res.json({ custos, precos });
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-  }
+// (product/v2/costs|prices/search) - dispara ASSINCRONO (nao espera terminar dentro do
+// request HTTP, que estourava o timeout do proxy do Render com ~130+ paginas pro
+// TOTVS) - retorna na hora, o frontend acompanha via GET .../status (polling).
+router.post('/pcp-config/sincronizar-custos-precos', (_req: Request, res: Response) => {
+  const { jaEmAndamento } = iniciarCustoPrecoSyncJob();
+  res.json({ jaEmAndamento });
+});
+
+// Status/progresso da sincronizacao disparada acima - poll a cada poucos segundos.
+router.get('/pcp-config/sincronizar-custos-precos/status', (_req: Request, res: Response) => {
+  res.json({ job: getCustoPrecoSyncJobStatus() });
 });
 
 // Resincroniza o snapshot de Ordens de Producao abertas direto da API do TOTVS

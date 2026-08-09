@@ -1,10 +1,10 @@
-﻿import https from 'https';
+import https from 'https';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database.js';
 
 const API_BASE_URL = process.env.TOTVS_API_URL || 'https://www30.bhan.com.br:9443/api/totvsmoda';
 
-// Agent que ignora SSL (necessÃ¡rio para API TOTVS)
+// Agent que ignora SSL (necessário para API TOTVS)
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
@@ -226,7 +226,9 @@ async function syncCustoOuPreco(
   // (nao paralelo) porque testamos requests concorrentes e o tempo de cada uma piora
   // muito (contencao do lado do TOTVS), aumentando o risco de 502 em vez de acelerar.
   const pageSizeEnv = Number(process.env.TOTVS_CUSTO_PRECO_PAGE_SIZE);
-  const PAGE_SIZE = options.pageSize ?? (Number.isFinite(pageSizeEnv) && pageSizeEnv > 0 ? pageSizeEnv : 50);
+  // Fallback 100 (nao 50) - e o valor testado/validado pelo comentario acima; 50 tinha
+  // ficado como residuo de teste, dobrando o numero de paginas necessarias sem motivo.
+  const PAGE_SIZE = options.pageSize ?? (Number.isFinite(pageSizeEnv) && pageSizeEnv > 0 ? pageSizeEnv : 100);
   const MAX_TENTATIVAS = 4;
   // O TOTVS rejeita com HTTP 400 (ListExceeded) se filter.productCodeList passar de 900
   // itens - testado ao vivo. Divide o universo de produtos relevantes em lotes de 900,
@@ -422,6 +424,83 @@ export async function syncCustosEPrecos(options: SyncCustoPrecoOptions = {}): Pr
     syncCustoOuPreco('preco', FILIAIS_RELATORIO_BASE, PRICE_CODES_TENTATIVA, productCodes, options),
   ]);
   return { productCodes: productCodes.length, custos, precos };
+}
+
+// Job assincrono pro botao "Sincronizar com o TOTVS" (Configuracoes > Custo e Preco) -
+// a sincronizacao sincrona original rodava dentro de 1 request HTTP so, e com ~130+
+// paginas pro TOTVS isso estoura o timeout do proxy do Render (free tier) e aparece
+// pro usuario como "travando"/"crashando". Estado em memoria (nao precisa de tabela
+// nova nem fila) - so 1 sync roda por vez, reinicia se o processo reiniciar (aceitavel
+// pra uma acao manual disparada por admin, nao e um job critico/agendado).
+export interface CustoPrecoSyncJobProgresso {
+  linhasTotal: number;
+  produtosTotal: number;
+  chunkIndex: number;
+  totalChunks: number;
+  page: number;
+}
+
+export interface CustoPrecoSyncJobState {
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  finishedAt?: string;
+  progress: { custo: CustoPrecoSyncJobProgresso; preco: CustoPrecoSyncJobProgresso };
+  resultado?: { productCodes: number; custos: SyncCustoPrecoResumo; precos: SyncCustoPrecoResumo };
+  erro?: string;
+}
+
+let custoPrecoSyncJob: CustoPrecoSyncJobState | null = null;
+
+function progressoVazio(): CustoPrecoSyncJobProgresso {
+  return { linhasTotal: 0, produtosTotal: 0, chunkIndex: 0, totalChunks: 0, page: 0 };
+}
+
+export function getCustoPrecoSyncJobStatus(): CustoPrecoSyncJobState | null {
+  return custoPrecoSyncJob;
+}
+
+// Dispara a sincronizacao SEM aguardar (fire-and-forget) - a rota HTTP retorna na hora,
+// o frontend acompanha via polling em getCustoPrecoSyncJobStatus(). sequential:true
+// (nao paralelo custo+preco) e o mesmo ajuste que o script standalone
+// (sync-custo-preco-sku-filial.ts) ja validou como mais estavel contra 502 do TOTVS.
+export function iniciarCustoPrecoSyncJob(): { jaEmAndamento: boolean } {
+  if (custoPrecoSyncJob && custoPrecoSyncJob.status === 'running') {
+    return { jaEmAndamento: true };
+  }
+
+  custoPrecoSyncJob = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    progress: { custo: progressoVazio(), preco: progressoVazio() },
+  };
+
+  syncCustosEPrecos({
+    sequential: true,
+    onProgress: (event) => {
+      if (!custoPrecoSyncJob) return;
+      custoPrecoSyncJob.progress[event.tipo] = {
+        linhasTotal: event.linhasTotal,
+        produtosTotal: event.produtosTotal,
+        chunkIndex: event.chunkIndex,
+        totalChunks: event.totalChunks,
+        page: event.page,
+      };
+    },
+  })
+    .then((resultado) => {
+      if (!custoPrecoSyncJob) return;
+      custoPrecoSyncJob.status = 'done';
+      custoPrecoSyncJob.finishedAt = new Date().toISOString();
+      custoPrecoSyncJob.resultado = resultado;
+    })
+    .catch((error) => {
+      if (!custoPrecoSyncJob) return;
+      custoPrecoSyncJob.status = 'error';
+      custoPrecoSyncJob.finishedAt = new Date().toISOString();
+      custoPrecoSyncJob.erro = error instanceof Error ? error.message : String(error);
+    });
+
+  return { jaEmAndamento: false };
 }
 
 interface OrderItemApi {

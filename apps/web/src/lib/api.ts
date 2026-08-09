@@ -297,6 +297,23 @@ export interface PcpMetaVisaoGeral {
   estoqueMortoDias: number;
 }
 
+export interface PcpCustoPrecoSyncJobProgresso {
+  linhasTotal: number;
+  produtosTotal: number;
+  chunkIndex: number;
+  totalChunks: number;
+  page: number;
+}
+
+export interface PcpCustoPrecoSyncJob {
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  finishedAt?: string;
+  progress: { custo: PcpCustoPrecoSyncJobProgresso; preco: PcpCustoPrecoSyncJobProgresso };
+  resultado?: { productCodes: number; custos: { produtos: number; linhas: number }; precos: { produtos: number; linhas: number } };
+  erro?: string;
+}
+
 export const pcpConfigApi = {
   getConfig: (token: string, relatorio = 'relatorio_base') =>
     fetchApi<{ config: PcpRelatorioConfig }>(`/api/pcp-config?relatorio=${relatorio}`, { token }),
@@ -311,11 +328,13 @@ export const pcpConfigApi = {
   getCodigosDisponiveis: (token: string) =>
     fetchApi<PcpCodigosDisponiveis>('/api/pcp-config/codigos', { token }),
 
+  // Dispara a sincronizacao assincrona (nao espera terminar) - retorna na hora se ja
+  // tinha uma rodando. Acompanhar progresso via getStatusSincronizacaoCustosPrecos.
   sincronizarCustosPrecos: (token: string) =>
-    fetchApi<{ custos: { produtos: number; linhas: number }; precos: { produtos: number; linhas: number } }>(
-      '/api/pcp-config/sincronizar-custos-precos',
-      { token, method: 'POST' }
-    ),
+    fetchApi<{ jaEmAndamento: boolean }>('/api/pcp-config/sincronizar-custos-precos', { token, method: 'POST' }),
+
+  getStatusSincronizacaoCustosPrecos: (token: string) =>
+    fetchApi<{ job: PcpCustoPrecoSyncJob | null }>('/api/pcp-config/sincronizar-custos-precos/status', { token }),
 
   sincronizarEmProducao: (token: string) =>
     fetchApi<{ ordens: number; linhas: number }>('/api/pcp-config/sincronizar-em-producao', { token, method: 'POST' }),

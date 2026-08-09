@@ -326,6 +326,7 @@ export interface PcpGradeDetalheSku {
   cor: string;
   tamanho: string;
   estoque: number;
+  emProducao: number;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;

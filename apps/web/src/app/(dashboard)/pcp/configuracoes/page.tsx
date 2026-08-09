@@ -12,6 +12,7 @@ import {
   PcpCoberturaIdealItem,
   PcpCodigosDisponiveis,
   PcpCurvaAbcConfig,
+  PcpCustoPrecoSyncJob,
 } from '@/lib/api';
 import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
 
@@ -47,6 +48,7 @@ export default function ConfiguracoesPcpPage() {
   const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [codigos, setCodigos] = useState<PcpCodigosDisponiveis>({ custos: [], precos: [] });
   const [sincronizando, setSincronizando] = useState(false);
+  const [syncJob, setSyncJob] = useState<PcpCustoPrecoSyncJob | null>(null);
   const [sincronizandoProducao, setSincronizandoProducao] = useState(false);
   const [coberturaIdeal, setCoberturaIdeal] = useState<Record<number, string>>({});
   const [salvandoCobertura, setSalvandoCobertura] = useState(false);
@@ -165,21 +167,72 @@ export default function ConfiguracoesPcpPage() {
     }
   }
 
+  // A sincronizacao roda em background no servidor (pode levar minutos - ~130+ paginas
+  // pro TOTVS) - o POST so dispara e volta na hora, aqui a gente acompanha via polling
+  // pra nao travar o navegador esperando 1 request gigante (era isso que crashava/
+  // travava antes: request sincrono estourando o timeout do proxy do Render).
+  const pollSincronizacao = useCallback(
+    (tokenAtual: string) => {
+      const interval = setInterval(async () => {
+        try {
+          const { job } = await pcpConfigApi.getStatusSincronizacaoCustosPrecos(tokenAtual);
+          setSyncJob(job);
+          if (!job || job.status === 'running') return;
+
+          clearInterval(interval);
+          setSincronizando(false);
+          if (job.status === 'done' && job.resultado) {
+            showToast(
+              `Sincronizado! ${job.resultado.custos.linhas} custos e ${job.resultado.precos.linhas} precos (${job.resultado.custos.produtos} produtos)`,
+              'success'
+            );
+            const codigosRes = await pcpConfigApi.getCodigosDisponiveis(tokenAtual);
+            setCodigos(codigosRes);
+          } else if (job.status === 'error') {
+            showToast(`Erro ao sincronizar: ${job.erro || 'erro desconhecido'}`, 'error');
+          }
+        } catch (error) {
+          clearInterval(interval);
+          setSincronizando(false);
+          showToast('Erro ao consultar status da sincronizacao', 'error');
+          console.error(error);
+        }
+      }, 3000);
+    },
+    [showToast]
+  );
+
+  // Se a tela for recarregada com uma sincronizacao ja rodando (processo pode levar
+  // minutos), retoma o acompanhamento em vez de deixar o botao "esquecer" que ha um
+  // job em andamento.
+  useEffect(() => {
+    if (!token) return;
+    pcpConfigApi
+      .getStatusSincronizacaoCustosPrecos(token)
+      .then(({ job }) => {
+        setSyncJob(job);
+        if (job?.status === 'running') {
+          setSincronizando(true);
+          pollSincronizacao(token);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   async function handleSincronizar() {
     if (!token) return;
     setSincronizando(true);
+    setSyncJob(null);
     try {
-      const resultado = await pcpConfigApi.sincronizarCustosPrecos(token);
-      showToast(
-        `Sincronizado! ${resultado.custos.linhas} custos e ${resultado.precos.linhas} precos (${resultado.custos.produtos} produtos)`,
-        'success'
-      );
-      const codigosRes = await pcpConfigApi.getCodigosDisponiveis(token);
-      setCodigos(codigosRes);
+      const { jaEmAndamento } = await pcpConfigApi.sincronizarCustosPrecos(token);
+      if (jaEmAndamento) {
+        showToast('Ja tem uma sincronizacao rodando - acompanhando o progresso...', 'info');
+      }
+      pollSincronizacao(token);
     } catch (error) {
-      showToast('Erro ao sincronizar custo/preco com o TOTVS', 'error');
+      showToast('Erro ao iniciar sincronizacao com o TOTVS', 'error');
       console.error(error);
-    } finally {
       setSincronizando(false);
     }
   }
@@ -421,10 +474,18 @@ export default function ConfiguracoesPcpPage() {
                 Sincronizar com o TOTVS
               </Button>
             </CardHeader>
-            <p className="text-sm text-gray-500 -mt-2 mb-4">
+            <p className="text-sm text-gray-500 -mt-2 mb-2">
               O TOTVS tem varios tipos de custo e preco cadastrados por produto - escolha qual usar em cada coluna do Relatorio Base.
               {codigos.custos.length === 0 && ' Sincronize pelo menos uma vez para liberar os selects.'}
             </p>
+            {sincronizando && (
+              <p className="text-xs text-gray-400 mb-4">
+                Sincronizando em segundo plano (pode levar alguns minutos) -{' '}
+                {syncJob
+                  ? `custos: ${syncJob.progress.custo.linhasTotal} linhas (lote ${syncJob.progress.custo.chunkIndex}/${syncJob.progress.custo.totalChunks || 1}, pagina ${syncJob.progress.custo.page}) - precos: ${syncJob.progress.preco.linhasTotal} linhas (lote ${syncJob.progress.preco.chunkIndex}/${syncJob.progress.preco.totalChunks || 1}, pagina ${syncJob.progress.preco.page})`
+                  : 'iniciando...'}
+              </p>
+            )}
             <div className="flex flex-wrap gap-4 items-end">
               <Select
                 label="Custo"

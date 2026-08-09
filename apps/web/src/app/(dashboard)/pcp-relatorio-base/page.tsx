@@ -163,9 +163,9 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
   { key: 'custo', label: 'CUSTO', width: 80, align: 'right', render: (r) => (r.custo === null ? '—' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 90, align: 'right', render: (r) => (r.pdvAtual === null ? '—' : formatMoney(r.pdvAtual)) },
   { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 100, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
-  { key: 'markupVar', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupVar === null ? '—' : `${r.markupVar.toFixed(0)}%`) },
+  { key: 'markupVar', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupVar === null ? '—' : formatNumber(r.markupVar)) },
   { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 100, align: 'right', render: (r) => (r.pdvRealAta === null ? '—' : formatMoney(r.pdvRealAta)) },
-  { key: 'markupAta', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupAta === null ? '—' : `${r.markupAta.toFixed(0)}%`) },
+  { key: 'markupAta', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupAta === null ? '—' : formatNumber(r.markupAta)) },
   { key: 'estTt', label: 'EST. TT', width: 80, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 80, align: 'right', render: () => '—' },
   { key: 'emProducao', label: 'EM PROD.', width: 80, align: 'right', render: (r) => formatNumber(r.emProducao) },
@@ -220,7 +220,7 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
     align: 'right',
     render: (r) => (
       <span title="Custo da última compra vs. PDV atual/real no varejo">
-        {r.markupVar === null ? '—' : `${r.markupVar.toFixed(0)}%`}
+        {r.markupVar === null ? '—' : formatNumber(r.markupVar)}
       </span>
     ),
   },
@@ -232,7 +232,7 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
     align: 'right',
     render: (r) => (
       <span title="Custo da última compra vs. PDV atual/real no atacado">
-        {r.markupAta === null ? '—' : `${r.markupAta.toFixed(0)}%`}
+        {r.markupAta === null ? '—' : formatNumber(r.markupAta)}
       </span>
     ),
   },
