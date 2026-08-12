@@ -183,7 +183,7 @@ export interface RelatorioBaseResponse {
   rows: RelatorioBaseReferenciaRow[];
 }
 
-async function getConfig() {
+export async function getConfig() {
   return prisma.pcpRelatorioConfig.upsert({
     where: { relatorio: RELATORIO_KEY },
     create: { relatorio: RELATORIO_KEY },
@@ -346,9 +346,9 @@ function markupPercentual(preco: number | null, custo: number | null): number | 
 // sincronizados do TOTVS), separado por canal. Antes usava o preco da ultima venda
 // real (transacao de verdade, com desconto ja aplicado) em vez do PDV Real/Atual -
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
-const CUSTO_ULTIMA_COMPRA_CODE = 2;
+export const CUSTO_ULTIMA_COMPRA_CODE = 2;
 
-async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
     WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
@@ -363,7 +363,7 @@ async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCod
 // pegar o max"). Devolucao (operation_mode='3') tambem e operations_type='E' mas ja e
 // tratada em separado no resto do sistema - aqui entra igual, pois fisicamente tambem
 // e uma entrada de mercadoria no estoque daquela filial.
-async function getUltimaEntradaRows(productCodes: number[] | null): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
+export async function getUltimaEntradaRows(productCodes: number[] | null): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
   return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada: Date }>>`
     SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada
     FROM transacoes t

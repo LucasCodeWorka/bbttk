@@ -396,6 +396,7 @@ export interface AnaliseGradeFiltro {
 // ---- Curva ABC (produto) ----
 
 export type CurvaLetra = 'A' | 'B' | 'C';
+export type CurvaGrupo = CurvaLetra | 'SEM_VENDA';
 
 export interface CurvaLinhaBucket {
   bucket: string;
@@ -412,7 +413,8 @@ export interface ReferenciaAbc {
   genero: string | null;
   status: string | null;
   lancamento: string | null;
-  curva: CurvaLetra;
+  ultimaEntrada: string | null;
+  curva: CurvaGrupo;
   rankQtd: number;
   rankCurva: number;
   qtdVendida: number;
@@ -431,6 +433,7 @@ export interface ReferenciaAbc {
   estoqueAtacado: number;
   estoqueVarejo: number;
   estoqueTotal: number;
+  valorEstoqueCusto: number;
 }
 
 export interface CurvaResumo {
@@ -444,10 +447,24 @@ export interface CurvaResumo {
   porLinha: CurvaLinhaBucket[];
 }
 
+export interface VendaEstoqueResumoLinha {
+  grupo: CurvaGrupo | 'TOTAL';
+  totalReferencias: number;
+  percentReferencias: number;
+  qtdVendida: number;
+  valorVenda: number;
+  percentValorVenda: number;
+  estoquePecas: number;
+  valorEstoqueCusto: number;
+  percentValorEstoque: number;
+}
+
 export interface CurvaAbcResumoResponse {
   config: { giroDias: number; mesesFechados: number; curvaALimitePercent: number; curvaBLimitePercent: number; curvaCLimitePercent: number };
   totalAnalisadas: number;
+  totalSemVenda: number;
   curvas: CurvaResumo[];
+  resumoVendaEstoque: VendaEstoqueResumoLinha[];
   referencias: ReferenciaAbc[];
 }
 

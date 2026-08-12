@@ -13,6 +13,10 @@ A tabela de Referências ganhou 5 colunas de classificação (Categoria, Linha, 
 
 As colunas "Giro 30D V"/"Giro 30D A" (que mostravam peças vendidas cruas, confuso) viraram "Giro 90D %"/"Giro 30D %" - percentual das vendas do período sobre o estoque atual da referência, mesmo cálculo já usado no relatório Venda do Dia.
 
+No início do painel, um resumo compara a participação de Venda com a participação de Estoque lado a lado, por curva (A/B/C, Itens sem venda e Total) - pedido original da Renata, pra identificar desequilíbrio (ex: Curva A concentrava quase 80% da venda mas só ~70% do estoque, sinal de risco de ruptura).
+
+Referências com estoque mas **sem nenhuma venda no período** agora aparecem na tabela (antes eram descartadas do relatório inteiro) - ficam fora do ranking A/B/C (não faz sentido classificar por venda quem não vendeu) e aparecem no final da lista, com um selo "SV". A tabela também ganhou a coluna "Últ. Entrada", com a data da última entrada de estoque de cada referência.
+
 ## Correção do estoque "inflado" da Fábrica
 
 A Visão Geral estava somando junto com o estoque real da Fábrica um volume grande de **subprodutos** (componentes internos de montagem de conjuntos, ex: "SUBPRODUTO CAMISA CONJUNTO...", nunca vendidos como peça avulsa) e itens de categoria **Embalagem**. Isso inflava o estoque físico da Fábrica em ~221 mil peças fantasmas - a maior parte do número que aparecia na tela.

@@ -1,7 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, FABRICA_BRANCH_CODE, linhaBucket, formatarLancamento } from './relatorioBase.service.js';
+import {
+  OPERACAO_JOIN,
+  SALE_OPERATION_FILTER,
+  QUANTIDADE_COM_SINAL,
+  FABRICA_BRANCH_CODE,
+  linhaBucket,
+  formatarLancamento,
+  getConfig as getRelatorioBaseConfig,
+  getCustoUltimaCompraRows,
+  getUltimaEntradaRows,
+} from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
 
@@ -142,6 +152,12 @@ async function getVendaPorProductCodeMesesFechados(mesesInicio: number, mesesFim
 }
 
 export type CurvaLetra = 'A' | 'B' | 'C';
+// SEM_VENDA = referencia com estoque mas ZERO venda no periodo - antes essas
+// referencias eram simplesmente excluidas do relatorio inteiro (nunca apareciam em
+// lugar nenhum, nem na tabela nem nos totais). Pedido explicito da usuaria: precisam
+// aparecer (sem entrar no ranking/classificacao A/B/C, que so faz sentido pra quem
+// vendeu), justamente pra evidenciar peca parada sem giro nenhum.
+export type CurvaGrupo = CurvaLetra | 'SEM_VENDA';
 
 // Estratificacao de uma curva (A/B/C) por Linha (Básico/Básico Renovável/Coleção, via
 // linhaBucket) - percentDoValorCurva e calculado sobre valorReais (nao sobre
@@ -181,7 +197,8 @@ export interface ReferenciaAbc {
   genero: string | null;
   status: string | null;
   lancamento: string | null;
-  curva: CurvaLetra;
+  ultimaEntrada: string | null;
+  curva: CurvaGrupo;
   rankQtd: number;
   rankCurva: number;
   qtdVendida: number;
@@ -200,6 +217,24 @@ export interface ReferenciaAbc {
   estoqueAtacado: number;
   estoqueVarejo: number;
   estoqueTotal: number;
+  valorEstoqueCusto: number;
+}
+
+// Resumo comparando participacao de venda x estoque por grupo (A/B/C/SEM_VENDA/TOTAL) -
+// pedido da usuaria via planilha Excel: "80% da venda era quase 65% do estoque, a ideia
+// e ter essas participacoes equilibradas, pra nao faltar peca". Percentuais de venda
+// sao calculados sobre o total COM venda; percentuais de estoque sao calculados sobre
+// o total geral (incluindo SEM_VENDA, que so tem estoque mesmo).
+export interface VendaEstoqueResumoLinha {
+  grupo: CurvaGrupo | 'TOTAL';
+  totalReferencias: number;
+  percentReferencias: number;
+  qtdVendida: number;
+  valorVenda: number;
+  percentValorVenda: number;
+  estoquePecas: number;
+  valorEstoqueCusto: number;
+  percentValorEstoque: number;
 }
 
 export interface CurvaResumo {
@@ -220,12 +255,16 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
   // "meses fechados" (ver Input na tela de Configuracoes do PCP).
   const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
 
-  const [identidadeRows, vendaAtual, vendaAnterior, estoqueRows, venda30d] = await Promise.all([
+  const relatorioBaseConfig = await getRelatorioBaseConfig();
+
+  const [identidadeRows, vendaAtual, vendaAnterior, estoqueRows, venda30d, custoRows, ultimaEntradaRows] = await Promise.all([
     getIdentidadeRows(filtro),
     getVendaPorProductCodeMesesFechados(mesesJanela, 0),
     getVendaPorProductCodeMesesFechados(mesesJanela * 2, mesesJanela),
     getEstoqueCanalPorSku(),
     getVenda30DiasPorCanal(),
+    getCustoUltimaCompraRows(relatorioBaseConfig.precoCustoBranchCode, null),
+    getUltimaEntradaRows(null),
   ]);
 
   // Mapa de estoque por SKU
@@ -234,6 +273,18 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     const atual = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
     atual[row.canal] += decimalToNumber(row.estoque);
     estoquePorSku.set(row.product_sku, atual);
+  }
+
+  // Custo (ultima compra, mesma fonte/loja de referencia do Relatorio Base) e ultima
+  // entrada de estoque, por product_code - usados abaixo pra calcular o valor de
+  // estoque a custo e a coluna "ultima entrada" por referencia.
+  const custoPorProductCode = new Map<number, number>();
+  for (const r of custoRows) custoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
+  const ultimaEntradaPorProductCode = new Map<number, Date>();
+  for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
+  const productCodePorSku = new Map<string, number>();
+  for (const row of identidadeRows) {
+    if (row.product_code !== null) productCodePorSku.set(row.product_sku, row.product_code);
   }
 
   // Agrupa SKUs por referencia - categoria/linha/genero/status/lancamento vem do
@@ -257,7 +308,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     porReferencia.set(row.reference_code, ref);
   }
 
-  const brutos: Array<{ referenceCode: string; referenceName: string; categoria: string | null; linha: string | null; genero: string | null; status: string | null; lancamento: string | null; qtdVendida: number; valorReais: number; valorMedioMensal: number; totalSkus: number; qtdAnterior: number; estoqueVarejo: number; estoqueAtacado: number; giro30dVarejo: number; giro30dAtacado: number }> = [];
+  const brutos: Array<{ referenceCode: string; referenceName: string; categoria: string | null; linha: string | null; genero: string | null; status: string | null; lancamento: string | null; ultimaEntrada: Date | null; qtdVendida: number; valorReais: number; valorMedioMensal: number; totalSkus: number; qtdAnterior: number; estoqueVarejo: number; estoqueAtacado: number; valorEstoqueCusto: number; giro30dVarejo: number; giro30dAtacado: number }> = [];
 
   for (const [referenceCode, dados] of porReferencia) {
     let qtdVendida = 0;
@@ -267,6 +318,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     let estoqueAtacado = 0;
     let giro30dVarejo = 0;
     let giro30dAtacado = 0;
+    let ultimaEntrada: Date | null = null;
     for (const pc of dados.productCodes) {
       const atual = vendaAtual.get(pc);
       if (atual) {
@@ -280,14 +332,23 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
         giro30dVarejo += giro.varejo;
         giro30dAtacado += giro.atacado;
       }
+      const entrada = ultimaEntradaPorProductCode.get(pc);
+      if (entrada && (!ultimaEntrada || entrada > ultimaEntrada)) ultimaEntrada = entrada;
     }
-    // Soma estoque de todos os SKUs da referência
+    // Soma estoque (e valor de estoque a custo) de todos os SKUs da referência
+    let valorEstoqueCusto = 0;
     for (const sku of dados.skus) {
       const estoque = estoquePorSku.get(sku) || { varejo: 0, atacado: 0 };
       estoqueVarejo += estoque.varejo;
       estoqueAtacado += estoque.atacado;
+      const productCode = productCodePorSku.get(sku);
+      const custo = productCode !== undefined ? custoPorProductCode.get(productCode) : undefined;
+      if (custo) valorEstoqueCusto += (estoque.varejo + estoque.atacado) * custo;
     }
-    if (qtdVendida <= 0) continue; // so entra quem foi "analisado" (teve venda no periodo)
+    // Antes excluia qualquer referencia sem venda no periodo do relatorio inteiro -
+    // agora só pula quem nao tem venda NEM estoque (referencia irrelevante de fato).
+    // Quem tem estoque mas nao vendeu entra como grupo SEM_VENDA mais abaixo.
+    if (qtdVendida <= 0 && estoqueVarejo + estoqueAtacado <= 0) continue;
     brutos.push({
       referenceCode,
       referenceName: dados.nome,
@@ -296,6 +357,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       genero: dados.genero,
       status: dados.status,
       lancamento: dados.lancamento,
+      ultimaEntrada,
       qtdVendida,
       valorReais,
       valorMedioMensal: valorReais / mesesJanela,
@@ -303,20 +365,24 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       qtdAnterior,
       estoqueVarejo,
       estoqueAtacado,
+      valorEstoqueCusto,
       giro30dVarejo,
       giro30dAtacado,
     });
   }
 
-  const totalAnalisadas = brutos.length;
+  const brutosComVenda = brutos.filter((r) => r.qtdVendida > 0);
+  const brutosSemVenda = brutos.filter((r) => r.qtdVendida <= 0);
+
+  const totalAnalisadas = brutosComVenda.length;
   const curvaALimitePercent = decimalToNumber(config.curvaALimitePercent);
   const curvaBLimitePercent = decimalToNumber(config.curvaBLimitePercent);
   const curvaCLimitePercent = decimalToNumber(config.curvaCLimitePercent);
-  const totalValorGeralBruto = brutos.reduce((s, r) => s + Math.max(0, r.valorMedioMensal), 0);
+  const totalValorGeralBruto = brutosComVenda.reduce((s, r) => s + Math.max(0, r.valorMedioMensal), 0);
 
   const curvaPorReferencia = new Map<string, CurvaLetra>();
   const representatividadePorReferencia = new Map<string, { percent: number; acumulado: number }>();
-  const porValorDesc = [...brutos].sort((a, b) => b.valorMedioMensal - a.valorMedioMensal);
+  const porValorDesc = [...brutosComVenda].sort((a, b) => b.valorMedioMensal - a.valorMedioMensal);
   let acumuladoValor = 0;
   porValorDesc.forEach((r) => {
     const valorBase = Math.max(0, r.valorMedioMensal);
@@ -330,19 +396,18 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     else curvaPorReferencia.set(r.referenceCode, 'C');
   });
 
-  // Ranking geral (todas as referencias analisadas, independente da curva)
-  const porQtdDesc = [...brutos].sort((a, b) => b.qtdVendida - a.qtdVendida);
+  // Ranking geral (so entre quem teve venda - "SEM_VENDA" nao entra em rank nenhum)
+  const porQtdDesc = [...brutosComVenda].sort((a, b) => b.qtdVendida - a.qtdVendida);
   const rankQtdPorReferencia = new Map<string, number>();
   porQtdDesc.forEach((r, i) => rankQtdPorReferencia.set(r.referenceCode, i + 1));
 
   const rankValorPorReferencia = new Map<string, number>();
   porValorDesc.forEach((r, i) => rankValorPorReferencia.set(r.referenceCode, i + 1));
 
-  const referencias: ReferenciaAbc[] = brutos.map((r) => {
+  function mapearReferencia(r: (typeof brutos)[number], curva: CurvaGrupo): ReferenciaAbc {
     const mediaPorSku = r.totalSkus > 0 ? round(r.qtdVendida / r.totalSkus, 0) : 0;
     const mediaPorSkuAnterior = r.totalSkus > 0 ? round(r.qtdAnterior / r.totalSkus, 0) : 0;
     const tendencia: 'up' | 'down' | 'flat' = mediaPorSku > mediaPorSkuAnterior ? 'up' : mediaPorSku < mediaPorSkuAnterior ? 'down' : 'flat';
-
     const estoqueTotal = r.estoqueVarejo + r.estoqueAtacado;
 
     return {
@@ -353,7 +418,8 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       genero: r.genero,
       status: r.status,
       lancamento: formatarLancamento(r.lancamento),
-      curva: curvaPorReferencia.get(r.referenceCode) || 'B',
+      ultimaEntrada: r.ultimaEntrada ? r.ultimaEntrada.toISOString().slice(0, 10) : null,
+      curva,
       rankQtd: rankQtdPorReferencia.get(r.referenceCode) || 0,
       rankCurva: rankValorPorReferencia.get(r.referenceCode) || 0,
       qtdVendida: round(r.qtdVendida, 0),
@@ -371,16 +437,28 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       representatividadeAcumulada: round(representatividadePorReferencia.get(r.referenceCode)?.acumulado || 0, 2),
       estoqueAtacado: round(r.estoqueAtacado, 0),
       estoqueVarejo: round(r.estoqueVarejo, 0),
-      estoqueTotal: round(r.estoqueVarejo + r.estoqueAtacado, 0),
+      estoqueTotal: round(estoqueTotal, 0),
+      valorEstoqueCusto: round(r.valorEstoqueCusto, 2),
     };
-  });
+  }
 
-  referencias.sort((a, b) => a.rankValor - b.rankValor);
+  const referenciasComVenda = brutosComVenda
+    .map((r) => mapearReferencia(r, curvaPorReferencia.get(r.referenceCode) || 'B'))
+    .sort((a, b) => a.rankValor - b.rankValor);
 
-  const totalValorGeral = referencias.reduce((s, r) => s + r.valorReais, 0);
+  // SEM_VENDA nao tem rank de valor pra ordenar - maior estoque primeiro, pra
+  // evidenciar logo de cara a peca parada mais volumosa. Sempre "no final" da lista,
+  // depois de todo mundo que vendeu (pedido explicito da usuaria).
+  const referenciasSemVenda = brutosSemVenda
+    .map((r) => mapearReferencia(r, 'SEM_VENDA'))
+    .sort((a, b) => b.estoqueTotal - a.estoqueTotal);
+
+  const referencias: ReferenciaAbc[] = [...referenciasComVenda, ...referenciasSemVenda];
+
+  const totalValorGeral = referenciasComVenda.reduce((s, r) => s + r.valorReais, 0);
 
   const curvas: CurvaResumo[] = (['A', 'B', 'C'] as CurvaLetra[]).map((curva) => {
-    const doGrupo = referencias.filter((r) => r.curva === curva).sort((a, b) => a.rankValor - b.rankValor);
+    const doGrupo = referenciasComVenda.filter((r) => r.curva === curva).sort((a, b) => a.rankValor - b.rankValor);
     const quantidade = doGrupo.reduce((s, r) => s + r.qtdVendida, 0);
     const valorReais = doGrupo.reduce((s, r) => s + r.valorReais, 0);
     const totalSkus = doGrupo.reduce((s, r) => s + r.totalSkus, 0);
@@ -396,6 +474,38 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     };
   });
 
+  // Resumo Venda x Estoque por grupo (A/B/C/SEM_VENDA/TOTAL) - pedido original da
+  // usuaria via planilha Excel, comparando participacao de venda com participacao de
+  // estoque lado a lado, pra identificar desequilibrio (ex: 80% da venda concentrada
+  // em so 65% do estoque, sinal de risco de ruptura na curva A).
+  const totalReferenciasGeral = referencias.length;
+  const totalEstoquePecasGeral = referencias.reduce((s, r) => s + r.estoqueTotal, 0);
+  const totalValorEstoqueGeral = referencias.reduce((s, r) => s + r.valorEstoqueCusto, 0);
+
+  function montarResumoVendaEstoque(grupo: CurvaGrupo | 'TOTAL', doGrupo: ReferenciaAbc[]): VendaEstoqueResumoLinha {
+    const qtdVendida = doGrupo.reduce((s, r) => s + r.qtdVendida, 0);
+    const valorVenda = doGrupo.reduce((s, r) => s + r.valorReais, 0);
+    const estoquePecas = doGrupo.reduce((s, r) => s + r.estoqueTotal, 0);
+    const valorEstoqueCusto = doGrupo.reduce((s, r) => s + r.valorEstoqueCusto, 0);
+    return {
+      grupo,
+      totalReferencias: doGrupo.length,
+      percentReferencias: totalReferenciasGeral > 0 ? round((doGrupo.length / totalReferenciasGeral) * 100, 2) : 0,
+      qtdVendida: round(qtdVendida, 0),
+      valorVenda: round(valorVenda, 2),
+      percentValorVenda: totalValorGeral > 0 ? round((valorVenda / totalValorGeral) * 100, 2) : 0,
+      estoquePecas: round(estoquePecas, 0),
+      valorEstoqueCusto: round(valorEstoqueCusto, 2),
+      percentValorEstoque: totalValorEstoqueGeral > 0 ? round((valorEstoqueCusto / totalValorEstoqueGeral) * 100, 2) : 0,
+    };
+  }
+
+  const resumoVendaEstoque: VendaEstoqueResumoLinha[] = [
+    ...(['A', 'B', 'C'] as CurvaLetra[]).map((curva) => montarResumoVendaEstoque(curva, referenciasComVenda.filter((r) => r.curva === curva))),
+    montarResumoVendaEstoque('SEM_VENDA', referenciasSemVenda),
+    montarResumoVendaEstoque('TOTAL', referencias),
+  ];
+
   return {
     config: {
       giroDias: mesesJanela * 30,
@@ -405,7 +515,9 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       curvaCLimitePercent,
     },
     totalAnalisadas,
+    totalSemVenda: referenciasSemVenda.length,
     curvas,
+    resumoVendaEstoque,
     referencias,
   };
 }

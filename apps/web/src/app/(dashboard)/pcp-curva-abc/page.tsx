@@ -18,17 +18,28 @@ import {
   ReferenciaAbc,
   SkuAbc,
   CurvaLetra,
+  CurvaGrupo,
   CurvaLinhaBucket,
+  VendaEstoqueResumoLinha,
   CurvaAbcSkusResponse,
   PcpClassificacaoDimensao,
 } from '@/lib/pcpApi';
-import { cn, formatMoney, formatNumber } from '@/lib/utils';
+import { cn, formatMoney, formatNumber, formatDate } from '@/lib/utils';
 import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 
-const CURVA_STYLE: Record<CurvaLetra, { border: string; bg: string; text: string; badge: string }> = {
-  A: { border: 'border-l-green-500', bg: 'bg-green-50', text: 'text-green-700', badge: 'bg-green-100 text-green-700' },
-  B: { border: 'border-l-gray-400', bg: 'bg-gray-50', text: 'text-gray-700', badge: 'bg-gray-200 text-gray-700' },
-  C: { border: 'border-l-red-400', bg: 'bg-red-50', text: 'text-red-700', badge: 'bg-red-100 text-red-700' },
+const CURVA_STYLE: Record<CurvaGrupo, { border: string; bg: string; text: string; badge: string; label: string; badgeLabel: string }> = {
+  A: { border: 'border-l-green-500', bg: 'bg-green-50', text: 'text-green-700', badge: 'bg-green-100 text-green-700', label: 'A', badgeLabel: 'A' },
+  B: { border: 'border-l-gray-400', bg: 'bg-gray-50', text: 'text-gray-700', badge: 'bg-gray-200 text-gray-700', label: 'B', badgeLabel: 'B' },
+  C: { border: 'border-l-red-400', bg: 'bg-red-50', text: 'text-red-700', badge: 'bg-red-100 text-red-700', label: 'C', badgeLabel: 'C' },
+  SEM_VENDA: { border: 'border-l-amber-400', bg: 'bg-amber-50', text: 'text-amber-700', badge: 'bg-amber-100 text-amber-700', label: 'Sem venda', badgeLabel: 'SV' },
+};
+
+const RESUMO_GRUPO_LABEL: Record<VendaEstoqueResumoLinha['grupo'], string> = {
+  A: 'Curva A',
+  B: 'Curva B',
+  C: 'Curva C',
+  SEM_VENDA: 'Itens sem venda',
+  TOTAL: 'Total',
 };
 
 const SORT_OPTIONS = [
@@ -104,7 +115,8 @@ interface ItemCurva {
   genero: string | null;
   status: string | null;
   lancamento: string | null;
-  curva: CurvaLetra;
+  ultimaEntrada: string | null;
+  curva: CurvaGrupo;
   rankValor: number;
   rankQtd: number;
   qtdVendida: number;
@@ -121,6 +133,7 @@ interface ItemCurva {
   estoqueAtacado: number;
   estoqueVarejo: number;
   estoqueTotal: number;
+  valorEstoqueCusto: number;
 }
 
 function referenciaParaItem(r: ReferenciaAbc): ItemCurva {
@@ -133,6 +146,7 @@ function referenciaParaItem(r: ReferenciaAbc): ItemCurva {
     genero: r.genero,
     status: r.status,
     lancamento: r.lancamento,
+    ultimaEntrada: r.ultimaEntrada,
     curva: r.curva,
     rankValor: r.rankValor,
     rankQtd: r.rankQtd,
@@ -150,6 +164,7 @@ function referenciaParaItem(r: ReferenciaAbc): ItemCurva {
     estoqueAtacado: r.estoqueAtacado,
     estoqueVarejo: r.estoqueVarejo,
     estoqueTotal: r.estoqueTotal,
+    valorEstoqueCusto: r.valorEstoqueCusto,
   };
 }
 
@@ -163,6 +178,7 @@ function skuParaItem(s: SkuAbc): ItemCurva {
     genero: null,
     status: null,
     lancamento: null,
+    ultimaEntrada: null,
     curva: s.curva,
     rankValor: s.rankValor,
     rankQtd: s.rankQtd,
@@ -180,6 +196,7 @@ function skuParaItem(s: SkuAbc): ItemCurva {
     estoqueAtacado: s.estoqueAtacado,
     estoqueVarejo: s.estoqueVarejo,
     estoqueTotal: s.estoqueTotal,
+    valorEstoqueCusto: 0,
   };
 }
 
@@ -243,6 +260,55 @@ function LinhaStratificacaoCard({ resumo }: { resumo: CurvaResumoItem }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+// Compara participacao de venda com participacao de estoque lado a lado, por grupo
+// (A/B/C/Sem venda/Total) - pedido original da usuaria (planilha Excel): "80% da
+// venda era quase 65% do estoque, a ideia e ter essas participacoes equilibradas, pra
+// nao faltar peca". So existe no modo "por referencia" (SEM_VENDA e Valor Estq Custo
+// nao sao calculados no modo SKU).
+function VendaEstoqueResumoTable({ linhas }: { linhas: VendaEstoqueResumoLinha[] }) {
+  return (
+    <Table className="overflow-x-auto" tableClassName="text-xs">
+      <TableHead>
+        <TableRow>
+          <TableCell isHeader>Curva</TableCell>
+          <TableCell isHeader align="right">Ref</TableCell>
+          <TableCell isHeader align="right">Part</TableCell>
+          <TableCell isHeader align="right" className="bg-purple-50">Peças (venda)</TableCell>
+          <TableCell isHeader align="right" className="bg-purple-50">Valor Venda</TableCell>
+          <TableCell isHeader align="right" className="bg-purple-50">Part V</TableCell>
+          <TableCell isHeader align="right" className="bg-blue-50">Estoq Peças</TableCell>
+          <TableCell isHeader align="right" className="bg-blue-50">Valor Estoque (custo)</TableCell>
+          <TableCell isHeader align="right" className="bg-blue-50">Part E</TableCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {linhas.map((l) => {
+          const isTotal = l.grupo === 'TOTAL';
+          const style = l.grupo === 'TOTAL' ? null : CURVA_STYLE[l.grupo];
+          return (
+            <TableRow key={l.grupo} isHighlighted={isTotal}>
+              <TableCell className={cn('!py-2 font-semibold', isTotal ? 'font-bold' : style?.text)}>
+                {!isTotal && (
+                  <span className={cn('inline-block w-2 h-2 rounded-full mr-1.5', style?.badge)} />
+                )}
+                {RESUMO_GRUPO_LABEL[l.grupo]}
+              </TableCell>
+              <TableCell align="right" className="!py-2">{formatNumber(l.totalReferencias)}</TableCell>
+              <TableCell align="right" className="!py-2">{l.percentReferencias.toFixed(2)}%</TableCell>
+              <TableCell align="right" className="bg-purple-50/50 !py-2">{l.grupo === 'SEM_VENDA' ? '—' : formatNumber(l.qtdVendida)}</TableCell>
+              <TableCell align="right" className="bg-purple-50/50 !py-2">{l.grupo === 'SEM_VENDA' ? '—' : formatMoney(l.valorVenda)}</TableCell>
+              <TableCell align="right" className="bg-purple-50/50 !py-2 font-semibold">{l.grupo === 'SEM_VENDA' ? '—' : `${l.percentValorVenda.toFixed(2)}%`}</TableCell>
+              <TableCell align="right" className="bg-blue-50/50 !py-2">{formatNumber(l.estoquePecas)}</TableCell>
+              <TableCell align="right" className="bg-blue-50/50 !py-2">{formatMoney(l.valorEstoqueCusto)}</TableCell>
+              <TableCell align="right" className="bg-blue-50/50 !py-2 font-semibold">{l.percentValorEstoque.toFixed(2)}%</TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -380,6 +446,11 @@ export default function PcpCurvaAbcPage() {
       lista = lista.filter((r) => r.labelPrincipal.toLowerCase().includes(termo) || r.labelSecundaria.toLowerCase().includes(termo));
     }
     return [...lista].sort((a, b) => {
+      // Itens SEM_VENDA nao entram na ordenacao por venda/rank escolhida (nao tem
+      // rank nenhum) - ficam sempre no final da lista, independente da coluna/direcao
+      // de ordenacao ativa (pedido explicito da usuaria: "no final").
+      if (a.curva === 'SEM_VENDA' && b.curva !== 'SEM_VENDA') return 1;
+      if (b.curva === 'SEM_VENDA' && a.curva !== 'SEM_VENDA') return -1;
       const va = a[ordenarPor] ?? 0;
       const vb = b[ordenarPor] ?? 0;
       const cmp = (typeof va === 'number' && typeof vb === 'number')
@@ -409,6 +480,7 @@ export default function PcpCurvaAbcPage() {
         { key: 'genero', header: 'GÊNERO', width: 12, type: 'text' },
         { key: 'status', header: 'STATUS', width: 14, type: 'text' },
         { key: 'lancamento', header: 'LANÇAMENTO', width: 12, type: 'text' },
+        { key: 'ultimaEntrada', header: 'ÚLT. ENTRADA', width: 14, type: 'text' },
       );
     }
 
@@ -445,6 +517,7 @@ export default function PcpCurvaAbcPage() {
       genero: item.genero,
       status: item.status,
       lancamento: item.lancamento,
+      ultimaEntrada: item.ultimaEntrada ? formatDate(item.ultimaEntrada) : '',
       curva: item.curva,
       rankValor: item.rankValor,
       representatividadeValor: item.representatividadeValor,
@@ -472,6 +545,7 @@ export default function PcpCurvaAbcPage() {
       genero: '',
       status: '',
       lancamento: '',
+      ultimaEntrada: '',
       curva: '',
       rankValor: '',
       representatividadeValor: '',
@@ -518,6 +592,22 @@ export default function PcpCurvaAbcPage() {
         )}
       </div>
 
+      {visao === 'referencia' && data && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-600 mb-2">Resumo Venda × Estoque por curva</h2>
+          <Card>
+            {isLoading ? (
+              <p className="text-sm text-gray-500 py-4 text-center">Carregando...</p>
+            ) : (
+              <VendaEstoqueResumoTable linhas={data.resumoVendaEstoque} />
+            )}
+            <p className="text-xs text-gray-400 mt-2 pt-2 border-t">
+              {data.totalAnalisadas} referencias com venda no periodo + {data.totalSemVenda} sem venda (mas com estoque) = {data.totalAnalisadas + data.totalSemVenda} no total.
+            </p>
+          </Card>
+        </div>
+      )}
+
       {(visao === 'referencia' ? data : dataSku) && (
         <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
           <p className="text-sm font-medium text-gray-800">Regras de classificacao</p>
@@ -526,6 +616,7 @@ export default function PcpCurvaAbcPage() {
             <li><strong>Curva A:</strong> ate {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% do valor medio mensal acumulado.</li>
             <li><strong>Curva B:</strong> acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaALimitePercent}% e ate {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% do valor acumulado.</li>
             <li><strong>Curva C:</strong> restante, acima de {(visao === 'referencia' ? data : dataSku)?.config.curvaBLimitePercent}% do valor acumulado.</li>
+            <li><strong>Sem venda:</strong> tem estoque mas nao vendeu no periodo - fica de fora do ranking A/B/C (nao faz sentido classificar por venda quem nao vendeu), aparece no final da tabela.</li>
           </ul>
           <p className="text-xs text-gray-400 mt-2">
             {visao === 'referencia' ? data?.totalAnalisadas : dataSku?.totalAnalisadas} {visao === 'referencia' ? 'referencias' : 'SKUs'} analisados (com venda no periodo).
@@ -628,7 +719,7 @@ export default function PcpCurvaAbcPage() {
           <TableHead className="sticky top-0 z-10">
             <TableRow>
               <TableCell isHeader rowSpan={2} className="!px-2 !py-2">{visao === 'referencia' ? 'Referencia' : 'Referencia - Cor - Tamanho'}</TableCell>
-              {visao === 'referencia' && <TableCell isHeader colSpan={5} align="center" className="bg-amber-50 border-b-0 !px-2 !py-2">Classificação</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader colSpan={6} align="center" className="bg-amber-50 border-b-0 !px-2 !py-2">Classificação</TableCell>}
               <TableCell isHeader rowSpan={2} align="center" className="!px-1 !py-2">Curva</TableCell>
               <TableCell isHeader colSpan={5} align="center" className="border-b-0 !px-2 !py-2">Valor</TableCell>
               <TableCell isHeader colSpan={visao === 'referencia' ? 3 : 1} align="center" className="border-b-0 !px-2 !py-2">Quantidade</TableCell>
@@ -641,6 +732,7 @@ export default function PcpCurvaAbcPage() {
               {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Gênero</TableCell>}
               {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Status</TableCell>}
               {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Lançamento</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Últ. Entrada</TableCell>}
               <ThSortPcp label="Rank" sortKeyName="rankValor" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
               <ThSortPcp label="%" sortKeyName="representatividadeValor" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
               <ThSortPcp label="% Acum." sortKeyName="representatividadeAcumulada" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
@@ -661,11 +753,11 @@ export default function PcpCurvaAbcPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={visao === 'referencia' ? 20 : 13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 21 : 13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
             ) : itensFiltrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={visao === 'referencia' ? 20 : 13} align="center" className="py-8 text-gray-500">Nenhum item encontrado</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 21 : 13} align="center" className="py-8 text-gray-500">Nenhum item encontrado</TableCell>
               </TableRow>
             ) : (
               <>
@@ -680,17 +772,18 @@ export default function PcpCurvaAbcPage() {
                     {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.genero || '-'}</TableCell>}
                     {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.status || '-'}</TableCell>}
                     {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.lancamento || '—'}</TableCell>}
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '—'}</TableCell>}
                     <TableCell align="center" className="!px-1 !py-2">
-                      <span className={cn('inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold', CURVA_STYLE[r.curva].badge)}>
-                        {r.curva}
+                      <span className={cn('inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[9px] font-bold', CURVA_STYLE[r.curva].badge)}>
+                        {CURVA_STYLE[r.curva].badgeLabel}
                       </span>
                     </TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2">#{r.rankValor}</TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2">{r.representatividadeValor.toFixed(2)}%</TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2">{r.representatividadeAcumulada.toFixed(2)}%</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2">{r.curva === 'SEM_VENDA' ? '—' : `#${r.rankValor}`}</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2">{r.curva === 'SEM_VENDA' ? '—' : `${r.representatividadeValor.toFixed(2)}%`}</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2">{r.curva === 'SEM_VENDA' ? '—' : `${r.representatividadeAcumulada.toFixed(2)}%`}</TableCell>
                     <TableCell align="right" className="!px-1.5 !py-2">{formatMoney(r.valorMedioMensal)}</TableCell>
                     <TableCell align="right" className="!px-1.5 !py-2">{formatMoney(r.valorReais)}</TableCell>
-                    <TableCell align="right" className="!px-1.5 !py-2">#{r.rankQtd}</TableCell>
+                    <TableCell align="right" className="!px-1.5 !py-2">{r.curva === 'SEM_VENDA' ? '—' : `#${r.rankQtd}`}</TableCell>
                     {visao === 'referencia' && <TableCell align="right" className="!px-1.5 !py-2">{formatNumber(r.totalSkus || 0)}</TableCell>}
                     {visao === 'referencia' && (
                       <TableCell align="right" className="!px-1.5 !py-2">
@@ -707,7 +800,7 @@ export default function PcpCurvaAbcPage() {
                   </TableRow>
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-10">
-                  <TableCell colSpan={visao === 'referencia' ? 7 : 2} className="!px-2 !py-2 font-bold">TOTAL ({itensFiltrados.length} itens)</TableCell>
+                  <TableCell colSpan={visao === 'referencia' ? 8 : 2} className="!px-2 !py-2 font-bold">TOTAL ({itensFiltrados.length} itens)</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
