@@ -18,6 +18,7 @@ import {
   ReferenciaAbc,
   SkuAbc,
   CurvaLetra,
+  CurvaLinhaBucket,
   CurvaAbcSkusResponse,
   PcpClassificacaoDimensao,
 } from '@/lib/pcpApi';
@@ -98,13 +99,18 @@ interface ItemCurva {
   key: string;
   labelPrincipal: string;
   labelSecundaria: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  status: string | null;
+  lancamento: string | null;
   curva: CurvaLetra;
   rankValor: number;
   rankQtd: number;
   qtdVendida: number;
   mediaMensal: number;
-  giro30dVarejo: number;
-  giro30dAtacado: number;
+  giro90dPercent: number | null;
+  giro30dPercent: number | null;
   valorReais: number;
   valorMedioMensal: number;
   representatividadeValor: number;
@@ -122,13 +128,18 @@ function referenciaParaItem(r: ReferenciaAbc): ItemCurva {
     key: r.referenceCode,
     labelPrincipal: r.referenceCode,
     labelSecundaria: r.referenceName,
+    categoria: r.categoria,
+    linha: r.linha,
+    genero: r.genero,
+    status: r.status,
+    lancamento: r.lancamento,
     curva: r.curva,
     rankValor: r.rankValor,
     rankQtd: r.rankQtd,
     qtdVendida: r.qtdVendida,
     mediaMensal: r.mediaMensal,
-    giro30dVarejo: r.giro30dVarejo,
-    giro30dAtacado: r.giro30dAtacado,
+    giro90dPercent: r.giro90dPercent,
+    giro30dPercent: r.giro30dPercent,
     valorReais: r.valorReais,
     valorMedioMensal: r.valorMedioMensal,
     representatividadeValor: r.representatividadeValor,
@@ -147,13 +158,18 @@ function skuParaItem(s: SkuAbc): ItemCurva {
     key: s.sku,
     labelPrincipal: s.refCorTam,
     labelSecundaria: s.sku,
+    categoria: null,
+    linha: null,
+    genero: null,
+    status: null,
+    lancamento: null,
     curva: s.curva,
     rankValor: s.rankValor,
     rankQtd: s.rankQtd,
     qtdVendida: s.qtdVendida,
     mediaMensal: s.mediaMensal,
-    giro30dVarejo: s.giro30dVarejo,
-    giro30dAtacado: s.giro30dAtacado,
+    giro90dPercent: s.giro90dPercent,
+    giro30dPercent: s.giro30dPercent,
     valorReais: s.valorReais,
     valorMedioMensal: s.valorMedioMensal,
     representatividadeValor: s.representatividadeValor,
@@ -176,7 +192,7 @@ interface CurvaResumoItem {
   totalSkus: number | null;
   mediaMensal: number;
   percentDoTotal: number;
-  ultimo: ItemCurva | null;
+  porLinha: CurvaLinhaBucket[];
 }
 
 function CurvaCard({ resumo }: { resumo: CurvaResumoItem }) {
@@ -212,26 +228,20 @@ function CurvaCard({ resumo }: { resumo: CurvaResumoItem }) {
   );
 }
 
-function UltimaRefCard({ resumo }: { resumo: CurvaResumoItem }) {
+function LinhaStratificacaoCard({ resumo }: { resumo: CurvaResumoItem }) {
   const style = CURVA_STYLE[resumo.curva];
-  const item = resumo.ultimo;
   return (
     <Card className={cn('border-l-4', style.border)}>
-      <p className="text-xs text-gray-400 uppercase tracking-wide">Ultimo item Curva {resumo.curva}</p>
-      {item ? (
-        <>
-          <p className={cn('text-lg font-bold mt-1', style.text)}>{item.labelPrincipal}</p>
-          <p className="text-xs text-gray-500 truncate" title={item.labelSecundaria}>{item.labelSecundaria}</p>
-          <p className="text-xs text-gray-400 mt-1">
-            {formatMoney(item.valorMedioMensal)} media mensal | {formatNumber(item.qtdVendida)} unidades
-          </p>
-          <p className="text-xs text-gray-400">
-            Rank Valor #{item.rankValor} | Acum. {item.representatividadeAcumulada.toFixed(2)}%
-          </p>
-        </>
-      ) : (
-        <p className="text-sm text-gray-400 mt-2">Sem itens nessa curva</p>
-      )}
+      <h3 className={cn('font-bold text-sm mb-2', style.text)}>Curva {resumo.curva} por Linha</h3>
+      <div className="space-y-1.5">
+        {resumo.porLinha.map((b) => (
+          <div key={b.bucket} className="flex items-center justify-between text-xs gap-2">
+            <span className="text-gray-600 truncate">{b.bucket}</span>
+            <span className="text-gray-400 whitespace-nowrap">{formatNumber(b.quantidade)} refs</span>
+            <span className="font-semibold text-gray-800 whitespace-nowrap">{b.percentDoValorCurva.toFixed(1)}% do valor</span>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
@@ -342,7 +352,7 @@ export default function PcpCurvaAbcPage() {
         totalSkus: c.totalSkus,
         mediaMensal: c.mediaMensal,
         percentDoTotal: c.percentDoTotal,
-        ultimo: c.ultimaReferencia ? referenciaParaItem(c.ultimaReferencia) : null,
+        porLinha: c.porLinha,
       }));
     }
     return (dataSku?.curvas || []).map((c) => ({
@@ -354,7 +364,7 @@ export default function PcpCurvaAbcPage() {
       totalSkus: null,
       mediaMensal: c.mediaMensal,
       percentDoTotal: c.percentDoTotal,
-      ultimo: c.ultimoItem ? skuParaItem(c.ultimoItem) : null,
+      porLinha: c.porLinha,
     }));
   }, [visao, data, dataSku]);
 
@@ -390,6 +400,19 @@ export default function PcpCurvaAbcPage() {
     const colunas: ExcelColumn[] = [
       { key: 'labelPrincipal', header: visao === 'referencia' ? 'REFERÊNCIA' : 'REF-COR-TAM', width: 18, type: 'text' },
       { key: 'labelSecundaria', header: visao === 'referencia' ? 'DESCRIÇÃO' : 'SKU', width: 30, type: 'text' },
+    ];
+
+    if (visao === 'referencia') {
+      colunas.push(
+        { key: 'categoria', header: 'CATEGORIA', width: 14, type: 'text' },
+        { key: 'linha', header: 'LINHA', width: 14, type: 'text' },
+        { key: 'genero', header: 'GÊNERO', width: 12, type: 'text' },
+        { key: 'status', header: 'STATUS', width: 14, type: 'text' },
+        { key: 'lancamento', header: 'LANÇAMENTO', width: 12, type: 'text' },
+      );
+    }
+
+    colunas.push(
       { key: 'curva', header: 'CURVA', width: 8, type: 'text' },
       { key: 'rankValor', header: 'RANK VALOR', width: 12, type: 'number' },
       { key: 'representatividadeValor', header: '%', width: 8, type: 'number' },
@@ -397,7 +420,7 @@ export default function PcpCurvaAbcPage() {
       { key: 'valorMedioMensal', header: 'MÉDIA R$', width: 14, type: 'number' },
       { key: 'valorReais', header: 'VALOR 3M R$', width: 14, type: 'number' },
       { key: 'rankQtd', header: 'RANK QTD', width: 10, type: 'number' },
-    ];
+    );
 
     if (visao === 'referencia') {
       colunas.push({ key: 'totalSkus', header: 'SKUS', width: 8, type: 'number' });
@@ -407,8 +430,8 @@ export default function PcpCurvaAbcPage() {
     colunas.push(
       { key: 'qtdVendida', header: 'QTD 3M', width: 10, type: 'number' },
       { key: 'mediaMensal', header: 'MÉD/MÊS', width: 10, type: 'number' },
-      { key: 'giro30dVarejo', header: 'GIRO 30D V', width: 12, type: 'number' },
-      { key: 'giro30dAtacado', header: 'GIRO 30D A', width: 12, type: 'number' },
+      { key: 'giro90dPercent', header: 'GIRO 90D %', width: 12, type: 'number' },
+      { key: 'giro30dPercent', header: 'GIRO 30D %', width: 12, type: 'number' },
       { key: 'estoqueTotal', header: 'EST. TOTAL', width: 12, type: 'number' },
       { key: 'estoqueVarejo', header: 'EST. VAREJO', width: 12, type: 'number' },
       { key: 'estoqueAtacado', header: 'EST. ATACADO', width: 14, type: 'number' },
@@ -417,6 +440,11 @@ export default function PcpCurvaAbcPage() {
     const dados = itensFiltrados.map(item => ({
       labelPrincipal: item.labelPrincipal,
       labelSecundaria: item.labelSecundaria,
+      categoria: item.categoria,
+      linha: item.linha,
+      genero: item.genero,
+      status: item.status,
+      lancamento: item.lancamento,
       curva: item.curva,
       rankValor: item.rankValor,
       representatividadeValor: item.representatividadeValor,
@@ -428,8 +456,8 @@ export default function PcpCurvaAbcPage() {
       mediaPorSku: item.mediaPorSku || 0,
       qtdVendida: item.qtdVendida,
       mediaMensal: item.mediaMensal,
-      giro30dVarejo: item.giro30dVarejo,
-      giro30dAtacado: item.giro30dAtacado,
+      giro90dPercent: item.giro90dPercent,
+      giro30dPercent: item.giro30dPercent,
       estoqueTotal: item.estoqueTotal,
       estoqueVarejo: item.estoqueVarejo,
       estoqueAtacado: item.estoqueAtacado,
@@ -439,6 +467,11 @@ export default function PcpCurvaAbcPage() {
     const totais: Record<string, number | string> = {
       labelPrincipal: `TOTAL (${itensFiltrados.length} itens)`,
       labelSecundaria: '',
+      categoria: '',
+      linha: '',
+      genero: '',
+      status: '',
+      lancamento: '',
       curva: '',
       rankValor: '',
       representatividadeValor: '',
@@ -450,8 +483,8 @@ export default function PcpCurvaAbcPage() {
       mediaPorSku: '',
       qtdVendida: itensFiltrados.reduce((sum, r) => sum + r.qtdVendida, 0),
       mediaMensal: itensFiltrados.reduce((sum, r) => sum + r.mediaMensal, 0),
-      giro30dVarejo: itensFiltrados.reduce((sum, r) => sum + r.giro30dVarejo, 0),
-      giro30dAtacado: itensFiltrados.reduce((sum, r) => sum + r.giro30dAtacado, 0),
+      giro90dPercent: '',
+      giro30dPercent: '',
       estoqueTotal: itensFiltrados.reduce((sum, r) => sum + r.estoqueTotal, 0),
       estoqueVarejo: itensFiltrados.reduce((sum, r) => sum + r.estoqueVarejo, 0),
       estoqueAtacado: itensFiltrados.reduce((sum, r) => sum + r.estoqueAtacado, 0),
@@ -510,11 +543,11 @@ export default function PcpCurvaAbcPage() {
       </div>
 
       <div>
-        <h2 className="text-sm font-semibold text-gray-600 mb-2">Ultimo item por curva</h2>
+        <h2 className="text-sm font-semibold text-gray-600 mb-2">Estratificação por Linha</h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {isLoading || curvasNormalizadas.length === 0
             ? [1, 2, 3].map((i) => <Card key={i} className="h-24 animate-pulse bg-gray-50"><span /></Card>)
-            : curvasNormalizadas.map((c) => <UltimaRefCard key={c.curva} resumo={c} />)}
+            : curvasNormalizadas.map((c) => <LinhaStratificacaoCard key={c.curva} resumo={c} />)}
         </div>
       </div>
 
@@ -595,13 +628,19 @@ export default function PcpCurvaAbcPage() {
           <TableHead className="sticky top-0 z-10">
             <TableRow>
               <TableCell isHeader rowSpan={2} className="!px-2 !py-2">{visao === 'referencia' ? 'Referencia' : 'Referencia - Cor - Tamanho'}</TableCell>
+              {visao === 'referencia' && <TableCell isHeader colSpan={5} align="center" className="bg-amber-50 border-b-0 !px-2 !py-2">Classificação</TableCell>}
               <TableCell isHeader rowSpan={2} align="center" className="!px-1 !py-2">Curva</TableCell>
               <TableCell isHeader colSpan={5} align="center" className="border-b-0 !px-2 !py-2">Valor</TableCell>
               <TableCell isHeader colSpan={visao === 'referencia' ? 3 : 1} align="center" className="border-b-0 !px-2 !py-2">Quantidade</TableCell>
-              <TableCell isHeader colSpan={4} align="center" className="bg-purple-50 border-b-0 !px-2 !py-2">Giro (peças)</TableCell>
+              <TableCell isHeader colSpan={4} align="center" className="bg-purple-50 border-b-0 !px-2 !py-2">Giro (% estoque)</TableCell>
               <TableCell isHeader colSpan={3} align="center" className="bg-blue-50 border-b-0 !px-2 !py-2">Estoque (peças)</TableCell>
             </TableRow>
             <TableRow>
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Categoria</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Linha</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Gênero</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Status</TableCell>}
+              {visao === 'referencia' && <TableCell isHeader className="bg-amber-50 !px-1.5 !py-2">Lançamento</TableCell>}
               <ThSortPcp label="Rank" sortKeyName="rankValor" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
               <ThSortPcp label="%" sortKeyName="representatividadeValor" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
               <ThSortPcp label="% Acum." sortKeyName="representatividadeAcumulada" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />
@@ -612,8 +651,8 @@ export default function PcpCurvaAbcPage() {
               {visao === 'referencia' && <ThSortPcp label="Méd/SKU" sortKeyName="mediaPorSku" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="!px-1.5 !py-2" />}
               <ThSortPcp label="3m" sortKeyName="qtdVendida" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
               <ThSortPcp label="méd/m" sortKeyName="mediaMensal" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
-              <ThSortPcp label="30d V" sortKeyName="giro30dVarejo" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
-              <ThSortPcp label="30d A" sortKeyName="giro30dAtacado" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
+              <ThSortPcp label="90D %" sortKeyName="giro90dPercent" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
+              <ThSortPcp label="30D %" sortKeyName="giro30dPercent" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-purple-50 !px-1.5 !py-2" />
               <ThSortPcp label="Total" sortKeyName="estoqueTotal" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-blue-50 !px-1.5 !py-2" />
               <ThSortPcp label="Varejo" sortKeyName="estoqueVarejo" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-blue-50 !px-1.5 !py-2" />
               <ThSortPcp label="Atac." sortKeyName="estoqueAtacado" sortKey={ordenarPor} sortDir={sortDir} onSort={handleSort} align="right" className="bg-blue-50 !px-1.5 !py-2" />
@@ -622,11 +661,11 @@ export default function PcpCurvaAbcPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={visao === 'referencia' ? 15 : 13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 20 : 13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
             ) : itensFiltrados.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={visao === 'referencia' ? 15 : 13} align="center" className="py-8 text-gray-500">Nenhum item encontrado</TableCell>
+                <TableCell colSpan={visao === 'referencia' ? 20 : 13} align="center" className="py-8 text-gray-500">Nenhum item encontrado</TableCell>
               </TableRow>
             ) : (
               <>
@@ -636,6 +675,11 @@ export default function PcpCurvaAbcPage() {
                       <span className="font-medium text-gray-800">{r.labelPrincipal}</span>
                       <span className="block text-[9px] text-gray-400 truncate max-w-[180px]" title={r.labelSecundaria}>{r.labelSecundaria}</span>
                     </TableCell>
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.categoria || '-'}</TableCell>}
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.linha || '-'}</TableCell>}
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.genero || '-'}</TableCell>}
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.status || '-'}</TableCell>}
+                    {visao === 'referencia' && <TableCell className="bg-amber-50/50 !px-1.5 !py-2">{r.lancamento || '—'}</TableCell>}
                     <TableCell align="center" className="!px-1 !py-2">
                       <span className={cn('inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold', CURVA_STYLE[r.curva].badge)}>
                         {r.curva}
@@ -655,15 +699,15 @@ export default function PcpCurvaAbcPage() {
                     )}
                     <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{formatNumber(r.qtdVendida)}</TableCell>
                     <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{formatNumber(r.mediaMensal)}</TableCell>
-                    <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{formatNumber(r.giro30dVarejo)}</TableCell>
-                    <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{formatNumber(r.giro30dAtacado)}</TableCell>
+                    <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{r.giro90dPercent === null ? '—' : `${r.giro90dPercent.toFixed(1)}%`}</TableCell>
+                    <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2">{r.giro30dPercent === null ? '—' : `${r.giro30dPercent.toFixed(1)}%`}</TableCell>
                     <TableCell align="right" className="bg-blue-50 font-semibold !px-1.5 !py-2">{formatNumber(r.estoqueTotal)}</TableCell>
                     <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2">{formatNumber(r.estoqueVarejo)}</TableCell>
                     <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2">{formatNumber(r.estoqueAtacado)}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-10">
-                  <TableCell colSpan={2} className="!px-2 !py-2 font-bold">TOTAL ({itensFiltrados.length} itens)</TableCell>
+                  <TableCell colSpan={visao === 'referencia' ? 7 : 2} className="!px-2 !py-2 font-bold">TOTAL ({itensFiltrados.length} itens)</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
@@ -674,8 +718,8 @@ export default function PcpCurvaAbcPage() {
                   {visao === 'referencia' && <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>}
                   <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.qtdVendida, 0))}</TableCell>
                   <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.mediaMensal, 0))}</TableCell>
-                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.giro30dVarejo, 0))}</TableCell>
-                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.giro30dAtacado, 0))}</TableCell>
+                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">-</TableCell>
+                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="bg-blue-50 font-semibold !px-1.5 !py-2">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueTotal, 0))}</TableCell>
                   <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueVarejo, 0))}</TableCell>
                   <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueAtacado, 0))}</TableCell>

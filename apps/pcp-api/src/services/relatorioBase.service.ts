@@ -414,11 +414,22 @@ function buildRefCorTam(referenceCode: string, cor: string, tamanho: string): st
 // "MM/AAAA" pra exibicao, sem inventar data (nao existe timestamp exato de lancamento,
 // so o mes/ano). "012019" (sem espaco, ~20mil SKUs) parece um valor default/generico do
 // TOTVS pra produto sem classificacao de lancamento real - tratado como null.
-function formatarLancamento(valor: string | null): string | null {
+export function formatarLancamento(valor: string | null): string | null {
   if (!valor) return null;
   const match = valor.trim().match(/^(\d{2})\s+(\d{4})$/);
   if (!match) return null;
   return `${match[1]}/${match[2]}`;
+}
+
+// Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
+// (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
+// matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
+export function linhaBucket(linha: string | null): string | null {
+  const l = linha?.trim().toUpperCase();
+  if (l === 'BASICA') return 'Básico';
+  if (l === 'BASICA RENOVAVEL') return 'Básico Renovável';
+  if (l === 'STYLE') return 'Coleção';
+  return null;
 }
 
 function buildIdentidadeFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
@@ -458,6 +469,13 @@ function filtroProductSku(skus: string[] | null): Prisma.Sql {
   return Prisma.sql`AND product_sku IN (${Prisma.join(skus)})`;
 }
 
+// product_code >= 1000000 e convencao do TOTVS pra SUBPRODUTO (componente interno de
+// montagem de um conjunto, ex "SUBPRODUTO CAMISA CONJUNTO..." com reference_code "SP
+// ..."), nao item vendavel - confirmado com o time (Marcelo) que isso so existe na
+// Fabrica e e a causa principal do estoque "inflado" la (~97% do estoque fisico da
+// Fabrica era subproduto, nao produto real). is_finished_product sozinho nao pega
+// isso porque metade desses SKUs tem o campo NULL, nao false. Categoria EMBALAGEM e
+// um problema separado e menor (produto real, mas nao e peca de vestuario vendavel).
 async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<IdentidadeRow[]> {
   const filtroSql = buildIdentidadeFiltro(filtro);
 
@@ -481,6 +499,8 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      AND (a.product_code IS NULL OR a.product_code < 1000000)
+      AND TRIM(UPPER(COALESCE(a.class_categoria, ''))) != 'EMBALAGEM'
       ${filtroSql}
   `;
 }
@@ -628,16 +648,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acc.vendaAtacado += valores.vendaAtacado;
     acc.valorEstoque += valores.valorEstoque;
     mapa.set(chave, acc);
-  }
-  // BÃ¡sico RenovÃ¡vel entra separado de BÃ¡sico (pedido do usuario); resto da linha
-  // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
-  // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
-  function linhaBucket(linha: string | null): string | null {
-    const l = linha?.trim().toUpperCase();
-    if (l === 'BASICA') return 'BÃ¡sico';
-    if (l === 'BASICA RENOVAVEL') return 'BÃ¡sico RenovÃ¡vel';
-    if (l === 'STYLE') return 'ColeÃ§Ã£o';
-    return null;
   }
 
   const matrizLinhaAgg = new Map<string, BucketAcc>();
@@ -1016,9 +1026,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
     estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
-    coberturaBasico: coberturaPorLabel(matrizLinha, 'BÃ¡sico'),
-    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'BÃ¡sico RenovÃ¡vel'),
-    coberturaColecao: coberturaPorLabel(matrizLinha, 'ColeÃ§Ã£o'),
+    coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
+    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
+    coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
     referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
     statusBreakdown,
   };

@@ -397,16 +397,28 @@ export interface AnaliseGradeFiltro {
 
 export type CurvaLetra = 'A' | 'B' | 'C';
 
+export interface CurvaLinhaBucket {
+  bucket: string;
+  quantidade: number;
+  valorReais: number;
+  percentDoValorCurva: number;
+}
+
 export interface ReferenciaAbc {
   referenceCode: string;
   referenceName: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  status: string | null;
+  lancamento: string | null;
   curva: CurvaLetra;
   rankQtd: number;
   rankCurva: number;
   qtdVendida: number;
   mediaMensal: number;
-  giro30dVarejo: number;
-  giro30dAtacado: number;
+  giro90dPercent: number | null;
+  giro30dPercent: number | null;
   totalSkus: number;
   mediaPorSku: number;
   mediaPorSkuAnterior: number;
@@ -429,7 +441,7 @@ export interface CurvaResumo {
   totalSkus: number;
   mediaMensal: number;
   percentDoTotal: number;
-  ultimaReferencia: ReferenciaAbc | null;
+  porLinha: CurvaLinhaBucket[];
 }
 
 export interface CurvaAbcResumoResponse {
@@ -450,8 +462,8 @@ export interface SkuAbc {
   rankQtd: number;
   qtdVendida: number;
   mediaMensal: number;
-  giro30dVarejo: number;
-  giro30dAtacado: number;
+  giro90dPercent: number | null;
+  giro30dPercent: number | null;
   rankValor: number;
   valorReais: number;
   valorMedioMensal: number;
@@ -469,7 +481,7 @@ export interface SkuCurvaResumo {
   valorReais: number;
   mediaMensal: number;
   percentDoTotal: number;
-  ultimoItem: SkuAbc | null;
+  porLinha: CurvaLinhaBucket[];
 }
 
 export interface CurvaAbcResumoSkuResponse {
