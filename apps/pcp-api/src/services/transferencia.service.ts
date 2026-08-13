@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { FILIAIS } from '../config/constants.js';
+import { PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 export interface TransferenciaFiltro {
   referencia?: string; // Busca por referÃªncia especÃ­fica (opcional - vazio = todas)
@@ -77,13 +78,16 @@ export async function getTransferencia(filtro: TransferenciaFiltro): Promise<Tra
   // Se filtro.referencia estiver vazio, traz TODAS as referÃªncias
   // OTIMIZAÃ‡ÃƒO: SÃ³ retorna SKUs que tÃªm oportunidade de transferÃªncia (verde ou vermelho em alguma loja)
   const whereReferencia = temFiltroReferencia
-    ? Prisma.sql`WHERE reference_code ILIKE ${`%${filtro.referencia}%`}`
+    ? Prisma.sql`AND p.reference_code ILIKE ${`%${filtro.referencia}%`}`
     : Prisma.sql``;
 
   const queryEstoque = Prisma.sql`
     WITH skus_ref AS (
-      SELECT DISTINCT product_sku, reference_code, product_name, color_name, size
-      FROM produtos
+      SELECT DISTINCT p.product_sku, p.reference_code, p.product_name, p.color_name, p.size
+      FROM produtos p
+      JOIN produto_analitico a ON a.product_sku = p.product_sku
+      WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${whereReferencia}
     ),
     lojas AS (
@@ -177,7 +181,6 @@ export async function getTransferencia(filtro: TransferenciaFiltro): Promise<Tra
       AND ps.branch_code = l.branch_code
       AND ps.is_full_snapshot = true
       AND ps.stock_code = 1
-      AND ps.stock > 0
     GROUP BY s.reference_code, s.product_name, s.color_name, s.size, l.branch_code, l.description
     HAVING COALESCE(SUM(ps.stock), 0) > 0
     ORDER BY s.reference_code, s.color_name, s.size, l.branch_code
@@ -198,11 +201,13 @@ export async function getTransferencia(filtro: TransferenciaFiltro): Promise<Tra
     FROM transacao_itens ti
     INNER JOIN transacoes t ON t.transaction_code = ti.transaction_code AND t.branch_code = ti.branch_code
     INNER JOIN produtos p ON ti.product_code = p.product_code
+    INNER JOIN produto_analitico a ON a.product_sku = p.product_sku
     WHERE t.status = 4
       AND t.transaction_date >= ${dataInicio}
       ${whereReferenciaVendas}
       AND ti.branch_code != 2
       AND t.customer_code < 110000000
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
     GROUP BY p.reference_code, p.color_name, p.size, ti.branch_code
   `;
 

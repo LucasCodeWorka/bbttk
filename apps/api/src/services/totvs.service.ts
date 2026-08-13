@@ -4,6 +4,16 @@ import { prisma } from '../config/database.js';
 
 const API_BASE_URL = process.env.TOTVS_API_URL || 'https://www30.bhan.com.br:9443/api/totvsmoda';
 
+const PCP_ESTOQUE_LIQUIDO_SKU_FILTER = Prisma.sql`
+  AND (
+    a.product_code < 1000000
+    OR (
+      a.product_code >= 1000000
+      AND TRIM(UPPER(COALESCE(a.class_categoria, ''))) = 'EMBALAGEM'
+    )
+  )
+`;
+
 // Agent que ignora SSL (necessário para API TOTVS)
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
@@ -127,22 +137,29 @@ const SALE_OPERATION_FILTER = Prisma.sql`(${IS_VENDA} OR ${IS_DEVOLUCAO})`;
 // descontinuado que nunca aparece no relatorio) reduz o tempo de sync em ~9x.
 async function getProductCodesRelevantes(): Promise<number[]> {
   const rows = await prisma.$queryRaw<Array<{ product_code: number }>>`
-    WITH ultimo_saldo AS (
+    WITH produtos_validos AS (
+      SELECT DISTINCT a.product_code
+      FROM produto_analitico a
+      WHERE a.product_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    ),
+    ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-        product_code, stock
+        product_sku, product_code, stock
       FROM prd_saldo
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     estoque AS (
-      SELECT product_code, SUM(COALESCE(stock, 0)) AS est_tt
-      FROM ultimo_saldo
-      WHERE product_code IS NOT NULL
-      GROUP BY product_code
+      SELECT us.product_code, SUM(COALESCE(us.stock, 0)) AS est_tt
+      FROM ultimo_saldo us
+      JOIN produtos_validos pv ON pv.product_code = us.product_code
+      GROUP BY us.product_code
     ),
     giro6 AS (
       SELECT ti.product_code, SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.quantity) ELSE ti.quantity END) AS giro
       FROM transacoes t
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      JOIN produtos_validos pv ON pv.product_code = ti.product_code
       ${OPERACAO_JOIN}
       WHERE t.transaction_date >= CURRENT_DATE - INTERVAL '6 months'
         AND t.status = 4 AND ${SALE_OPERATION_FILTER}

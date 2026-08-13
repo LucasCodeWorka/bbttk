@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
+import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 // Lojas de varejo (excluindo Fábrica que é produção)
 const LOJAS_VAREJO = [1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 17];
@@ -99,31 +99,17 @@ async function getVendasPorPeriodo(
     ? Prisma.sql`AND t.branch_code IN (${Prisma.join(branchesFiltro)})`
     : Prisma.sql`AND t.branch_code IN (${Prisma.join(LOJAS_VAREJO)})`;
 
-  // Se não há filtro de classificação, não precisa join com produto_analitico
-  if (classificacaoFiltro === Prisma.empty) {
-    return prisma.$queryRaw<VendaRow[]>`
-      SELECT
-        t.branch_code,
-        SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
-        COUNT(DISTINCT t.transaction_code) AS transacoes
-      FROM transacoes t
-      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-      ${OPERACAO_JOIN}
-      WHERE t.transaction_date >= ${dataInicio}::date
-        AND t.transaction_date <= ${dataFim}::date
-        AND t.status = 4
-        AND ${SALE_OPERATION_FILTER}
-        ${branchesClause}
-      GROUP BY t.branch_code
-    `;
-  }
-
-  // Com filtro de classificação, usar subconsulta para evitar multiplicação de linhas
+  // Subconsulta evita multiplicar transacoes por linhas de produto_analitico e garante
+  // que vendas e estoque usem o mesmo universo de SKUs do PCP.
   return prisma.$queryRaw<VendaRow[]>`
     WITH produtos_filtrados AS (
       SELECT DISTINCT product_code
       FROM produto_analitico a
-      WHERE 1=1 ${classificacaoFiltro}
+      LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      WHERE a.product_code IS NOT NULL
+        AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+        ${classificacaoFiltro}
     )
     SELECT
       t.branch_code,
@@ -160,11 +146,14 @@ async function getEstoquePorFilial(
     )
     SELECT
       us.branch_code,
-      COALESCE(SUM(CASE WHEN us.stock > 0 THEN us.stock ELSE 0 END), 0) AS quantidade
+      COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE 1=1
       ${branchesClause}
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
     GROUP BY us.branch_code
   `;

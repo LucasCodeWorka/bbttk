@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER } from './relatorioBase.service.js';
+import { IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 
@@ -167,7 +167,7 @@ async function getVendaPeriodoTotal(filtro: PerformanceColecaoFiltro): Promise<n
       SELECT DISTINCT a.product_code
       FROM produto_analitico a
       WHERE a.product_code IS NOT NULL
-        AND (a.product_code < 1000000 OR NULLIF(TRIM(a.class_categoria), '') IS NOT NULL)
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${produtoFiltro}
     )
     SELECT COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END), 0) AS total
@@ -203,7 +203,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           NULLIF(TRIM(a.class_linha), '') AS linha
         FROM produto_analitico a
         WHERE a.product_code IS NOT NULL
-          AND (a.product_code < 1000000 OR NULLIF(TRIM(a.class_categoria), '') IS NOT NULL)
+          ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         ${produtoFiltro}
       ),
       produto_ref AS (
@@ -222,7 +222,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           SELECT DISTINCT ON (product_sku, branch_code, stock_code)
             product_sku, product_code, branch_code, stock, captured_at
           FROM prd_saldo
-          WHERE COALESCE(stock, 0) > 0
+          WHERE 1=1
           ${estoqueBranchFiltro}
           ORDER BY product_sku, branch_code, stock_code, captured_at DESC
         )
