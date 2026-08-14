@@ -294,9 +294,9 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
   // entre as variacoes na pratica - mesmo padrao ja usado em relatorioBase.service.ts).
   const porReferencia = new Map<string, { nome: string; skus: Set<string>; productCodes: Set<number>; categoria: string | null; linha: string | null; genero: string | null; status: string | null; lancamento: string | null }>();
   for (const row of identidadeRows) {
-    if (!row.reference_code) continue;
-    const ref = porReferencia.get(row.reference_code) || {
-      nome: row.reference_name || row.reference_code,
+    const referenceCode = row.reference_code || row.product_sku;
+    const ref = porReferencia.get(referenceCode) || {
+      nome: row.reference_name || referenceCode,
       skus: new Set<string>(),
       productCodes: new Set<number>(),
       categoria: row.categoria,
@@ -307,7 +307,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     };
     ref.skus.add(row.product_sku);
     if (row.product_code !== null) ref.productCodes.add(row.product_code);
-    porReferencia.set(row.reference_code, ref);
+    porReferencia.set(referenceCode, ref);
   }
 
   const brutos: Array<{ referenceCode: string; referenceName: string; categoria: string | null; linha: string | null; genero: string | null; status: string | null; lancamento: string | null; ultimaEntrada: Date | null; qtdVendida: number; valorReais: number; valorMedioMensal: number; totalSkus: number; qtdAnterior: number; estoqueVarejo: number; estoqueAtacado: number; valorEstoqueCusto: number; giro30dVarejo: number; giro30dAtacado: number }> = [];
@@ -347,10 +347,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
       const custo = productCode !== undefined ? custoPorProductCode.get(productCode) : undefined;
       if (custo) valorEstoqueCusto += (estoque.varejo + estoque.atacado) * custo;
     }
-    // Antes excluia qualquer referencia sem venda no periodo do relatorio inteiro -
-    // agora só pula quem nao tem venda NEM estoque (referencia irrelevante de fato).
-    // Quem tem estoque mas nao vendeu entra como grupo SEM_VENDA mais abaixo.
-    if (qtdVendida <= 0 && estoqueVarejo + estoqueAtacado <= 0) continue;
+    // Total bruto: toda referencia elegivel entra, mesmo com estoque zero/negativo ou sem venda/giro recente.
     brutos.push({
       referenceCode,
       referenceName: dados.nome,
@@ -589,21 +586,20 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
   }> = [];
 
   for (const row of identidadeRows) {
-    if (!row.reference_code || row.product_code === null) continue;
-    const venda = vendaAtual.get(row.product_code);
-    if (!venda || venda.quantidade <= 0) continue;
+    const venda = row.product_code !== null ? vendaAtual.get(row.product_code) : undefined;
     const estoque = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
-    const giro = venda30d.get(row.product_code) || { varejo: 0, atacado: 0 };
+    const giro = row.product_code !== null ? venda30d.get(row.product_code) || { varejo: 0, atacado: 0 } : { varejo: 0, atacado: 0 };
+    const referenceCode = row.reference_code || row.product_sku;
     brutos.push({
       sku: row.product_sku,
       refCorTam: buildRefCorTam(row),
-      referenceCode: row.reference_code,
-      referenceName: row.reference_name || row.reference_code,
+      referenceCode,
+      referenceName: row.reference_name || referenceCode,
       cor: row.color_name?.trim() || row.color_code?.trim() || 'SEM COR',
       tamanho: row.size?.trim() || 'SEM TAM',
       linha: row.linha,
-      qtdVendida: venda.quantidade,
-      valorReais: venda.valor,
+      qtdVendida: venda?.quantidade || 0,
+      valorReais: venda?.valor || 0,
       estoqueVarejo: estoque.varejo,
       estoqueAtacado: estoque.atacado,
       giro30dVarejo: giro.varejo,
@@ -779,7 +775,6 @@ export async function getCurvaAbcSkus(filtro: CurvaAbcSkuFiltro) {
         estoqueAtacado: round(estoque.atacado, 0),
       };
     })
-    .filter((l) => l.qtdVendida > 0 || l.estoqueVarejo > 0 || l.estoqueAtacado > 0)
     .sort((a, b) => b.qtdVendida - a.qtdVendida);
 
   const total = linhas.length;
