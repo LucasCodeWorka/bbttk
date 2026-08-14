@@ -498,6 +498,13 @@ export default function DashboardPage() {
       </Badge>
     );
   }
+
+  // Extrai apenas nome e sobrenome (primeiro e segundo nome)
+  function getNomeSobrenome(nomeCompleto: string): string {
+    const partes = nomeCompleto.trim().split(/\s+/);
+    if (partes.length <= 2) return nomeCompleto;
+    return `${partes[0]} ${partes[1]}`;
+  }
   function exportarComparativo() {
     const linhaTotal = criarLinhaTotalComparativo();
     const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
@@ -1094,7 +1101,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* Vendedores e Produtos */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,1fr)] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.8fr)_minmax(280px,1fr)] gap-6">
         {/* Ranking Vendedores */}
         <Card>
           <CardHeader>
@@ -1153,15 +1160,15 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium max-w-[180px]">
-                      <div className="line-clamp-2 leading-tight" title={v.seller_name}>{v.seller_name}</div>
+                    <TableCell className="font-medium whitespace-nowrap !py-1 !px-2">
+                      <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
                     </TableCell>
-                    <TableCell align="right">{formatMoney(v.faturamento)}</TableCell>
+                    <TableCell align="right" className="!px-2 text-xs">{formatMoney(v.faturamento)}</TableCell>
                     <TableCell align="right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</TableCell>
                     <TableCell align="right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</TableCell>
                     <TableCell align="center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</TableCell>
                     <TableCell align="center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</TableCell>
-                    <TableCell align="right">{v.pa.toFixed(2)}</TableCell>
+                    <TableCell align="right" className="!px-2 text-xs">{v.pa.toFixed(2)}</TableCell>
                     <TableCell align="right">{formatMoney(v.tm)}</TableCell>
                   </TableRow>
                 ))}
