@@ -103,7 +103,7 @@ async function getVendasPorPeriodo(
   // que vendas e estoque usem o mesmo universo de SKUs do PCP.
   return prisma.$queryRaw<VendaRow[]>`
     WITH produtos_filtrados AS (
-      SELECT DISTINCT product_code
+      SELECT DISTINCT a.product_code
       FROM produto_analitico a
       LEFT JOIN produtos p ON p.product_sku = a.product_sku
       WHERE a.product_code IS NOT NULL

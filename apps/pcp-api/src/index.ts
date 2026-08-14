@@ -17,7 +17,12 @@ import vendaDiaRoutes from './routes/vendaDia.routes.js';
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
 
-app.use(cors(process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN } : undefined));
+const corsOrigins = process.env.CORS_ORIGIN
+  ?.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors(corsOrigins?.length ? { origin: corsOrigins } : undefined));
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
