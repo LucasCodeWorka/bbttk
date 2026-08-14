@@ -8,6 +8,7 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { CadastroMetaModal } from '@/components/metas/CadastroMetaModal';
+import { EditarMetaModal } from '@/components/metas/EditarMetaModal';
 import { metasApi, vendasApi, Meta, MetaNivel } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 
@@ -26,6 +27,7 @@ export default function MetasPage() {
   const [vendedoresLista, setVendedoresLista] = useState<{ code: number; name: string }[]>([]);
 
   const [showCadastroModal, setShowCadastroModal] = useState(false);
+  const [editingMeta, setEditingMeta] = useState<Meta | null>(null);
 
   const [deletingMetaId, setDeletingMetaId] = useState<number | null>(null);
 
@@ -183,14 +185,23 @@ export default function MetasPage() {
                     );
                   })}
                   <TableCell align="center">
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => handleDeleteMeta(m.id)}
-                      isLoading={deletingMetaId === m.id}
-                    >
-                      Excluir
-                    </Button>
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setEditingMeta(m)}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleDeleteMeta(m.id)}
+                        isLoading={deletingMetaId === m.id}
+                      >
+                        Excluir
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -205,6 +216,19 @@ export default function MetasPage() {
         ano={ano}
         mes={mes}
         niveis={niveis}
+        onSaved={carregarDados}
+      />
+
+      <EditarMetaModal
+        isOpen={!!editingMeta}
+        onClose={() => setEditingMeta(null)}
+        meta={editingMeta}
+        niveis={niveis}
+        vendedorNome={
+          editingMeta?.seller_code
+            ? vendedoresLista.find((v) => v.code === editingMeta.seller_code)?.name || `Vendedor ${editingMeta.seller_code}`
+            : null
+        }
         onSaved={carregarDados}
       />
     </div>
