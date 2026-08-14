@@ -1124,98 +1124,80 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <LoadingOverlay active={isLoading}>
-          <div className="flex flex-col">
-            {/* Cabeçalho fixo */}
-            <div
-              ref={vendedoresTopScrollRef}
-              onScroll={sincronizarVendedoresPeloTopo}
-              className="overflow-x-auto overflow-y-hidden border-b border-gray-200"
-            >
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap">#</th>
-                    <th className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('seller_name')}>
-                      Vendedor {sortKeyVendedores === 'seller_name' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('faturamento')}>
-                      Fat. {sortKeyVendedores === 'faturamento' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('meta')}>
-                      Meta {sortKeyVendedores === 'meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('debito_meta')}>
-                      Debito {sortKeyVendedores === 'debito_meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-center font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pct_meta')}>
-                      % Meta {sortKeyVendedores === 'pct_meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-center font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pct_proj')}>
-                      % Proj {sortKeyVendedores === 'pct_proj' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pa')}>
-                      PA {sortKeyVendedores === 'pa' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
-                    <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('tm')}>
-                      TM {sortKeyVendedores === 'tm' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
-                    </th>
+          <div ref={vendedoresScrollRef} className="max-h-[600px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap">#</th>
+                  <th className="px-2 py-2 text-left font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('seller_name')}>
+                    Vendedor {sortKeyVendedores === 'seller_name' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-2 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('faturamento')}>
+                    Fat. {sortKeyVendedores === 'faturamento' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('meta')}>
+                    Meta {sortKeyVendedores === 'meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('debito_meta')}>
+                    Debito {sortKeyVendedores === 'debito_meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-3 py-2 text-center font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pct_meta')}>
+                    % Meta {sortKeyVendedores === 'pct_meta' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-3 py-2 text-center font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pct_proj')}>
+                    % Proj {sortKeyVendedores === 'pct_proj' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-2 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('pa')}>
+                    PA {sortKeyVendedores === 'pa' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('tm')}>
+                    TM {sortKeyVendedores === 'tm' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendedoresRanking.map((v, i) => (
+                  <tr key={v.seller_code} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2">
+                      {i < 3 ? (
+                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
+                          i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : 'bg-orange-400'
+                        }`}>
+                          {i + 1}
+                        </span>
+                      ) : (
+                        <span className="text-gray-500">{i + 1}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 font-medium whitespace-nowrap">
+                      <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
+                    </td>
+                    <td className="px-2 py-2 text-right text-xs">{formatMoney(v.faturamento)}</td>
+                    <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</td>
+                    <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</td>
+                    <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</td>
+                    <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
+                    <td className="px-2 py-2 text-right text-xs">{v.pa.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{formatMoney(v.tm)}</td>
                   </tr>
-                </thead>
-              </table>
-            </div>
-
-            {/* Corpo com scroll */}
-            <div ref={vendedoresScrollRef} className="max-h-[500px] overflow-y-auto overflow-x-auto">
-              <table className="w-full text-sm">
-                <tbody>
-                  {vendedoresRanking.map((v, i) => (
-                    <tr key={v.seller_code} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-3 py-2">
-                        {i < 3 ? (
-                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
-                            i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : 'bg-orange-400'
-                          }`}>
-                            {i + 1}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500">{i + 1}</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 font-medium whitespace-nowrap">
-                        <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
-                      </td>
-                      <td className="px-2 py-2 text-right text-xs">{formatMoney(v.faturamento)}</td>
-                      <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</td>
-                      <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</td>
-                      <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</td>
-                      <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
-                      <td className="px-2 py-2 text-right text-xs">{v.pa.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">{formatMoney(v.tm)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Rodapé/Total fixo */}
-            {vendedoresRanking.length > 0 && (
-              <div className="overflow-x-auto overflow-y-hidden border-t-2 border-gray-300 bg-yellow-50">
-                <table className="w-full text-sm">
-                  <tbody>
-                    <tr className="font-bold">
-                      <td className="px-3 py-2" colSpan={2}>TOTAL</td>
-                      <td className="px-2 py-2 text-right">{formatMoney(totaisVendedoresRanking.faturamento)}</td>
-                      <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.meta)}</td>
-                      <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.debitoMeta)}</td>
-                      <td className="px-3 py-2 text-center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctMeta) : '-'}</td>
-                      <td className="px-3 py-2 text-center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctProj) : '-'}</td>
-                      <td className="px-2 py-2 text-right">{totaisVendedoresRanking.pa.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.tm)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
+                ))}
+              </tbody>
+              {vendedoresRanking.length > 0 && (
+                <tfoot className="sticky bottom-0 z-10 bg-yellow-50 border-t-2 border-gray-300">
+                  <tr className="font-bold">
+                    <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-2 py-1"></td>
+                    <td className="px-2 py-2 text-right text-xs">{formatMoney(totaisVendedoresRanking.faturamento)}</td>
+                    <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.meta)}</td>
+                    <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.debitoMeta)}</td>
+                    <td className="px-3 py-2 text-center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctMeta) : '-'}</td>
+                    <td className="px-3 py-2 text-center">{totaisVendedoresRanking.meta > 0 ? renderBadgeAtingimentoMeta(totaisVendedoresRanking.pctProj) : '-'}</td>
+                    <td className="px-2 py-2 text-right text-xs">{totaisVendedoresRanking.pa.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.tm)}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
           </div>
           </LoadingOverlay>
         </Card>
