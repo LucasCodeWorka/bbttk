@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN } from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 // Tipos de filtros
 export interface RaioXFiltro {
@@ -100,15 +100,20 @@ async function getEstoquesEmLote(
   }
 
   const rows = await prisma.$queryRaw<EstoqueRow[]>`
-    SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-      product_sku,
-      branch_code,
-      stock
-    FROM prd_saldo
-    WHERE product_sku IN (${Prisma.join(productSkus.map(sku => Prisma.sql`${sku}`))})
-      AND branch_code IN (${Prisma.join(branchCodes.map(bc => Prisma.sql`${bc}`))})
-      AND captured_at <= ${data}::date + INTERVAL '1 day'
-    ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (product_sku, branch_code, stock_code)
+        product_sku,
+        branch_code,
+        stock
+      FROM prd_saldo
+      WHERE product_sku IN (${Prisma.join(productSkus.map(sku => Prisma.sql`${sku}`))})
+        AND branch_code IN (${Prisma.join(branchCodes.map(bc => Prisma.sql`${bc}`))})
+        AND captured_at <= ${data}::date + INTERVAL '1 day'
+      ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    )
+    SELECT product_sku, branch_code, COALESCE(SUM(COALESCE(stock, 0)), 0) AS stock
+    FROM ultimo_saldo
+    GROUP BY product_sku, branch_code
   `;
 
   const result = new Map<string, number>();
@@ -249,9 +254,10 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         color_name,
         size,
         class_motor_promocional
-      FROM produto_analitico
-      WHERE reference_code IS NOT NULL
-        AND reference_code IN (${Prisma.join(filtro.referencias.map(ref => Prisma.sql`${ref}`))})
+      FROM produto_analitico a
+      WHERE a.reference_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+        AND a.reference_code IN (${Prisma.join(filtro.referencias.map(ref => Prisma.sql`${ref}`))})
       ORDER BY reference_code, color_code, size
     `;
   } else if (filtro.categorias && filtro.categorias.length > 0) {
@@ -265,9 +271,10 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         color_name,
         size,
         class_motor_promocional
-      FROM produto_analitico
-      WHERE reference_code IS NOT NULL
-        AND class_categoria IN (${Prisma.join(filtro.categorias.map(cat => Prisma.sql`${cat}`))})
+      FROM produto_analitico a
+      WHERE a.reference_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+        AND a.class_categoria IN (${Prisma.join(filtro.categorias.map(cat => Prisma.sql`${cat}`))})
       ORDER BY reference_code, color_code, size
       LIMIT 10
     `;
@@ -283,8 +290,9 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         color_name,
         size,
         class_motor_promocional
-      FROM produto_analitico
-      WHERE reference_code IS NOT NULL
+      FROM produto_analitico a
+      WHERE a.reference_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ORDER BY reference_code, color_code, size
       LIMIT 10
     `;

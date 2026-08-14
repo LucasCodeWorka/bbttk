@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { FILIAIS } from '../config/constants.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
+import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
 const RELATORIO_BASE_CONFIG_KEY = 'relatorio_base';
@@ -83,6 +83,7 @@ async function getSkusFiltrados(filtro: AnaliseGradeFiltro): Promise<string[] | 
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
   `;
   return rows.map((r) => r.product_sku);
@@ -109,7 +110,7 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[]
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     estoque_sku AS (
-      SELECT product_sku, SUM(COALESCE(stock, 0)) FILTER (WHERE COALESCE(stock, 0) > 0) AS estoque
+      SELECT product_sku, SUM(COALESCE(stock, 0)) AS estoque
       FROM ultimo_saldo
       GROUP BY product_sku
     )
@@ -127,6 +128,7 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[]
     LEFT JOIN estoque_sku es ON es.product_sku = a.product_sku
     WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
   `;
 }
@@ -155,7 +157,7 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     saldo_sku_filial AS (
-      SELECT product_sku, branch_code, SUM(COALESCE(stock, 0)) FILTER (WHERE COALESCE(stock, 0) > 0) AS estoque
+      SELECT product_sku, branch_code, SUM(COALESCE(stock, 0)) AS estoque
       FROM ultimo_saldo
       GROUP BY product_sku, branch_code
     )
@@ -165,6 +167,7 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
     JOIN saldo_sku_filial s ON s.product_sku = a.product_sku
     WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
     GROUP BY a.reference_code, s.branch_code
   `;

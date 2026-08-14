@@ -11,6 +11,7 @@ import {
   getConfig as getRelatorioBaseConfig,
   getCustoUltimaCompraRows,
   getUltimaEntradaRows,
+  PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
 } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
@@ -93,6 +94,7 @@ async function getIdentidadeRows(filtro: CurvaAbcFiltro): Promise<IdentidadeRow[
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
       AND a.reference_code IS NOT NULL
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
   `;
 }
@@ -732,11 +734,15 @@ async function getEstoqueCanalPorSku(): Promise<EstoqueCanalPorSku[]> {
       FROM prd_saldo
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
-    SELECT product_sku,
-      CASE WHEN branch_code = ${FABRICA_BRANCH_CODE} THEN 'atacado' ELSE 'varejo' END AS canal,
-      SUM(COALESCE(stock, 0)) FILTER (WHERE COALESCE(stock, 0) > 0) AS estoque
-    FROM ultimo_saldo
-    GROUP BY product_sku, canal
+    SELECT us.product_sku,
+      CASE WHEN us.branch_code = ${FABRICA_BRANCH_CODE} THEN 'atacado' ELSE 'varejo' END AS canal,
+      SUM(COALESCE(us.stock, 0)) AS estoque
+    FROM ultimo_saldo us
+    JOIN produto_analitico a ON a.product_sku = us.product_sku
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    GROUP BY us.product_sku, canal
   `;
 }
 

@@ -210,10 +210,14 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
       WHERE 1=1 ${filtroProductSku(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
-    SELECT product_sku, product_code, branch_code,
-           COALESCE(SUM(COALESCE(stock,0)) FILTER (WHERE COALESCE(stock,0) > 0), 0) AS quantidade_estoque
-    FROM ultimo_saldo
-    GROUP BY product_sku, product_code, branch_code
+    SELECT us.product_sku, us.product_code, us.branch_code,
+           COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
+    FROM ultimo_saldo us
+    JOIN produto_analitico a ON a.product_sku = us.product_sku
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    GROUP BY us.product_sku, us.product_code, us.branch_code
   `;
 }
 
@@ -469,13 +473,21 @@ function filtroProductSku(skus: string[] | null): Prisma.Sql {
   return Prisma.sql`AND product_sku IN (${Prisma.join(skus)})`;
 }
 
-// product_code >= 1000000 e convencao do TOTVS pra SUBPRODUTO (componente interno de
-// montagem de um conjunto, ex "SUBPRODUTO CAMISA CONJUNTO..." com reference_code "SP
-// ..."), nao item vendavel - confirmado com o time (Marcelo) que isso so existe na
-// Fabrica e e a causa principal do estoque "inflado" la (~97% do estoque fisico da
-// Fabrica era subproduto, nao produto real). is_finished_product sozinho nao pega
-// isso porque metade desses SKUs tem o campo NULL, nao false. Categoria EMBALAGEM e
-// um problema separado e menor (produto real, mas nao e peca de vestuario vendavel).
+// Universo padrao para estoque liquido PCP:
+// 1) produtos normais do TOTVS: product_code < 1000000
+// 2) embalagens: product_code >= 1000000 somente quando categoria = EMBALAGEM
+// Outros product_code >= 1000000 sao subprodutos/componentes internos e ficam fora
+// dos calculos de estoque para nao inflar os paineis.
+export const PCP_ESTOQUE_LIQUIDO_SKU_FILTER = Prisma.sql`
+  AND (
+    a.product_code < 1000000
+    OR (
+      a.product_code >= 1000000
+      AND TRIM(UPPER(COALESCE(a.class_categoria, ''))) = 'EMBALAGEM'
+    )
+  )
+`;
+
 async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<IdentidadeRow[]> {
   const filtroSql = buildIdentidadeFiltro(filtro);
 
@@ -499,8 +511,7 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
-      AND (a.product_code IS NULL OR a.product_code < 1000000)
-      AND TRIM(UPPER(COALESCE(a.class_categoria, ''))) != 'EMBALAGEM'
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
   `;
 }
