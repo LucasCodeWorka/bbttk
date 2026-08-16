@@ -30,6 +30,8 @@ export default function MetasPage() {
   const [editingMeta, setEditingMeta] = useState<Meta | null>(null);
 
   const [deletingMetaId, setDeletingMetaId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [deletingSelecionadas, setDeletingSelecionadas] = useState(false);
 
   const carregarDados = useCallback(async () => {
     setIsLoading(true);
@@ -43,6 +45,7 @@ export default function MetasPage() {
       setMetas(metasRes.metas);
       setNiveis(niveisRes.niveis);
       setVendedoresLista(vendedoresRes.vendedores);
+      setSelectedIds(new Set());
     } catch (error) {
       showToast('Erro ao carregar dados', 'error');
       console.error(error);
@@ -82,6 +85,37 @@ export default function MetasPage() {
       console.error(error);
     } finally {
       setDeletingMetaId(null);
+    }
+  }
+
+  function toggleSelecionada(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelecionarTodas() {
+    setSelectedIds((prev) => (prev.size === metas.length ? new Set() : new Set(metas.map((m) => m.id))));
+  }
+
+  // Deletar metas selecionadas
+  async function handleDeleteSelecionadas() {
+    if (!token || selectedIds.size === 0) return;
+    if (!confirm(`Excluir ${selectedIds.size} meta(s) selecionada(s)?`)) return;
+
+    setDeletingSelecionadas(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => metasApi.deleteMeta(token, id)));
+      showToast('Metas excluidas!', 'success');
+      carregarDados();
+    } catch (error) {
+      showToast('Erro ao excluir metas selecionadas', 'error');
+      console.error(error);
+    } finally {
+      setDeletingSelecionadas(false);
     }
   }
 
@@ -129,6 +163,11 @@ export default function MetasPage() {
         <Button onClick={() => setShowCadastroModal(true)}>
           Cadastrar Metas
         </Button>
+        {selectedIds.size > 0 && (
+          <Button variant="danger" onClick={handleDeleteSelecionadas} isLoading={deletingSelecionadas}>
+            Excluir selecionadas ({selectedIds.size})
+          </Button>
+        )}
       </div>
 
       {/* Tabela de Metas */}
@@ -146,6 +185,14 @@ export default function MetasPage() {
           <Table>
             <TableHead>
               <TableRow>
+                <TableCell isHeader align="center" className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={metas.length > 0 && selectedIds.size === metas.length}
+                    onChange={toggleSelecionarTodas}
+                    className="w-4 h-4 text-[var(--bbtk-red)] rounded"
+                  />
+                </TableCell>
                 <TableCell isHeader>Loja</TableCell>
                 <TableCell isHeader>Vendedor</TableCell>
                 {niveis.map(n => (
@@ -163,6 +210,14 @@ export default function MetasPage() {
             <TableBody>
               {metas.map(m => (
                 <TableRow key={m.id}>
+                  <TableCell align="center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(m.id)}
+                      onChange={() => toggleSelecionada(m.id)}
+                      className="w-4 h-4 text-[var(--bbtk-red)] rounded"
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">
                     {FILIAIS[m.branch_code] || `Loja ${m.branch_code}`}
                   </TableCell>

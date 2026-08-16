@@ -293,10 +293,14 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
   }
 });
 
-// Lista de vendedores (para select)
-router.get('/vendedores-lista', async (_req: Request, res: Response) => {
+// Lista de vendedores (para select). ?ativos=true restringe a vendedor com
+// is_inactive != true - usado nas telas de CADASTRO (escolher candidato pra meta
+// nova); sem o parametro, mantem todos (usado pra resolver nome em registros ja
+// existentes, mesmo de vendedor que saiu da empresa depois).
+router.get('/vendedores-lista', async (req: Request, res: Response) => {
   try {
-    const nomes = await vendasService.getVendedoresMap();
+    const soAtivos = req.query.ativos === 'true';
+    const nomes = await vendasService.getVendedoresMap(soAtivos);
     const vendedores = Array.from(nomes.entries())
       .map(([code, name]) => ({ code, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -307,8 +311,11 @@ router.get('/vendedores-lista', async (_req: Request, res: Response) => {
   }
 });
 
-// Vendedores ativos numa filial nos 3 meses anteriores ao mes de referencia
-// (usado para distribuir a meta da loja entre os vendedores que realmente venderam la)
+// Vendedoras oficialmente vinculadas a uma filial no cadastro do TOTVS (independente de
+// terem vendido la ou nao) - usado no Cadastro de Metas pra oferecer as candidatas a
+// distribuir a meta da loja. O historico de venda dos 3 meses anteriores ao mes de
+// referencia so entra pra preencher "faturamento" (media/peso da distribuicao), nao pra
+// decidir quem aparece na lista.
 router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, res: Response) => {
   try {
     const branchCode = parseInt(req.params.branchCode);
@@ -319,14 +326,15 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
     const startDate = new Date(ano, mes - 4, 1);
     const endDate = new Date(ano, mes - 1, 0);
 
-    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
-    const nomes = await vendasService.getVendedoresMap();
+    const vinculadas = await vendasService.getVendedoresVinculadosLoja(branchCode);
+    const vendas = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
+    const faturamentoMap = new Map(vendas.map(v => [v.seller_code, v.faturamento]));
 
-    const vendedoresComNomes = vendedores
+    const vendedoresComNomes = vinculadas
       .map(v => ({
         seller_code: v.seller_code,
-        seller_name: nomes.get(v.seller_code) || `Vendedor ${v.seller_code}`,
-        faturamento: v.faturamento,
+        seller_name: v.seller_name,
+        faturamento: faturamentoMap.get(v.seller_code) || 0,
       }))
       .sort((a, b) => b.faturamento - a.faturamento);
 

@@ -321,13 +321,22 @@ export async function salvarDistribuicaoCompleta(data: {
     if (loja.valor < 0) {
       throw new Error(`Valor da loja ${loja.branchCode} nao pode ser negativo`);
     }
-    // A gerente da loja (no maximo uma por loja) fica de fora dessa soma de proposito -
-    // a meta dela e o valor CHEIO da loja (reflete o papel de lideranca), nao uma fatia,
-    // entao nao teria como a soma com as demais vendedoras bater com loja.valor.
+    // A gerente da loja (no maximo uma por loja) fica de fora dessa soma de proposito - a
+    // meta dela pode ser o valor CHEIO da loja (modo padrao, nao e uma fatia, entao nao
+    // teria como a soma com as demais vendedoras bater com loja.valor) OU so o que sobrar
+    // depois de distribuir entre as demais (modo "assume o restante", escolhido no
+    // CadastroMetaModal do frontend) - nesse segundo modo a soma das regulares pode ficar
+    // ABAIXO de loja.valor de proposito (a gerente absorve a diferenca), so nao pode
+    // ULTRAPASSAR. Sem gerente, mantem a exigencia de bater exatamente (nao ha quem
+    // absorva sobra/falta).
+    const temGerente = loja.vendedores.some((v) => v.isGerente);
     const vendedoresRegulares = loja.vendedores.filter((v) => !v.isGerente);
     if (vendedoresRegulares.length > 0) {
       const somaVendedores = vendedoresRegulares.reduce((s, v) => s + v.valor, 0);
-      if (Math.abs(somaVendedores - loja.valor) > TOLERANCIA) {
+      const diferenca = somaVendedores - loja.valor;
+      const excedeuComGerente = temGerente && diferenca > TOLERANCIA;
+      const naoBateuSemGerente = !temGerente && Math.abs(diferenca) > TOLERANCIA;
+      if (excedeuComGerente || naoBateuSemGerente) {
         throw new Error(
           `A soma dos vendedores da loja ${loja.branchCode} (${somaVendedores.toFixed(2)}) nao bate com a meta da loja (${loja.valor.toFixed(2)})`
         );

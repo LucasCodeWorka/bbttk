@@ -703,13 +703,44 @@ export async function getVendasVendedorPorFilial(
 // lista fixa de filiais no codigo (nunca incluia Fabrica/2 nem 10/16/18/19), entao
 // vendedor dessas filiais sempre caia no fallback "Vendedor {code}". dim_vendedor cobre
 // todas as filiais e se corrige sozinho se o ETL atualizar um nome depois.
-export async function getVendedoresMap(): Promise<Map<number, string>> {
-  const rows = await prisma.dim_vendedor.findMany({ select: { seller_code: true, seller_name: true } });
+// soAtivos=true exclui vendedor com is_inactive=true (TOTVS) - usado nas listas de
+// SELECAO pra cadastrar meta nova (nao faz sentido oferecer vendedor desligado como
+// candidato). Default (false) mantem todos, inclusive inativos - necessario pra
+// resolver o nome de vendedor em metas/vendas JA cadastradas no passado, que nao
+// podem virar "Vendedor {code}" so porque a pessoa saiu da empresa depois.
+export async function getVendedoresMap(soAtivos = false): Promise<Map<number, string>> {
+  const rows = await prisma.dim_vendedor.findMany({
+    select: { seller_code: true, seller_name: true },
+    where: soAtivos ? { is_inactive: { not: true } } : undefined,
+  });
   const map = new Map<number, string>();
   for (const r of rows) {
     if (r.seller_name && !EXCLUDED_SELLER_CODES.has(r.seller_code)) map.set(r.seller_code, r.seller_name);
   }
   return map;
+}
+
+// Vendedoras oficialmente vinculadas a uma filial no cadastro do TOTVS
+// (dim_vendedor.dados_api.branchInformations), independente de terem vendido la ou
+// nao - ao contrario da antiga logica baseada em venda (getVendasVendedor). Usado no
+// Cadastro de Metas pra nao esconder vendedora nova (sem venda ainda) nem obrigar a
+// loja a so oferecer quem ja vendeu. Pode trazer codigo "tecnico" (ex: canal online da
+// mesma pessoa) que nao deveria virar meta - o usuario remove manualmente na tela
+// ("desconsiderar vendedora" no CadastroMetaModal), nao tentamos adivinhar por nome.
+export async function getVendedoresVinculadosLoja(branchCode: number): Promise<{ seller_code: number; seller_name: string }[]> {
+  return prisma.$queryRaw<{ seller_code: number; seller_name: string }[]>`
+    SELECT seller_code, seller_name
+    FROM dim_vendedor
+    WHERE is_inactive IS NOT TRUE
+      AND seller_name IS NOT NULL
+      AND seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST)})
+      AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(dados_api->'branchInformations') AS bi
+        WHERE (bi->>'branchCode')::int = ${branchCode}
+          AND (bi->>'isInactive')::boolean IS NOT TRUE
+      )
+    ORDER BY seller_name
+  `;
 }
 
 // Top produtos

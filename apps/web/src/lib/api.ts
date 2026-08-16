@@ -122,8 +122,8 @@ export const vendasApi = {
       `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
     ),
 
-  getVendedoresLista: () =>
-    fetchApi<{ vendedores: { code: number; name: string }[] }>('/api/vendedores-lista'),
+  getVendedoresLista: (soAtivos?: boolean) =>
+    fetchApi<{ vendedores: { code: number; name: string }[] }>(`/api/vendedores-lista${soAtivos ? '?ativos=true' : ''}`),
 
   getVendedoresPorFilial: (branchCode: number, ano: number, mes: number) =>
     fetchApi<VendedoresPorFilialResponse>(

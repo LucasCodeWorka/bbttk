@@ -88,6 +88,10 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
   const [tipoVendedoresPorLoja, setTipoVendedoresPorLoja] = useState<Record<number, TipoDistribuicao>>({});
   const [vendedoresPorLoja, setVendedoresPorLoja] = useState<Record<number, VendedorState[]>>({});
   const [carregandoVendedoresLoja, setCarregandoVendedoresLoja] = useState<number | null>(null);
+  // Como a meta da gerente e calculada: 'cheio' = valor cheio da loja (padrao atual,
+  // some das demais vendedoras); 'restante' = so o que sobrar depois de distribuir a
+  // meta entre as demais vendedoras (ex: cadastrou manualmente 3 metas e sobrou valor).
+  const [modoGerentePorLoja, setModoGerentePorLoja] = useState<Record<number, 'cheio' | 'restante'>>({});
 
   // Volante: vendedoras sem loja fixa - a meta delas considera o faturamento somado de
   // TODAS as lojas onde vendem no mes, em vez da meta de uma loja especifica.
@@ -120,7 +124,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
     setCarregandoHistorico(true);
     Promise.all([
       vendasApi.getHistoricoLojas(ano, mes),
-      vendasApi.getVendedoresLista(),
+      vendasApi.getVendedoresLista(true),
       vendasApi.getHistoricoVendedores(ano, mes),
       metasApi.getMetas(ano, mes),
     ])
@@ -155,6 +159,17 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
         );
         setVolanteVendedoras([]);
         setVolanteTotalValueStr('');
+
+        // Reseta o resto do estado que nao depende do historico carregado acima -
+        // sem isso o modal reabre "em cache" da sessao anterior (valor total, tipo de
+        // distribuicao, loja expandida e a lista de vendedores/gerente/comissao dela).
+        setTotalValueStr('');
+        setTipoLojas('historico');
+        setLojaExpandida(null);
+        setTipoVendedoresPorLoja({});
+        setVendedoresPorLoja({});
+        setModoGerentePorLoja({});
+        setAba('lojas');
       })
       .catch((error) => {
         showToast('Erro ao carregar histórico de vendas', 'error');
@@ -411,6 +426,37 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
     });
   }
 
+  // Desconsidera uma vendedora regular da distribuicao da loja (ex: ferias, afastamento).
+  // Ela some da lista pro resto dessa sessao do modal (reaparece se o modal for reaberto -
+  // ver reset em [isOpen, ano, mes]) e o valor da loja e redistribuido de novo entre as
+  // que sobraram, igual acontece ao marcar/desmarcar gerente.
+  function removerVendedorLoja(branchCode: number, sellerCode: number) {
+    const loja = lojas.find((l) => l.branchCode === branchCode);
+    if (!loja) return;
+    const tipo = tipoVendedoresPorLoja[branchCode] || 'historico';
+
+    setVendedoresPorLoja((prev) => {
+      const atuais = (prev[branchCode] || []).filter((v) => v.sellerCode !== sellerCode);
+      const regulares = atuais.filter((v) => !v.isGerente);
+      if (regulares.length === 0 || tipo === 'manual') return { ...prev, [branchCode]: atuais };
+
+      const pesos = regulares.map((v) => pesoVendedor(v, tipo));
+      const valores = distribuirValor(loja.valor, pesos);
+      const valorPorCodigo = new Map(regulares.map((v, i) => [v.sellerCode, valores[i]]));
+
+      return {
+        ...prev,
+        [branchCode]: atuais.map((v) =>
+          v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }
+        ),
+      };
+    });
+  }
+
+  function trocarModoGerente(branchCode: number, modo: 'cheio' | 'restante') {
+    setModoGerentePorLoja((prev) => ({ ...prev, [branchCode]: modo }));
+  }
+
   function expandirTodas() {
     const selecionadas = lojas.filter((l) => l.selecionada);
     selecionadas.forEach((l) => {
@@ -504,7 +550,9 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
       const vs = vendedoresPorLoja[l.branchCode];
       if (!vs) return sum;
       const regularesValor = vs.filter((v) => !v.isGerente).reduce((s, v) => s + v.valor, 0);
-      const gerenteValor = vs.some((v) => v.isGerente) ? l.valor : 0;
+      const temGerente = vs.some((v) => v.isGerente);
+      const modo = modoGerentePorLoja[l.branchCode] || 'cheio';
+      const gerenteValor = temGerente ? (modo === 'restante' ? Math.max(0, l.valor - regularesValor) : l.valor) : 0;
       return sum + regularesValor + gerenteValor;
     }, 0);
     const diferenca = totalValue - distribuidoLojas;
@@ -533,7 +581,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
       status,
       statusTexto,
     };
-  }, [lojas, vendedoresPorLoja, totalValue]);
+  }, [lojas, vendedoresPorLoja, totalValue, modoGerentePorLoja]);
 
   // Mesmo resumo, agora pro pool de vendedoras volante.
   const resumoVolante = useMemo(() => {
@@ -584,10 +632,17 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
         const vendedores = vendedoresPorLoja[l.branchCode];
         if (vendedores && vendedores.length > 0) {
           const regulares = vendedores.filter((v) => !v.isGerente);
+          const gerenteAssumeRestante = vendedores.some((v) => v.isGerente) && (modoGerentePorLoja[l.branchCode] || 'cheio') === 'restante';
           if (regulares.length > 0) {
             const somaVendedores = regulares.reduce((s, v) => s + v.valor, 0);
             const faltaLoja = l.valor - somaVendedores;
-            if (Math.abs(faltaLoja) > 0.02) {
+            if (gerenteAssumeRestante) {
+              // Nesse modo a gerente absorve a sobra - so e erro se os regulares
+              // somarem MAIS que a meta da loja (sobra negativa).
+              if (faltaLoja < -0.02) {
+                erros.push(`Os vendedores da loja ${l.branchName} somam ${formatMoney(-faltaLoja)} a mais que a meta da loja.`);
+              }
+            } else if (Math.abs(faltaLoja) > 0.02) {
               erros.push(
                 faltaLoja > 0
                   ? `A loja ${l.branchName} possui ${formatMoney(faltaLoja)} ainda não distribuídos entre os vendedores.`
@@ -615,7 +670,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
 
     return erros;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lojas, vendedoresPorLoja, totalValue, resumo.diferenca, volanteVendedoras, volanteTotalValue, resumoVolante.diferenca, usandoLojas, usandoVolante]);
+  }, [lojas, vendedoresPorLoja, totalValue, resumo.diferenca, volanteVendedoras, volanteTotalValue, resumoVolante.diferenca, usandoLojas, usandoVolante, modoGerentePorLoja]);
 
   async function handleSalvar() {
     if (!token || errosValidacao.length > 0) return;
@@ -627,9 +682,11 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
           .filter((l) => l.selecionada)
           .map((l) => {
             const vendedoresLoja = vendedoresPorLoja[l.branchCode] || [];
+            const somaRegulares = vendedoresLoja.filter((v) => !v.isGerente).reduce((s, v) => s + v.valor, 0);
+            const modoGerente = modoGerentePorLoja[l.branchCode] || 'cheio';
             const vendedoresPayload: SalvarDistribuicaoVendedor[] = vendedoresLoja.map((v) => ({
               sellerCode: v.sellerCode,
-              valor: v.isGerente ? l.valor : v.valor,
+              valor: v.isGerente ? (modoGerente === 'restante' ? Math.max(0, l.valor - somaRegulares) : l.valor) : v.valor,
               comissaoOverride: v.comissaoAtiva && !comissaoVazia(v.comissaoOverride) ? v.comissaoOverride : null,
               isGerente: v.isGerente,
             }));
@@ -922,7 +979,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
                                 <div className="text-center text-gray-500 py-4">Carregando vendedores...</div>
                               ) : !vendedores || vendedores.length === 0 ? (
                                 <div className="text-center text-gray-500 py-2 text-xs">
-                                  Nenhum vendedor com vendas nessa loja nos últimos 3 meses - a meta fica só no nível da loja.
+                                  Nenhum vendedor vinculado a esta loja no cadastro do TOTVS - a meta fica só no nível da loja.
                                 </div>
                               ) : (
                                 <VendedoresLoja
@@ -930,11 +987,14 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
                                   vendedores={vendedores}
                                   niveis={niveis}
                                   tipo={tipoVendedoresPorLoja[l.branchCode] || 'historico'}
+                                  modoGerente={modoGerentePorLoja[l.branchCode] || 'cheio'}
                                   onTrocarTipo={(t) => trocarTipoVendedores(l.branchCode, t)}
                                   onEditarValor={(sellerCode, valor) => editarValorVendedor(l.branchCode, sellerCode, valor)}
                                   onToggleComissao={(sellerCode) => toggleComissaoVendedor(l.branchCode, sellerCode)}
                                   onEditarComissao={(sellerCode, nivel, valor) => editarComissaoVendedor(l.branchCode, sellerCode, nivel, valor)}
                                   onToggleGerente={(sellerCode) => toggleGerente(l.branchCode, sellerCode)}
+                                  onTrocarModoGerente={(modo) => trocarModoGerente(l.branchCode, modo)}
+                                  onRemoverVendedor={(sellerCode) => removerVendedorLoja(l.branchCode, sellerCode)}
                                   onFechar={() => toggleLojaExpandida(l.branchCode)}
                                 />
                               )}
@@ -1123,23 +1183,32 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
   );
 }
 
+const MODO_GERENTE_OPTIONS = [
+  { value: 'cheio', label: 'Valor cheio da loja' },
+  { value: 'restante', label: 'Assume o restante' },
+];
+
 interface VendedoresLojaProps {
   loja: LojaState;
   vendedores: VendedorState[];
   niveis: MetaNivel[];
   tipo: TipoDistribuicao;
+  modoGerente: 'cheio' | 'restante';
   onTrocarTipo: (tipo: TipoDistribuicao) => void;
   onEditarValor: (sellerCode: number, valor: string) => void;
   onToggleComissao: (sellerCode: number) => void;
   onEditarComissao: (sellerCode: number, nivel: keyof ComissaoOverrideData, valor: string) => void;
   onToggleGerente: (sellerCode: number) => void;
+  onTrocarModoGerente: (modo: 'cheio' | 'restante') => void;
+  onRemoverVendedor: (sellerCode: number) => void;
   onFechar: () => void;
 }
 
-function VendedoresLoja({ loja, vendedores, niveis, tipo, onTrocarTipo, onEditarValor, onToggleComissao, onEditarComissao, onToggleGerente, onFechar }: VendedoresLojaProps) {
+function VendedoresLoja({ loja, vendedores, niveis, tipo, modoGerente, onTrocarTipo, onEditarValor, onToggleComissao, onEditarComissao, onToggleGerente, onTrocarModoGerente, onRemoverVendedor, onFechar }: VendedoresLojaProps) {
   const regulares = vendedores.filter((v) => !v.isGerente);
   const distribuido = regulares.reduce((s, v) => s + v.valor, 0);
   const falta = loja.valor - distribuido;
+  const valorGerente = modoGerente === 'restante' ? Math.max(0, loja.valor - distribuido) : loja.valor;
 
   return (
     <div className="space-y-3">
@@ -1162,11 +1231,12 @@ function VendedoresLoja({ loja, vendedores, niveis, tipo, onTrocarTipo, onEditar
               <th className="text-right px-3 py-1.5">Participação</th>
               <th className="text-right px-3 py-1.5 w-36">Meta do vendedor</th>
               <th className="text-center px-3 py-1.5 w-32">Gerente</th>
+              <th className="text-center px-3 py-1.5 w-24">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {vendedores.map((v) => {
-              const valorEfetivo = v.isGerente ? loja.valor : v.valor;
+              const valorEfetivo = v.isGerente ? valorGerente : v.valor;
               const participacao = loja.valor > 0 ? (valorEfetivo / loja.valor) * 100 : 0;
               return (
                 <Fragment key={v.sellerCode}>
@@ -1201,16 +1271,40 @@ function VendedoresLoja({ loja, vendedores, niveis, tipo, onTrocarTipo, onEditar
                         {v.isGerente ? 'Remover gerente' : 'Definir como gerente'}
                       </button>
                     </td>
+                    <td className="px-3 py-1.5 text-center">
+                      {!v.isGerente && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoverVendedor(v.sellerCode)}
+                          className="text-xs text-gray-400 hover:text-red-600 hover:underline"
+                        >
+                          Desconsiderar
+                        </button>
+                      )}
+                    </td>
                   </tr>
                   {v.isGerente && (
                     <tr>
-                      <td colSpan={5} className="px-3 pb-1.5 text-[11px] text-gray-500">
-                        Meta da gerente = valor cheio da loja (não entra na divisão entre as demais vendedoras).
+                      <td colSpan={6} className="px-3 pb-1.5">
+                        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                          <span>Meta da gerente:</span>
+                          <Select
+                            value={modoGerente}
+                            onChange={(e) => onTrocarModoGerente(e.target.value as 'cheio' | 'restante')}
+                            options={MODO_GERENTE_OPTIONS}
+                            className="w-48"
+                          />
+                          <span>
+                            {modoGerente === 'restante'
+                              ? 'o que sobrar depois de distribuir entre as demais vendedoras.'
+                              : 'valor cheio da loja (não entra na divisão entre as demais vendedoras).'}
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   )}
                   <tr key={`${v.sellerCode}-comissao`}>
-                    <td colSpan={5} className="px-3 pb-1.5">
+                    <td colSpan={6} className="px-3 pb-1.5">
                       <button
                         type="button"
                         onClick={() => onToggleComissao(v.sellerCode)}
@@ -1245,9 +1339,17 @@ function VendedoresLoja({ loja, vendedores, niveis, tipo, onTrocarTipo, onEditar
 
       <div className="flex items-center justify-between text-xs">
         <span>Distribuído entre vendedores: <strong>{formatMoney(distribuido)}</strong></span>
-        <span className={Math.abs(falta) < 0.02 ? 'text-green-600 font-semibold' : 'text-yellow-700 font-semibold'}>
-          {Math.abs(falta) < 0.02 ? 'Meta da loja totalmente distribuída' : `Falta distribuir: ${formatMoney(falta)}`}
-        </span>
+        {vendedores.some((v) => v.isGerente) && modoGerente === 'restante' ? (
+          <span className={falta < -0.02 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
+            {falta < -0.02
+              ? `Vendedores ultrapassam a meta da loja em ${formatMoney(-falta)}`
+              : `Gerente assume o restante: ${formatMoney(valorGerente)}`}
+          </span>
+        ) : (
+          <span className={Math.abs(falta) < 0.02 ? 'text-green-600 font-semibold' : 'text-yellow-700 font-semibold'}>
+            {Math.abs(falta) < 0.02 ? 'Meta da loja totalmente distribuída' : `Falta distribuir: ${formatMoney(falta)}`}
+          </span>
+        )}
       </div>
 
       <div className="flex justify-end">
