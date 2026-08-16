@@ -761,21 +761,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const custoUltimaCompra = productCode !== null ? custoUltimaCompraPorProductCode.get(productCode) ?? null : null;
     const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
-    // So entra na tabela quem tem estoque ou movimento recente - evita catalogo inteiro
-    // com SKU morto (mesma convencao da tabela pcp_estoque_sem_giro_analitico).
-    const temSinal = estTt > 0 || giroTt6 > 0;
-    if (!temSinal) continue;
-
-    // Se filtrou por filial, so entra quem tem sinal (estoque ou giro) em alguma das
-    // colunas selecionadas.
-    if (branchFiltro) {
-      const temSinalNaSelecao = Object.values(branches).some((c) => c.est > 0 || c.giro !== 0);
-      if (!temSinalNaSelecao) continue;
-    }
-
-    // KPIs executivos e matriz linha/categoria/genero - acumulados aqui pra reusar
-    // exatamente os mesmos branches/custo/mediaMensal ja calculados pra essa linha,
-    // respeitando os mesmos filtros (loja/categoria/etc) da tabela detalhada.
+    // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
+    // estoque negativo ou sem venda/giro recente. Isso evita divergencia entre o card
+    // Estoque Total e os totalizadores das tabelas.
     const estAtacadoSku = branches[ATACADO_BRANCH_CODE]?.est ?? 0;
     let estVarejoSku = 0;
     let vendaVarejoSku = 0;
