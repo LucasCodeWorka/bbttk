@@ -216,6 +216,26 @@ function calcularCobertura(
   return estoqueFinal / mediaMensal;
 }
 
+function gradeTemDado(grade: Omit<RaioXGrade, 'cobertura'>): boolean {
+  return (
+    grade.estoqueInicial !== 0 ||
+    grade.transferencias !== 0 ||
+    grade.vendasVarejo !== 0 ||
+    grade.vendasAtacado !== 0 ||
+    grade.estoqueFinal !== 0
+  );
+}
+
+function totaisTemDado(totais: RaioXLoja['totais'] | RaioXProduto['totalGeral']): boolean {
+  return (
+    totais.estoqueInicial !== 0 ||
+    totais.transferencias !== 0 ||
+    totais.vendasVarejo !== 0 ||
+    totais.vendasAtacado !== 0 ||
+    totais.estoqueFinal !== 0
+  );
+}
+
 /**
  * Função principal para buscar os dados do Raio X
  */
@@ -424,15 +444,21 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         const estoqueFinal = estoquesFim.get(`${produto.product_sku}|${branchCode}`) || 0;
         const cobertura = calcularCobertura(estoqueFinal, vendasVarejo, vendasAtacado, filtro.dataInicio, filtro.dataFim);
 
-        lojaResult.grades.push({
+        const grade = {
           tamanho: produto.size || '-',
           estoqueInicial,
           transferencias,
           vendasVarejo,
           vendasAtacado,
           estoqueFinal,
-          cobertura,
-        });
+        };
+
+        if (gradeTemDado(grade)) {
+          lojaResult.grades.push({
+            ...grade,
+            cobertura,
+          });
+        }
 
         lojaResult.totais.estoqueInicial += estoqueInicial;
         lojaResult.totais.transferencias += transferencias;
@@ -449,6 +475,10 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         filtro.dataInicio,
         filtro.dataFim
       );
+
+      if (!totaisTemDado(lojaResult.totais)) {
+        continue;
+      }
 
       produtoResult.lojas.push(lojaResult);
 
@@ -469,7 +499,9 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
       filtro.dataFim
     );
 
-    resultado.push(produtoResult);
+    if (totaisTemDado(produtoResult.totalGeral)) {
+      resultado.push(produtoResult);
+    }
   }
 
   return {
