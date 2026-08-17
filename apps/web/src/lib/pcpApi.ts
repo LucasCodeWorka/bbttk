@@ -994,3 +994,72 @@ export const vendaDiaApi = {
   getFiltros: (token: string) =>
     fetchPcpApi<VendaDiaFiltrosResponse>('/api/pcp/venda-dia/filtros', { token }),
 };
+// ---- Sugestao de Producao ----
+
+export interface SugestaoProducaoFiltro {
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  status?: string[];
+  search?: string;
+  apenasComSugestao?: boolean;
+}
+
+export interface SugestaoProducaoRow {
+  sku: string;
+  productCode: number | null;
+  referenceCode: string;
+  descricao: string;
+  cor: string;
+  tamanho: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  status: string | null;
+  estoqueAtual: number;
+  emProducao: number;
+  estoqueFuturo: number;
+  vendaPeriodoAtual: number;
+  vendaPeriodoAnterior: number;
+  vendaMediaMensal: number;
+  estoqueMinimo: number;
+  corteMinimo: number;
+  sugestaoProducao: number;
+}
+
+export interface SugestaoProducaoResponse {
+  config: { giroDias: number; coberturaMeses: number; coberturaAlvoMeses: number; corteMinimoDefault: number };
+  periodo: { atualInicio: string; atualFim: string; anteriorInicio: string; anteriorFim: string };
+  kpis: {
+    skuCount: number;
+    skusComSugestao: number;
+    totalSugerido: number;
+    totalEstoqueAtual: number;
+    totalEmProducao: number;
+  };
+  rows: SugestaoProducaoRow[];
+}
+
+export interface SugestaoProducaoFiltrosResponse {
+  categoria: PcpClassificacaoOpcao[];
+  linha: PcpClassificacaoOpcao[];
+  genero: PcpClassificacaoOpcao[];
+  status: PcpClassificacaoOpcao[];
+}
+
+export const sugestaoProducaoApi = {
+  getSugestaoProducao: (token: string, filtro: SugestaoProducaoFiltro = {}) => {
+    const params = new URLSearchParams();
+    if (filtro.search) params.set('search', filtro.search);
+    if (filtro.apenasComSugestao !== undefined) params.set('apenasComSugestao', String(filtro.apenasComSugestao));
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
+    const query = params.toString();
+    return fetchPcpApi<SugestaoProducaoResponse>(`/api/pcp/sugestao-producao${query ? `?${query}` : ''}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<SugestaoProducaoFiltrosResponse>('/api/pcp/sugestao-producao/filtros', { token }),
+};

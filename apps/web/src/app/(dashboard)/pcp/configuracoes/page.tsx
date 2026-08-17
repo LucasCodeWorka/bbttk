@@ -13,12 +13,14 @@ import {
   PcpCodigosDisponiveis,
   PcpCurvaAbcConfig,
   PcpCustoPrecoSyncJob,
+  PcpCorteMinimoSkuItem,
 } from '@/lib/api';
 import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
 
 const RELATORIO_BASE = 'relatorio_base';
 const RELATORIO_ESTOQUE_SEM_GIRO = 'estoque_sem_giro';
 const RELATORIO_TRANSFERENCIA = 'gestao_transferencia';
+const RELATORIO_SUGESTAO_PRODUCAO = 'sugestao_producao';
 
 const ATACADO_COBERTURA_OPTIONS = [
   { value: 'fabrica_total', label: 'Venda total da Fabrica (todos os canais)' },
@@ -27,7 +29,7 @@ const ATACADO_COBERTURA_OPTIONS = [
 
 const FILIAIS_REAIS = RELATORIO_BASE_BRANCH_ORDER.filter((b) => b.branchCode > 0);
 
-type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'transferencia';
+type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'transferencia' | 'sugestao-producao';
 
 export default function ConfiguracoesPcpPage() {
   const { token } = useAuth();
@@ -67,17 +69,31 @@ export default function ConfiguracoesPcpPage() {
   const [transferenciaLimiteAmarelo, setTransferenciaLimiteAmarelo] = useState('120');
   const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
 
+  // === SUGESTAO DE PRODUCAO ===
+  const [sugestaoGiroDias, setSugestaoGiroDias] = useState('30');
+  const [sugestaoCoberturaMeses, setSugestaoCoberturaMeses] = useState('3');
+  const [coberturaAlvoMeses, setCoberturaAlvoMeses] = useState('1');
+  const [corteMinimoDefault, setCorteMinimoDefault] = useState('1');
+  const [salvandoSugestaoProducao, setSalvandoSugestaoProducao] = useState(false);
+  const [corteMinimoSkus, setCorteMinimoSkus] = useState<PcpCorteMinimoSkuItem[]>([]);
+  const [novoSkuCorte, setNovoSkuCorte] = useState('');
+  const [novoValorCorte, setNovoValorCorte] = useState('');
+  const [salvandoNovoCorte, setSalvandoNovoCorte] = useState(false);
+  const [uploadingCorteMinimoCsv, setUploadingCorteMinimoCsv] = useState(false);
+
   // Carregar todos os dados
   const carregarDados = useCallback(async () => {
     if (!token) return;
     setIsLoading(true);
     try {
-      const [configRes, coberturaRes, curvaRes, estoqueRes, transferenciaRes] = await Promise.all([
+      const [configRes, coberturaRes, curvaRes, estoqueRes, transferenciaRes, sugestaoRes, corteMinimoRes] = await Promise.all([
         pcpConfigApi.getConfig(token, RELATORIO_BASE),
         pcpConfigApi.getCoberturaIdeal(token, RELATORIO_BASE),
         pcpConfigApi.getCurvaAbcConfig(token),
         pcpConfigApi.getEstoqueSemGiroConfig(token, RELATORIO_ESTOQUE_SEM_GIRO),
         pcpConfigApi.getTransferenciaConfig(token, RELATORIO_TRANSFERENCIA),
+        pcpConfigApi.getSugestaoProducaoConfig(token, RELATORIO_SUGESTAO_PRODUCAO),
+        pcpConfigApi.getCorteMinimoSkus(token, RELATORIO_SUGESTAO_PRODUCAO),
       ]);
 
       // Relatorio Base
@@ -107,6 +123,13 @@ export default function ConfiguracoesPcpPage() {
       setDiasAnaliseVendas(String(transferenciaRes.config.diasAnaliseVendas));
       setTransferenciaLimiteVerde(String(transferenciaRes.config.transferenciaCoberturaDiasVerde));
       setTransferenciaLimiteAmarelo(String(transferenciaRes.config.transferenciaCoberturaDiasAmarelo));
+
+      // Sugestao de Producao
+      setSugestaoGiroDias(String(sugestaoRes.config.giroDias));
+      setSugestaoCoberturaMeses(String(sugestaoRes.config.coberturaMeses));
+      setCoberturaAlvoMeses(String(sugestaoRes.config.coberturaAlvoMeses));
+      setCorteMinimoDefault(String(sugestaoRes.config.corteMinimoDefault));
+      setCorteMinimoSkus(corteMinimoRes.items);
 
       // Codigos de custo/preco
       pcpConfigApi
@@ -380,10 +403,120 @@ export default function ConfiguracoesPcpPage() {
     }
   }
 
+  // === HANDLERS SUGESTAO DE PRODUCAO ===
+  async function handleSalvarSugestaoProducao() {
+    if (!token) return;
+
+    const giroDiasNum = parseInt(sugestaoGiroDias, 10);
+    const coberturaMesesNum = parseInt(sugestaoCoberturaMeses, 10);
+    const coberturaAlvoMesesNum = parseFloat(coberturaAlvoMeses);
+    const corteMinimoDefaultNum = parseFloat(corteMinimoDefault);
+
+    if (!Number.isInteger(giroDiasNum) || giroDiasNum <= 0) {
+      showToast('Tamanho do periodo de venda precisa ser um numero inteiro positivo', 'error');
+      return;
+    }
+    if (!Number.isInteger(coberturaMesesNum) || coberturaMesesNum <= 0) {
+      showToast('Janela da venda media precisa ser um numero inteiro positivo (meses)', 'error');
+      return;
+    }
+    if (!Number.isFinite(coberturaAlvoMesesNum) || coberturaAlvoMesesNum <= 0) {
+      showToast('Cobertura alvo precisa ser um numero positivo', 'error');
+      return;
+    }
+    if (!Number.isFinite(corteMinimoDefaultNum) || corteMinimoDefaultNum <= 0) {
+      showToast('Corte minimo padrao precisa ser um numero positivo', 'error');
+      return;
+    }
+
+    setSalvandoSugestaoProducao(true);
+    try {
+      await pcpConfigApi.updateSugestaoProducaoConfig(token, {
+        relatorio: RELATORIO_SUGESTAO_PRODUCAO,
+        giroDias: giroDiasNum,
+        coberturaMeses: coberturaMesesNum,
+        coberturaAlvoMeses: coberturaAlvoMesesNum,
+        corteMinimoDefault: corteMinimoDefaultNum,
+      });
+      showToast('Configuracao salva!', 'success');
+    } catch (error) {
+      showToast('Erro ao salvar configuracao', 'error');
+      console.error(error);
+    } finally {
+      setSalvandoSugestaoProducao(false);
+    }
+  }
+
+  async function handleAdicionarCorteMinimo() {
+    if (!token) return;
+    const sku = novoSkuCorte.trim();
+    const valor = parseFloat(novoValorCorte.replace(',', '.'));
+    if (!sku) {
+      showToast('Informe o SKU', 'error');
+      return;
+    }
+    if (!Number.isFinite(valor) || valor <= 0) {
+      showToast('Informe um corte minimo valido', 'error');
+      return;
+    }
+
+    setSalvandoNovoCorte(true);
+    try {
+      const { items } = await pcpConfigApi.updateCorteMinimoSkus(token, RELATORIO_SUGESTAO_PRODUCAO, [{ sku, corteMinimo: valor }]);
+      const salvo = items[0];
+      setCorteMinimoSkus((prev) => [...prev.filter((i) => i.sku !== salvo.sku), salvo].sort((a, b) => a.sku.localeCompare(b.sku)));
+      setNovoSkuCorte('');
+      setNovoValorCorte('');
+      showToast('Corte minimo salvo!', 'success');
+    } catch (error) {
+      showToast('Erro ao salvar corte minimo', 'error');
+      console.error(error);
+    } finally {
+      setSalvandoNovoCorte(false);
+    }
+  }
+
+  async function handleRemoverCorteMinimo(sku: string) {
+    if (!token) return;
+    try {
+      await pcpConfigApi.deleteCorteMinimoSku(token, sku, RELATORIO_SUGESTAO_PRODUCAO);
+      setCorteMinimoSkus((prev) => prev.filter((i) => i.sku !== sku));
+    } catch (error) {
+      showToast('Erro ao remover corte minimo', 'error');
+      console.error(error);
+    }
+  }
+
+  async function handleUploadCorteMinimoCsv(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+
+    setUploadingCorteMinimoCsv(true);
+    try {
+      const res = await pcpConfigApi.uploadCorteMinimoCsv(token, file, RELATORIO_SUGESTAO_PRODUCAO);
+      const porSku = new Map(res.items.map((i) => [i.sku, i]));
+      setCorteMinimoSkus((prev) => {
+        const semAtualizados = prev.filter((i) => !porSku.has(i.sku));
+        return [...semAtualizados, ...res.items].sort((a, b) => a.sku.localeCompare(b.sku));
+      });
+      showToast(
+        `${res.total_salvos} SKU(s) salvos${res.linhas_invalidas > 0 ? ` (${res.linhas_invalidas} linha(s) invalida(s) ignorada(s))` : ''}`,
+        'success'
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao processar CSV', 'error');
+      console.error(error);
+    } finally {
+      setUploadingCorteMinimoCsv(false);
+      e.target.value = '';
+    }
+  }
+
   const secoes = [
     { id: 'relatorio-base' as const, label: 'Relatorio Base' },
     { id: 'estoque-sem-giro' as const, label: 'Estoque Sem Giro' },
     { id: 'transferencia' as const, label: 'Transferencia' },
+    { id: 'sugestao-producao' as const, label: 'Sugestao de Producao' },
   ];
 
   return (
@@ -767,6 +900,150 @@ export default function ConfiguracoesPcpPage() {
               Salvar Configuracoes
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* === SECAO SUGESTAO DE PRODUCAO === */}
+      {secaoAtiva === 'sugestao-producao' && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Venda Media e Cobertura Alvo</CardTitle>
+            </CardHeader>
+            <p className="text-sm text-gray-500 -mt-2 mb-4">
+              O estoque minimo (rede toda) usado na sugestao de producao e a venda media mensal multiplicada pela cobertura alvo.
+            </p>
+            <div className="flex flex-wrap gap-4 items-end">
+              <Input
+                label="Tamanho de cada periodo comparado (dias)"
+                type="number"
+                min="1"
+                value={sugestaoGiroDias}
+                onChange={(e) => setSugestaoGiroDias(e.target.value)}
+                className="w-64"
+                disabled={isLoading}
+              />
+              <Input
+                label="Janela da venda media (meses)"
+                type="number"
+                min="1"
+                value={sugestaoCoberturaMeses}
+                onChange={(e) => setSugestaoCoberturaMeses(e.target.value)}
+                className="w-56"
+                disabled={isLoading}
+              />
+              <Input
+                label="Cobertura alvo (x venda media)"
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={coberturaAlvoMeses}
+                onChange={(e) => setCoberturaAlvoMeses(e.target.value)}
+                className="w-56"
+                disabled={isLoading}
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Ex.: cobertura alvo 1 = estoque minimo igual a 1 mes de venda media. 2 = 2 meses de venda media guardados.
+            </p>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Corte Minimo Padrao</CardTitle>
+            </CardHeader>
+            <p className="text-sm text-gray-500 -mt-2 mb-4">
+              Usado pra arredondar a sugestao de producao de qualquer SKU sem um corte minimo especifico cadastrado abaixo.
+            </p>
+            <Input
+              label="Corte minimo padrao (pecas)"
+              type="number"
+              step="1"
+              min="1"
+              value={corteMinimoDefault}
+              onChange={(e) => setCorteMinimoDefault(e.target.value)}
+              className="w-56"
+              disabled={isLoading}
+            />
+          </Card>
+
+          <div className="flex justify-end">
+            <Button onClick={handleSalvarSugestaoProducao} isLoading={salvandoSugestaoProducao} disabled={isLoading}>
+              Salvar Configuracoes
+            </Button>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Corte Minimo por SKU</CardTitle>
+            </CardHeader>
+            <p className="text-sm text-gray-500 -mt-2 mb-4">
+              Overrides especificos por SKU (product_sku) - tem prioridade sobre o corte minimo padrao acima.
+            </p>
+
+            <div className="flex flex-wrap gap-2 items-end mb-4">
+              <Input label="SKU" value={novoSkuCorte} onChange={(e) => setNovoSkuCorte(e.target.value)} className="w-48" />
+              <Input
+                label="Corte minimo"
+                type="number"
+                step="1"
+                min="1"
+                value={novoValorCorte}
+                onChange={(e) => setNovoValorCorte(e.target.value)}
+                className="w-40"
+              />
+              <Button onClick={handleAdicionarCorteMinimo} isLoading={salvandoNovoCorte} variant="secondary">
+                Adicionar
+              </Button>
+            </div>
+
+            <div className="pt-3 border-t">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ou envie um CSV com SKU;VALOR (uma linha por SKU)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleUploadCorteMinimoCsv}
+                  disabled={uploadingCorteMinimoCsv}
+                  className="text-sm"
+                />
+                {uploadingCorteMinimoCsv && <span className="text-xs text-gray-500">Processando...</span>}
+              </div>
+            </div>
+
+            {corteMinimoSkus.length > 0 && (
+              <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100 sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-1.5">SKU</th>
+                      <th className="text-right px-3 py-1.5">Corte Minimo</th>
+                      <th className="text-center px-3 py-1.5 w-24">Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {corteMinimoSkus.map((item) => (
+                      <tr key={item.sku}>
+                        <td className="px-3 py-1.5">{item.sku}</td>
+                        <td className="px-3 py-1.5 text-right">{Number(item.corteMinimo)}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoverCorteMinimo(item.sku)}
+                            className="text-xs text-gray-400 hover:text-red-600 hover:underline"
+                          >
+                            Remover
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </div>
       )}
     </div>

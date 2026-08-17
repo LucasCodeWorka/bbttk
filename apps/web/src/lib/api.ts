@@ -305,6 +305,19 @@ export interface PcpCustoPrecoSyncJobProgresso {
   page: number;
 }
 
+export interface PcpSugestaoProducaoConfig {
+  relatorio: string;
+  giroDias: number;
+  coberturaMeses: number;
+  coberturaAlvoMeses: number;
+  corteMinimoDefault: number;
+}
+
+export interface PcpCorteMinimoSkuItem {
+  sku: string;
+  corteMinimo: number;
+}
+
 export interface PcpCustoPrecoSyncJob {
   status: 'running' | 'done' | 'error';
   startedAt: string;
@@ -388,6 +401,39 @@ export const pcpConfigApi = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+
+  getSugestaoProducaoConfig: (token: string, relatorio = 'sugestao_producao') =>
+    fetchApi<{ config: PcpSugestaoProducaoConfig }>(`/api/pcp-config/sugestao-producao?relatorio=${relatorio}`, { token }),
+
+  updateSugestaoProducaoConfig: (token: string, data: PcpSugestaoProducaoConfig) =>
+    fetchApi<{ config: PcpSugestaoProducaoConfig }>('/api/pcp-config/sugestao-producao', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getCorteMinimoSkus: (token: string, relatorio = 'sugestao_producao') =>
+    fetchApi<{ items: PcpCorteMinimoSkuItem[] }>(`/api/pcp-config/corte-minimo-sku?relatorio=${relatorio}`, { token }),
+
+  updateCorteMinimoSkus: (token: string, relatorio: string, items: PcpCorteMinimoSkuItem[]) =>
+    fetchApi<{ items: PcpCorteMinimoSkuItem[] }>('/api/pcp-config/corte-minimo-sku', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({ relatorio, items }),
+    }),
+
+  deleteCorteMinimoSku: (token: string, sku: string, relatorio = 'sugestao_producao') =>
+    fetchApi<{ success: boolean }>(`/api/pcp-config/corte-minimo-sku/${encodeURIComponent(sku)}?relatorio=${relatorio}`, {
+      token,
+      method: 'DELETE',
+    }),
+
+  uploadCorteMinimoCsv: (token: string, file: File, relatorio = 'sugestao_producao') =>
+    uploadFile<{ items: PcpCorteMinimoSkuItem[]; total_salvos: number; linhas_invalidas: number }>(
+      `/api/pcp-config/corte-minimo-sku/upload?relatorio=${relatorio}`,
+      token,
+      file
+    ),
 };
 
 // Metas

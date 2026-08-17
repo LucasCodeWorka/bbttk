@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import * as pcpConfigService from '../services/pcpConfig.service.js';
 import { syncEmProducao, iniciarCustoPrecoSyncJob, getCustoPrecoSyncJobStatus } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 router.use(authMiddleware, adminOnly);
 
@@ -224,6 +226,92 @@ router.put('/pcp-config/transferencia', async (req: Request, res: Response) => {
       req.user?.userId
     );
     res.json({ config });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Configuracoes da Sugestao de Producao (periodos de venda, cobertura alvo, corte minimo padrao)
+router.get('/pcp-config/sugestao-producao', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'sugestao_producao';
+    const config = await pcpConfigService.getSugestaoProducaoConfig(relatorio);
+    res.json({ config });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/sugestao-producao', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, giroDias, coberturaMeses, coberturaAlvoMeses, corteMinimoDefault } = req.body;
+    if (!relatorio) {
+      res.status(400).json({ error: 'relatorio e obrigatorio' });
+      return;
+    }
+
+    const config = await pcpConfigService.updateSugestaoProducaoConfig(
+      { relatorio, giroDias, coberturaMeses, coberturaAlvoMeses, corteMinimoDefault },
+      req.user?.userId
+    );
+    res.json({ config });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Corte minimo por SKU (lista esparsa - so os overrides ja salvos)
+router.get('/pcp-config/corte-minimo-sku', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'sugestao_producao';
+    const items = await pcpConfigService.getCorteMinimoSkus(relatorio);
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/corte-minimo-sku', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, items } = req.body;
+    if (!relatorio || !Array.isArray(items)) {
+      res.status(400).json({ error: 'relatorio e items sao obrigatorios' });
+      return;
+    }
+
+    const salvos = await pcpConfigService.upsertCorteMinimoSkus(relatorio, items, req.user?.userId);
+    res.json({ items: salvos });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.delete('/pcp-config/corte-minimo-sku/:sku', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'sugestao_producao';
+    await pcpConfigService.deleteCorteMinimoSku(relatorio, req.params.sku);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Upload em massa de corte minimo por SKU via CSV (SKU;VALOR por linha)
+router.post('/pcp-config/corte-minimo-sku/upload', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'Nenhum arquivo enviado' });
+      return;
+    }
+    const relatorio = (req.query.relatorio as string) || 'sugestao_producao';
+    const conteudo = req.file.buffer.toString('utf-8');
+    const { items, linhasInvalidas } = pcpConfigService.parseCorteMinimoCsv(conteudo);
+    if (items.length === 0) {
+      res.status(400).json({ error: 'Nenhuma linha valida encontrada no arquivo (esperado SKU;VALOR por linha)' });
+      return;
+    }
+    const salvos = await pcpConfigService.upsertCorteMinimoSkus(relatorio, items, req.user?.userId);
+    res.json({ items: salvos, total_salvos: salvos.length, linhas_invalidas: linhasInvalidas });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }

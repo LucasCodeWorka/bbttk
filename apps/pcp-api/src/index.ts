@@ -13,6 +13,7 @@ import transferenciaRoutes from './routes/transferencia.routes.js';
 import performanceColecaoRoutes from './routes/performanceColecao.routes.js';
 import emProducaoRoutes from './routes/emProducao.routes.js';
 import vendaDiaRoutes from './routes/vendaDia.routes.js';
+import sugestaoProducaoRoutes from './routes/sugestaoProducao.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -39,6 +40,7 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), transferenciaRo
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), performanceColecaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDiaRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), sugestaoProducaoRoutes);
 
 async function start() {
   try {

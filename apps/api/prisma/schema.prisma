@@ -24,7 +24,9 @@ model User {
   pcpCoberturaIdealFiliais PcpCoberturaIdealFilial[]
   pcpCurvaAbcConfigs       PcpCurvaAbcConfig[]
   pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
+  pcp_redistribuicao_jobs  pcp_redistribuicao_jobs[]
   pcpRelatorioConfigs      PcpRelatorioConfig[]
+  pcpCorteMinimoSkus       PcpCorteMinimoSku[]
 
   @@map("users")
 }
@@ -150,6 +152,7 @@ model operacoes {
 
 model prd_saldo {
   id                        BigInt    @id @default(autoincrement())
+  product_code              Int
   product_sku               String    @db.VarChar(50)
   branch_code               Int
   stock_code                Int
@@ -166,7 +169,6 @@ model prd_saldo {
   totvs_change_date         DateTime? @db.Timestamp(6)
   captured_at               DateTime  @default(now()) @db.Timestamp(6)
   is_full_snapshot          Boolean   @default(false)
-  product_code              Int
   branches                  branches  @relation(fields: [branch_code], references: [branch_code], onDelete: NoAction, onUpdate: NoAction)
   produtos                  produtos  @relation(fields: [product_sku], references: [product_sku], onDelete: Cascade, onUpdate: NoAction)
 
@@ -297,31 +299,34 @@ model AgrupamentoMembro {
 }
 
 model PcpRelatorioConfig {
-  id                      Int      @id @default(autoincrement())
-  relatorio               String   @unique @db.VarChar(50)
-  giroDias                Int      @default(30) @map("giro_dias")
-  coberturaMeses          Int      @default(3) @map("cobertura_meses")
-  atacadoCoberturaBase    String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
-  createdById             Int?     @map("created_by")
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
-  // Defaults pedidos pelo usuario pra Custo/PDV do Configurador (Custo=ULTIMA COMPRA,
-  // PDV Varejo=VAREJO, PDV Atacado=ATACADO, Loja de referencia=IGUATEMI) - codigos
-  // confirmados direto em produto_custos/produto_precos (nomes reais sincronizados do
-  // TOTVS), pra um relatorio novo (create no upsert) ja nascer configurado assim em
-  // vez de com o codigo generico "MEDIO S/ IMPOSTO".
-  custoCode               Int      @default(2) @map("custo_code")
-  pdvAtacadoCode          Int      @default(3) @map("pdv_atacado_code")
-  pdvVarejoCode           Int      @default(1) @map("pdv_varejo_code")
-  precoCustoBranchCode    Int      @default(1) @map("preco_custo_branch_code")
-  riscoCoberturaMeses     Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
-  coberturaLimiteVerde    Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
-  coberturaLimiteVermelho Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  maturacaoDias           Int      @default(15) @map("maturacao_dias")
-  diasAnaliseVendas       Int      @default(30) @map("dias_analise_vendas")
-  transferenciaCoberturaDiasVerde    Int      @default(75) @map("transferencia_cobertura_dias_verde")
-  transferenciaCoberturaDiasAmarelo  Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
-  createdBy               User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                Int      @id @default(autoincrement())
+  relatorio                         String   @unique @db.VarChar(50)
+  giroDias                          Int      @default(30) @map("giro_dias")
+  coberturaMeses                    Int      @default(3) @map("cobertura_meses")
+  atacadoCoberturaBase              String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
+  createdById                       Int?     @map("created_by")
+  createdAt                         DateTime @default(now()) @map("created_at")
+  updatedAt                         DateTime @updatedAt @map("updated_at")
+  custoCode                         Int      @default(2) @map("custo_code")
+  pdvAtacadoCode                    Int      @default(3) @map("pdv_atacado_code")
+  pdvVarejoCode                     Int      @default(1) @map("pdv_varejo_code")
+  precoCustoBranchCode              Int      @default(1) @map("preco_custo_branch_code")
+  riscoCoberturaMeses               Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
+  coberturaLimiteVerde              Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho           Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  maturacaoDias                     Int      @default(15) @map("maturacao_dias")
+  diasAnaliseVendas                 Int      @default(30) @map("dias_analise_vendas")
+  transferenciaCoberturaDiasAmarelo Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
+  transferenciaCoberturaDiasVerde   Int      @default(75) @map("transferencia_cobertura_dias_verde")
+  // Sugestao de Producao (relatorio='sugestao_producao'): coberturaMeses reaproveitado
+  // como janela da venda media (denominador do estoque minimo), giroDias reaproveitado
+  // como tamanho de cada um dos 2 periodos comparados. coberturaAlvoMeses e o
+  // multiplicador da venda media que define o estoque minimo alvo (default 1x, pedido
+  // literal do usuario: "a media de venda deve ser o estoque minimo"). corteMinimoDefault
+  // e o corte usado quando o SKU nao tem override em PcpCorteMinimoSku.
+  coberturaAlvoMeses                Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
+  corteMinimoDefault                Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
+  createdBy                         User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
 }
@@ -414,6 +419,26 @@ model PcpCoberturaIdealFilial {
 
   @@unique([relatorio, branchCode])
   @@map("pcp_cobertura_ideal_filiais")
+}
+
+// Corte minimo de producao por SKU (product_sku = referencia+cor+tamanho) - usado pra
+// arredondar a sugestao de producao do relatorio "Sugestao de Producao" (nunca sugerir
+// cortar menos que o minimo viavel de producao daquele SKU). Sem override aqui, o
+// relatorio cai no corte_minimo_default de PcpRelatorioConfig. Alimentado tanto por
+// edicao individual quanto por upload de CSV (SKU;VALOR) na tela de Configuracoes PCP.
+model PcpCorteMinimoSku {
+  id          Int      @id @default(autoincrement())
+  relatorio   String   @db.VarChar(50)
+  sku         String   @db.VarChar(50)
+  corteMinimo Decimal  @map("corte_minimo") @db.Decimal(15, 4)
+  createdById Int?     @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([relatorio, sku])
+  @@index([sku])
+  @@map("pcp_corte_minimo_skus")
 }
 
 model PcpMetaVisaoGeral {
@@ -682,3 +707,30 @@ model dim_vendedor {
   updated_at             DateTime? @default(now()) @db.Timestamp(6)
 }
 
+model pcp_redistribuicao_jobs {
+  id                           Int       @id @default(autoincrement())
+  status                       String    @default("pending") @db.VarChar(20)
+  created_by                   Int
+  created_at                   DateTime  @default(now())
+  started_at                   DateTime?
+  completed_at                 DateTime?
+  filtro_categoria             String[]  @default([])
+  filtro_linha                 String[]  @default([])
+  filtro_genero                String[]  @default([])
+  filtro_referencia            String?
+  filtro_branches              Int[]     @default([])
+  config_maturacao_dias        Int       @default(30)
+  config_cobertura_ideal_meses Decimal   @default(3) @db.Decimal(6, 2)
+  config_peso_cobertura        Decimal   @default(0.4) @db.Decimal(4, 2)
+  config_peso_curva            Decimal   @default(0.3) @db.Decimal(4, 2)
+  config_peso_giro             Decimal   @default(0.2) @db.Decimal(4, 2)
+  resultado_json               Json?
+  resultado_skus_total         Int?
+  resultado_sugestoes_total    Int?
+  error_message                String?
+  users                        User      @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([created_at])
+  @@index([created_by])
+  @@index([status])
+}
