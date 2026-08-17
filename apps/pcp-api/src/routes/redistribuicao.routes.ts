@@ -9,11 +9,6 @@ import {
 
 const router = Router();
 
-// Interface para request com usuario autenticado
-interface AuthRequest extends Request {
-  user?: { userId: number; email: string; role: string };
-}
-
 // GET /redistribuicao/dados-base - Dados iniciais para a tela
 router.get('/redistribuicao/dados-base', async (req: Request, res: Response) => {
   try {
@@ -27,7 +22,7 @@ router.get('/redistribuicao/dados-base', async (req: Request, res: Response) => 
 });
 
 // POST /redistribuicao/jobs - Iniciar novo calculo de sugestao
-router.post('/redistribuicao/jobs', async (req: AuthRequest, res: Response) => {
+router.post('/redistribuicao/jobs', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -53,7 +48,7 @@ router.post('/redistribuicao/jobs', async (req: AuthRequest, res: Response) => {
 });
 
 // GET /redistribuicao/jobs - Listar jobs do usuario
-router.get('/redistribuicao/jobs', async (req: AuthRequest, res: Response) => {
+router.get('/redistribuicao/jobs', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -72,7 +67,7 @@ router.get('/redistribuicao/jobs', async (req: AuthRequest, res: Response) => {
 });
 
 // GET /redistribuicao/jobs/:jobId - Consultar status/resultado de um job
-router.get('/redistribuicao/jobs/:jobId', async (req: AuthRequest, res: Response) => {
+router.get('/redistribuicao/jobs/:jobId', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {

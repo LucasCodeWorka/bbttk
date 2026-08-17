@@ -316,8 +316,6 @@ model PcpRelatorioConfig {
   coberturaLimiteVermelho           Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
   maturacaoDias                     Int      @default(15) @map("maturacao_dias")
   diasAnaliseVendas                 Int      @default(30) @map("dias_analise_vendas")
-  transferenciaCoberturaDiasAmarelo Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
-  transferenciaCoberturaDiasVerde   Int      @default(75) @map("transferencia_cobertura_dias_verde")
   // Sugestao de Producao (relatorio='sugestao_producao'): coberturaMeses reaproveitado
   // como janela da venda media (denominador do estoque minimo), giroDias reaproveitado
   // como tamanho de cada um dos 2 periodos comparados. coberturaAlvoMeses e o

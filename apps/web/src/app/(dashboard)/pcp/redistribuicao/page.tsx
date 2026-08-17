@@ -277,7 +277,11 @@ export default function RedistribuicaoPage() {
       motivoScore: s.motivoScore,
     }));
 
-    exportToExcel(dados, colunas, `redistribuicao_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    exportToExcel({
+      filename: `redistribuicao_${new Date().toISOString().slice(0, 10)}`,
+      columns: colunas,
+      data: dados,
+    });
     showToast('Excel exportado com sucesso!', 'success');
   }
 

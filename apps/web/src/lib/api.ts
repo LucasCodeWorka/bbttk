@@ -257,13 +257,6 @@ export interface PcpEstoqueSemGiroConfig {
   coberturaLimiteVermelho: number;
 }
 
-export interface PcpTransferenciaConfig {
-  relatorio: string;
-  diasAnaliseVendas: number;
-  transferenciaCoberturaDiasVerde: number;
-  transferenciaCoberturaDiasAmarelo: number;
-}
-
 export interface PcpRedistribuicaoConfig {
   relatorio: string;
   coberturaIdealMeses: number;
@@ -396,16 +389,6 @@ export const pcpConfigApi = {
 
   updateEstoqueSemGiroConfig: (token: string, data: PcpEstoqueSemGiroConfig) =>
     fetchApi<{ config: PcpEstoqueSemGiroConfig }>('/api/pcp-config/estoque-sem-giro', {
-      token,
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-
-  getTransferenciaConfig: (token: string, relatorio = 'gestao_transferencia') =>
-    fetchApi<{ config: PcpTransferenciaConfig }>(`/api/pcp-config/transferencia?relatorio=${relatorio}`, { token }),
-
-  updateTransferenciaConfig: (token: string, data: PcpTransferenciaConfig) =>
-    fetchApi<{ config: PcpTransferenciaConfig }>('/api/pcp-config/transferencia', {
       token,
       method: 'PUT',
       body: JSON.stringify(data),

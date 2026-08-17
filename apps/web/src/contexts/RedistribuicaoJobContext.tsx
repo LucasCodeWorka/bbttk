@@ -10,11 +10,14 @@ import { useAuth } from './AuthContext';
 interface RedistribuicaoConfig {
   maturacaoDias: number;
   coberturaIdealMeses: number;
+  estoqueMinimoPecas: number;
   pesos: {
     cobertura: number;
     curva: number;
     giro: number;
   };
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
 }
 
 interface RedistribuicaoSugestao {
@@ -31,6 +34,8 @@ interface RedistribuicaoSugestao {
     estoqueAtual: number;
     coberturaMeses: number | null;
     giro3m: number;
+    mediaMensal: number;
+    primeiraEntrada: string | null;
   };
   destino: {
     branchCode: number;
@@ -38,6 +43,7 @@ interface RedistribuicaoSugestao {
     estoqueAtual: number;
     coberturaMeses: number | null;
     giro3m: number;
+    mediaMensal: number;
     vendeu: boolean;
   };
   quantidadeSugerida: number;

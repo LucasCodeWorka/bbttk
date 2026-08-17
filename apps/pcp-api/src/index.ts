@@ -9,7 +9,6 @@ import visaoGeralRoutes from './routes/visaoGeral.routes.js';
 import analiseGradeRoutes from './routes/analiseGrade.routes.js';
 import curvaAbcRoutes from './routes/curvaAbc.routes.js';
 import raioXRoutes from './routes/raioX.routes.js';
-import transferenciaRoutes from './routes/transferencia.routes.js';
 import redistribuicaoRoutes from './routes/redistribuicao.routes.js';
 import performanceColecaoRoutes from './routes/performanceColecao.routes.js';
 import emProducaoRoutes from './routes/emProducao.routes.js';
@@ -37,7 +36,6 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), visaoGeralRoute
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), raioXRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), transferenciaRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), redistribuicaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), performanceColecaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoutes);
