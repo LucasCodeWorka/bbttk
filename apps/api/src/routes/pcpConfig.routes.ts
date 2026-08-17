@@ -317,4 +317,33 @@ router.post('/pcp-config/corte-minimo-sku/upload', upload.single('file'), async 
   }
 });
 
+// Configuracoes de Redistribuicao
+router.get('/pcp-config/redistribuicao', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'redistribuicao';
+    const config = await pcpConfigService.getRedistribuicaoConfig(relatorio);
+    res.json({ config });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/redistribuicao', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, coberturaIdealMeses, maturacaoDias, estoqueMinimoPecas, lojasRemetentes, lojasDestinatarias } = req.body;
+    if (!relatorio) {
+      res.status(400).json({ error: 'relatorio e obrigatorio' });
+      return;
+    }
+
+    const config = await pcpConfigService.updateRedistribuicaoConfig(
+      { relatorio, coberturaIdealMeses, maturacaoDias, estoqueMinimoPecas, lojasRemetentes, lojasDestinatarias },
+      req.user?.userId
+    );
+    res.json({ config });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 export default router;

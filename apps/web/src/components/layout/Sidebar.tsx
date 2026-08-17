@@ -148,6 +148,7 @@ const navEntries: NavEntry[] = [
       { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
       { label: 'Em Producao', href: '/relatorios/em-producao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Sugestão de Redistribuição', href: '/pcp/redistribuicao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Performance Colecao', href: '/pcp-performance-colecao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Venda do Dia', href: '/relatorios/venda-dia', icon: iconVendaDia, moduleKey: 'pcp_servico' },
       { label: 'Sugestão de Produção', href: '/relatorios/sugestao-producao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },

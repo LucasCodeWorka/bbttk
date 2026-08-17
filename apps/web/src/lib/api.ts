@@ -264,6 +264,15 @@ export interface PcpTransferenciaConfig {
   transferenciaCoberturaDiasAmarelo: number;
 }
 
+export interface PcpRedistribuicaoConfig {
+  relatorio: string;
+  coberturaIdealMeses: number;
+  maturacaoDias: number;
+  estoqueMinimoPecas: number;
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
+}
+
 export interface PcpCoberturaIdealItem {
   branchCode: number;
   coberturaIdealMeses: number;
@@ -397,6 +406,16 @@ export const pcpConfigApi = {
 
   updateTransferenciaConfig: (token: string, data: PcpTransferenciaConfig) =>
     fetchApi<{ config: PcpTransferenciaConfig }>('/api/pcp-config/transferencia', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getRedistribuicaoConfig: (token: string, relatorio = 'redistribuicao') =>
+    fetchApi<{ config: PcpRedistribuicaoConfig }>(`/api/pcp-config/redistribuicao?relatorio=${relatorio}`, { token }),
+
+  updateRedistribuicaoConfig: (token: string, data: PcpRedistribuicaoConfig) =>
+    fetchApi<{ config: PcpRedistribuicaoConfig }>('/api/pcp-config/redistribuicao', {
       token,
       method: 'PUT',
       body: JSON.stringify(data),

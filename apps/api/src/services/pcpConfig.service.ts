@@ -273,6 +273,23 @@ export interface CorteMinimoSkuItem {
   corteMinimo: number;
 }
 
+export interface UpdateRedistribuicaoConfigInput {
+  relatorio: string;
+  coberturaIdealMeses: number;
+  maturacaoDias: number;
+  estoqueMinimoPecas: number;
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
+}
+
+export interface RedistribuicaoConfigResponse {
+  coberturaIdealMeses: number;
+  maturacaoDias: number;
+  estoqueMinimoPecas: number;
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
+}
+
 // Configuracoes do relatorio Estoque Sem Giro (periodo de maturacao e limiares de cobertura)
 export async function getEstoqueSemGiroConfig(relatorio: string) {
   return prisma.pcpRelatorioConfig.upsert({
@@ -444,4 +461,75 @@ export function parseCorteMinimoCsv(conteudo: string): { items: CorteMinimoSkuIt
   }
 
   return { items, linhasInvalidas };
+}
+
+// Configuracoes do relatorio de Redistribuicao
+export async function getRedistribuicaoConfig(relatorio: string): Promise<RedistribuicaoConfigResponse> {
+  const config = await prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio },
+    create: { relatorio },
+    update: {},
+  });
+
+  return {
+    coberturaIdealMeses: Number(config.coberturaLimiteVerde),
+    maturacaoDias: config.maturacaoDias,
+    estoqueMinimoPecas: config.redistribuicaoEstoqueMinimo,
+    lojasRemetentes: config.redistribuicaoLojasRemetentes,
+    lojasDestinatarias: config.redistribuicaoLojasDestinatarias,
+  };
+}
+
+export async function updateRedistribuicaoConfig(
+  input: UpdateRedistribuicaoConfigInput,
+  userId?: number
+): Promise<RedistribuicaoConfigResponse> {
+  if (typeof input.coberturaIdealMeses !== 'number' || input.coberturaIdealMeses <= 0) {
+    throw new Error('coberturaIdealMeses precisa ser um numero positivo');
+  }
+  if (!Number.isInteger(input.maturacaoDias) || input.maturacaoDias < 0) {
+    throw new Error('maturacaoDias precisa ser um numero inteiro nao-negativo');
+  }
+  if (!Number.isInteger(input.estoqueMinimoPecas) || input.estoqueMinimoPecas < 0) {
+    throw new Error('estoqueMinimoPecas precisa ser um numero inteiro nao-negativo');
+  }
+  if (!Array.isArray(input.lojasRemetentes)) {
+    throw new Error('lojasRemetentes precisa ser um array');
+  }
+  if (!Array.isArray(input.lojasDestinatarias)) {
+    throw new Error('lojasDestinatarias precisa ser um array');
+  }
+
+  for (const bc of input.lojasRemetentes) {
+    if (!Number.isInteger(bc) || bc <= 0) {
+      throw new Error('lojasRemetentes contem valor invalido: ' + bc);
+    }
+  }
+  for (const bc of input.lojasDestinatarias) {
+    if (!Number.isInteger(bc) || bc <= 0) {
+      throw new Error('lojasDestinatarias contem valor invalido: ' + bc);
+    }
+  }
+
+  const dados = {
+    coberturaLimiteVerde: input.coberturaIdealMeses,
+    maturacaoDias: input.maturacaoDias,
+    redistribuicaoEstoqueMinimo: input.estoqueMinimoPecas,
+    redistribuicaoLojasRemetentes: input.lojasRemetentes,
+    redistribuicaoLojasDestinatarias: input.lojasDestinatarias,
+  };
+
+  const config = await prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio: input.relatorio },
+    create: { relatorio: input.relatorio, ...dados, createdById: userId },
+    update: dados,
+  });
+
+  return {
+    coberturaIdealMeses: Number(config.coberturaLimiteVerde),
+    maturacaoDias: config.maturacaoDias,
+    estoqueMinimoPecas: config.redistribuicaoEstoqueMinimo,
+    lojasRemetentes: config.redistribuicaoLojasRemetentes,
+    lojasDestinatarias: config.redistribuicaoLojasDestinatarias,
+  };
 }

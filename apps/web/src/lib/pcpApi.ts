@@ -994,6 +994,124 @@ export const vendaDiaApi = {
   getFiltros: (token: string) =>
     fetchPcpApi<VendaDiaFiltrosResponse>('/api/pcp/venda-dia/filtros', { token }),
 };
+
+// ---- Redistribuicao ----
+
+export interface RedistribuicaoFiltro {
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  referencia?: string;
+  branches?: number[];
+}
+
+export interface RedistribuicaoConfig {
+  maturacaoDias: number;
+  coberturaIdealMeses: number;
+  estoqueMinimoPecas: number;
+  pesos: {
+    cobertura: number;
+    curva: number;
+    giro: number;
+  };
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
+}
+
+export interface RedistribuicaoSugestao {
+  sku: string;
+  productCode: number;
+  referenceCode: string;
+  referenceName: string;
+  cor: string | null;
+  tamanho: string;
+  curva: 'A' | 'B' | 'C' | null;
+  origem: {
+    branchCode: number;
+    branchName: string;
+    estoqueAtual: number;
+    coberturaMeses: number | null;
+    giro3m: number;
+    mediaMensal: number;
+    primeiraEntrada: string | null;
+  };
+  destino: {
+    branchCode: number;
+    branchName: string;
+    estoqueAtual: number;
+    coberturaMeses: number | null;
+    giro3m: number;
+    mediaMensal: number;
+    vendeu: boolean;
+  };
+  quantidadeSugerida: number;
+  scorePrioridade: number;
+  motivoScore: string;
+}
+
+export interface RedistribuicaoResultado {
+  calculadoEm: string;
+  configSnapshot: RedistribuicaoConfig;
+  kpis: {
+    skusAnalisados: number;
+    skusElegiveis: number;
+    sugestoesCriadas: number;
+    pecasASugerir: number;
+  };
+  sugestoes: RedistribuicaoSugestao[];
+}
+
+export interface RedistribuicaoJobStatus {
+  jobId: number;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'timeout';
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  resultado?: RedistribuicaoResultado;
+  errorMessage?: string;
+}
+
+export interface RedistribuicaoDadosBase {
+  config: RedistribuicaoConfig;
+  resumo: {
+    skusComEstoque: number;
+    lojasAtivas: number;
+  };
+  distribuicaoPorLoja: Array<{
+    branchCode: number;
+    branchName: string;
+    skusExcesso: number;
+    skusRuptura: number;
+    estoqueTotal: number;
+  }>;
+}
+
+export const redistribuicaoApi = {
+  getDadosBase: (token: string) =>
+    fetchPcpApi<RedistribuicaoDadosBase>('/api/pcp/redistribuicao/dados-base', { token }),
+
+  iniciarJob: (token: string, filtros: RedistribuicaoFiltro) =>
+    fetchPcpApi<{ jobId: number }>('/api/pcp/redistribuicao/jobs', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(filtros),
+    }),
+
+  getJobStatus: (token: string, jobId: number) =>
+    fetchPcpApi<RedistribuicaoJobStatus>(`/api/pcp/redistribuicao/jobs/${jobId}`, { token }),
+
+  listarJobs: (token: string, limit: number = 10) =>
+    fetchPcpApi<
+      Array<{
+        jobId: number;
+        status: string;
+        createdAt: string;
+        completedAt: string | null;
+        resultadoSkusTotal: number | null;
+        resultadoSugestoesTotal: number | null;
+      }>
+    >(`/api/pcp/redistribuicao/jobs?limit=${limit}`, { token }),
+};
 // ---- Sugestao de Producao ----
 
 export interface SugestaoProducaoFiltro {
