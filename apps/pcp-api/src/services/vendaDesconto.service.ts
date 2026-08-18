@@ -395,9 +395,14 @@ export async function getResumoPromocao(filtro: {
       SELECT
         t.branch_code,
         TRIM(REGEXP_REPLACE(
-          COALESCE(b.description, b.branch_name, ''),
-          '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
-          ''
+          REGEXP_REPLACE(
+            COALESCE(b.description, b.branch_name, ''),
+            '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+            ''
+          ),
+          '^BEBETENKITE[[:space:]]*-[[:space:]]*',
+          '',
+          'i'
         )) AS branch_name,
         -- Faturamento em promoção
         SUM(
@@ -539,9 +544,14 @@ export async function getFiltrosVendaDesconto(): Promise<VendaDescontoFiltrosDis
       SELECT
         branch_code,
         TRIM(REGEXP_REPLACE(
-          COALESCE(description, branch_name, ''),
-          '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
-          ''
+          REGEXP_REPLACE(
+            COALESCE(description, branch_name, ''),
+            '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+            ''
+          ),
+          '^BEBETENKITE[[:space:]]*-[[:space:]]*',
+          '',
+          'i'
         )) AS branch_name
       FROM branches
       WHERE branch_code != 2
