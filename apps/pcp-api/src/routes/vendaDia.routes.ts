@@ -1,5 +1,14 @@
 import { Router, Request, Response } from 'express';
-import { getVendaDia, getFiltrosVendaDia, TipoClassificacao, VendaDiaFiltro } from '../services/vendaDia.service.js';
+import {
+  getVendaDia,
+  getFiltrosVendaDia,
+  TipoClassificacao,
+  VendaDiaFiltro,
+  getAcompanhamentoDiario,
+  AcompanhamentoDiarioFiltro,
+  TipoClassificacaoDiario,
+  Canal,
+} from '../services/vendaDia.service.js';
 
 const router = Router();
 
@@ -42,6 +51,23 @@ router.get('/venda-dia/filtros', async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Erro em /venda-dia/filtros:', error);
     res.status(500).json({ error: 'Erro ao buscar filtros' });
+  }
+});
+
+router.get('/venda-dia/acompanhamento', async (req: Request, res: Response) => {
+  try {
+    const tipoClassificacao = (req.query.tipoClassificacao as TipoClassificacaoDiario) || 'categoria';
+    const canal = (req.query.canal as Canal) || 'varejo';
+    const branches = parseNumberArray(req.query.branches as string);
+    const dataInicio = typeof req.query.dataInicio === 'string' ? req.query.dataInicio : undefined;
+    const dataFim = typeof req.query.dataFim === 'string' ? req.query.dataFim : undefined;
+
+    const filtro: AcompanhamentoDiarioFiltro = { tipoClassificacao, canal, branches, dataInicio, dataFim };
+    const response = await getAcompanhamentoDiario(filtro);
+    res.json(response);
+  } catch (error) {
+    console.error('Erro em /venda-dia/acompanhamento:', error);
+    res.status(500).json({ error: 'Erro ao buscar acompanhamento diário por classificação' });
   }
 });
 

@@ -23,6 +23,7 @@ model User {
   metaDistributions        MetaDistribution[]
   pcpCoberturaIdealFiliais PcpCoberturaIdealFilial[]
   pcpCurvaAbcConfigs       PcpCurvaAbcConfig[]
+  pcpMetaClassificacoes    PcpMetaClassificacao[]
   pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
   pcpRedistribuicaoJobs    PcpRedistribuicaoJob[]
   pcpRelatorioConfigs      PcpRelatorioConfig[]
@@ -441,6 +442,23 @@ model PcpCorteMinimoSku {
   @@unique([relatorio, sku])
   @@index([sku])
   @@map("pcp_corte_minimo_skus")
+}
+
+model PcpMetaClassificacao {
+  id                 Int      @id @default(autoincrement())
+  ano                Int
+  mes                Int
+  tipoClassificacao  String   @map("tipo_classificacao") @db.VarChar(20)
+  valorClassificacao String   @map("valor_classificacao") @db.VarChar(100)
+  metaValor          Decimal  @map("meta_valor") @db.Decimal(15, 2)
+  createdById        Int?     @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([ano, mes, tipoClassificacao, valorClassificacao])
+  @@index([ano, mes])
+  @@map("pcp_meta_classificacao")
 }
 
 model PcpMetaVisaoGeral {

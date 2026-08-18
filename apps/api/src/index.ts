@@ -11,6 +11,7 @@ import entregasRoutes from './routes/entregas.routes.js';
 import produtosRoutes from './routes/produtos.routes.js';
 import agrupamentosRoutes from './routes/agrupamentos.routes.js';
 import pcpConfigRoutes from './routes/pcpConfig.routes.js';
+import metaClassificacaoRoutes from './routes/metaClassificacao.routes.js';
 
 const app = express();
 // Render (e outras plataformas de hospedagem) definem PORT automaticamente;
@@ -36,6 +37,7 @@ app.use('/api', entregasRoutes);
 app.use('/api', produtosRoutes);
 app.use('/api', agrupamentosRoutes);
 app.use('/api', pcpConfigRoutes);
+app.use('/api', metaClassificacaoRoutes);
 
 // Error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

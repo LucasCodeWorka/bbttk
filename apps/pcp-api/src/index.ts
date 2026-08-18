@@ -15,6 +15,7 @@ import emProducaoRoutes from './routes/emProducao.routes.js';
 import vendaDiaRoutes from './routes/vendaDia.routes.js';
 import sugestaoProducaoRoutes from './routes/sugestaoProducao.routes.js';
 import vendaDescontoRoutes from './routes/vendaDesconto.routes.js';
+import pesosGradesRoutes from './routes/pesosGrades.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -43,6 +44,7 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoute
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDiaRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), sugestaoProducaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDescontoRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), pesosGradesRoutes);
 
 async function start() {
   try {

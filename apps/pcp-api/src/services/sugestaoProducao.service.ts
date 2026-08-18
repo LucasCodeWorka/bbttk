@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { FILIAIS } from '../config/constants.js';
 
 // V1 direto ao ponto (pedido do usuario) - relatorio de rede inteira, sem quebra por
 // filial: a producao atende todas as lojas juntas, entao estoque/venda/OP sao somados
@@ -260,11 +261,19 @@ export async function getSugestaoProducao(filtro: SugestaoProducaoFiltro = {}): 
     const corteMinimo = corteMinimoPorSku.get(row.product_sku) ?? corteMinimoDefault;
     const sugestaoProducao = deficit > 0 && corteMinimo > 0 ? Math.ceil(deficit / corteMinimo) * corteMinimo : 0;
 
+    // Estoque/em producao somam SEMPRE a base inteira analisada (antes do filtro
+    // "so quem precisa produzir") - senao "Em Producao (Rede)" e "Estoque Atual (Rede)"
+    // ficam artificialmente baixos (so contam OP/estoque dos SKUs que sobraram no
+    // filtro), inconsistente com o mesmo KPI em Acompanhamento por Linha, que sempre
+    // soma a base inteira. So "sugerido"/"skusComSugestao" fazem sentido restritos ao
+    // filtro (sao 0 pra quem nao precisa produzir de qualquer forma, filtrar antes ou
+    // depois da soma da o mesmo resultado).
+    totalEstoqueAtual += estoqueAtual;
+    totalEmProducao += emProducao;
+
     if (filtro.apenasComSugestao && sugestaoProducao <= 0) continue;
 
     totalSugerido += sugestaoProducao;
-    totalEstoqueAtual += estoqueAtual;
-    totalEmProducao += emProducao;
     if (sugestaoProducao > 0) skusComSugestao++;
 
     rows.push({
@@ -341,4 +350,56 @@ export async function getFiltrosSugestaoProducao() {
     genero: generoRows.map((r) => ({ valor: r.valor, qtd_skus: Number(r.qtd) })),
     status: statusRows.map((r) => ({ valor: r.valor, qtd_skus: Number(r.qtd) })),
   };
+}
+
+const STATUS_OP_LABEL: Record<number, string> = { 5: 'Bloqueada', 10: 'Aguardando', 20: 'Em Andamento' };
+
+export interface OpDetalhe {
+  orderCode: number;
+  branchCode: number;
+  branchName: string;
+  status: number;
+  statusLabel: string;
+  dtInicio: string | null;
+  dtPrevisao: string | null;
+  quantidadeOp: number;
+  quantidadeFinalizada: number;
+  quantidadePendente: number;
+}
+
+// Detalhe das OPs abertas por tras do numero agregado de "Em Producao" de um SKU - o
+// dado ja esta sincronizado em ops_em_producao (nao precisa chamar a API do TOTVS de
+// novo, so ja e usado pelo relatorio "Em Producao" - emProducao.service.ts). Usado
+// quando o usuario clica no valor "Em Producao" de uma linha, pra ver o numero da OP.
+export async function getOpsDetalhePorProductCode(productCode: number): Promise<OpDetalhe[]> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      order_code: number;
+      branch_code: number;
+      status: number;
+      dt_inicio: Date | null;
+      dt_previsao: Date | null;
+      quantidade_op: Decimal;
+      quantidade_finalizada: Decimal;
+      quantidade_pendente: Decimal;
+    }>
+  >`
+    SELECT order_code, branch_code, status, dt_inicio, dt_previsao, quantidade_op, quantidade_finalizada, quantidade_pendente
+    FROM ops_em_producao
+    WHERE product_code = ${productCode}
+    ORDER BY dt_previsao NULLS LAST, order_code
+  `;
+
+  return rows.map((r) => ({
+    orderCode: r.order_code,
+    branchCode: r.branch_code,
+    branchName: FILIAIS[r.branch_code] || `Filial ${r.branch_code}`,
+    status: r.status,
+    statusLabel: STATUS_OP_LABEL[r.status] || `Status ${r.status}`,
+    dtInicio: r.dt_inicio ? r.dt_inicio.toISOString().slice(0, 10) : null,
+    dtPrevisao: r.dt_previsao ? r.dt_previsao.toISOString().slice(0, 10) : null,
+    quantidadeOp: decimalToNumber(r.quantidade_op),
+    quantidadeFinalizada: decimalToNumber(r.quantidade_finalizada),
+    quantidadePendente: decimalToNumber(r.quantidade_pendente),
+  }));
 }

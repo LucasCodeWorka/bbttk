@@ -4,12 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
-import { SugestaoProducaoFiltrosResponse, SugestaoProducaoResponse, SugestaoProducaoRow, sugestaoProducaoApi } from '@/lib/pcpApi';
+import {
+  SugestaoProducaoFiltrosResponse,
+  SugestaoProducaoOpDetalhe,
+  SugestaoProducaoResponse,
+  SugestaoProducaoRow,
+  sugestaoProducaoApi,
+} from '@/lib/pcpApi';
 import { cn, formatDate, formatNumber } from '@/lib/utils';
 import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
 
@@ -20,19 +27,25 @@ const COLUNAS: Array<{ key: SortKey; label: string; align?: 'left' | 'right' | '
   { key: 'referenceCode', label: 'REFERENCIA', width: 14, type: 'text' },
   { key: 'descricao', label: 'DESCRICAO', width: 28, type: 'text' },
   { key: 'cor', label: 'COR', width: 14, type: 'text' },
-  { key: 'tamanho', label: 'TAMANHO', width: 10, type: 'text' },
+  { key: 'tamanho', label: 'TAM.', width: 10, type: 'text' },
   { key: 'categoria', label: 'CATEGORIA', width: 14, type: 'text' },
   { key: 'linha', label: 'LINHA', width: 14, type: 'text' },
-  { key: 'estoqueAtual', label: 'ESTOQUE ATUAL', align: 'right', width: 13, type: 'number' },
-  { key: 'emProducao', label: 'EM PRODUCAO', align: 'right', width: 13, type: 'number' },
-  { key: 'estoqueFuturo', label: 'ESTOQUE FUTURO', align: 'right', width: 14, type: 'number' },
-  { key: 'vendaPeriodoAtual', label: 'VENDA PERIODO ATUAL', align: 'right', width: 15, type: 'number' },
-  { key: 'vendaPeriodoAnterior', label: 'VENDA PERIODO ANTERIOR', align: 'right', width: 17, type: 'number' },
-  { key: 'vendaMediaMensal', label: 'VENDA MEDIA MENSAL', align: 'right', width: 15, type: 'number' },
-  { key: 'estoqueMinimo', label: 'ESTOQUE MINIMO', align: 'right', width: 14, type: 'number' },
-  { key: 'corteMinimo', label: 'CORTE MINIMO', align: 'right', width: 12, type: 'number' },
-  { key: 'sugestaoProducao', label: 'SUGESTAO PRODUCAO', align: 'right', width: 16, type: 'number' },
+  { key: 'estoqueAtual', label: 'EST. ATUAL', align: 'right', width: 13, type: 'number' },
+  { key: 'emProducao', label: 'EM PROD.', align: 'right', width: 13, type: 'number' },
+  { key: 'estoqueFuturo', label: 'EST. FUTURO', align: 'right', width: 14, type: 'number' },
+  { key: 'vendaPeriodoAtual', label: 'VENDA ATUAL', align: 'right', width: 15, type: 'number' },
+  { key: 'vendaPeriodoAnterior', label: 'VENDA ANT.', align: 'right', width: 17, type: 'number' },
+  { key: 'vendaMediaMensal', label: 'VENDA MEDIA', align: 'right', width: 15, type: 'number' },
+  { key: 'estoqueMinimo', label: 'EST. MINIMO', align: 'right', width: 14, type: 'number' },
+  { key: 'corteMinimo', label: 'CORTE MIN.', align: 'right', width: 12, type: 'number' },
+  { key: 'sugestaoProducao', label: 'SUGESTAO', align: 'right', width: 16, type: 'number' },
 ];
+
+const STATUS_OP_BADGE: Record<number, string> = {
+  5: 'bg-gray-100 text-gray-600',
+  10: 'bg-yellow-100 text-yellow-700',
+  20: 'bg-blue-100 text-blue-700',
+};
 
 function ThSort({
   coluna,
@@ -51,7 +64,7 @@ function ThSort({
       isHeader
       align={coluna.align}
       onClick={() => onSort(coluna.key)}
-      className="cursor-pointer select-none whitespace-nowrap bg-gray-50 hover:bg-gray-100 !px-2 !py-2"
+      className="cursor-pointer select-none whitespace-nowrap bg-gray-50 hover:bg-gray-100 !px-1.5 !py-1.5"
     >
       <span className={cn('flex items-center gap-1.5', coluna.align === 'right' && 'justify-end', coluna.align === 'center' && 'justify-center')}>
         <span>{coluna.label}</span>
@@ -82,6 +95,9 @@ export default function SugestaoProducaoPage() {
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
+  const [opsModalRow, setOpsModalRow] = useState<SugestaoProducaoRow | null>(null);
+  const [opsModalData, setOpsModalData] = useState<SugestaoProducaoOpDetalhe[] | null>(null);
+  const [opsModalLoading, setOpsModalLoading] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -118,6 +134,22 @@ export default function SugestaoProducaoPage() {
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  async function abrirOpsModal(row: SugestaoProducaoRow) {
+    if (!row.productCode || row.emProducao <= 0 || !token) return;
+    setOpsModalRow(row);
+    setOpsModalData(null);
+    setOpsModalLoading(true);
+    try {
+      const ops = await sugestaoProducaoApi.getOpsDetalhe(token, row.productCode);
+      setOpsModalData(ops);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao carregar OPs', 'error');
+      console.error(error);
+    } finally {
+      setOpsModalLoading(false);
+    }
+  }
 
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
@@ -283,7 +315,7 @@ export default function SugestaoProducaoPage() {
           <div style={{ width: scrollWidth || '100%', height: 1 }} />
         </div>
 
-        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[760px] overflow-auto" tableClassName="text-[10px] lg:text-xs min-w-[1700px]">
+        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[760px] overflow-auto" tableClassName="text-[10px] lg:text-xs min-w-[1500px]">
           <TableHead className="sticky top-0 z-10">
             <TableRow>
               {COLUNAS.map((coluna) => (
@@ -305,11 +337,20 @@ export default function SugestaoProducaoPage() {
                 {rowsOrdenadas.map((row) => (
                   <TableRow key={row.sku} className={row.sugestaoProducao > 0 ? 'bg-red-50/40' : ''}>
                     {COLUNAS.map((coluna) => (
-                      <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
+                      <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-1.5 !py-1.5">
                         {coluna.key === 'descricao' ? (
-                          <span className="block max-w-[240px] truncate" title={row.descricao}>{row.descricao}</span>
+                          <span className="block max-w-[200px] truncate" title={row.descricao}>{row.descricao}</span>
                         ) : coluna.key === 'sugestaoProducao' && row.sugestaoProducao > 0 ? (
                           <span className="font-semibold text-[var(--bbtk-red)]">{formatNumber(row.sugestaoProducao)}</span>
+                        ) : coluna.key === 'emProducao' && row.emProducao > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => abrirOpsModal(row)}
+                            className="font-medium text-[var(--bbtk-purple)] underline decoration-dotted underline-offset-2 hover:text-[var(--bbtk-red)]"
+                            title="Ver OPs em producao"
+                          >
+                            {formatNumber(row.emProducao)}
+                          </button>
                         ) : (
                           formatCell(row, coluna.key)
                         )}
@@ -334,6 +375,54 @@ export default function SugestaoProducaoPage() {
           </TableBody>
         </Table>
       </Card>
+
+      <Modal
+        isOpen={!!opsModalRow}
+        onClose={() => setOpsModalRow(null)}
+        title={opsModalRow ? `OPs em producao - ${opsModalRow.sku}` : 'OPs em producao'}
+        size="lg"
+      >
+        {opsModalLoading ? (
+          <p className="py-8 text-center text-gray-500 text-sm">Carregando...</p>
+        ) : !opsModalData || opsModalData.length === 0 ? (
+          <p className="py-8 text-center text-gray-500 text-sm">Nenhuma OP em aberto encontrada para este SKU</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 text-gray-500">
+                  <th className="px-2 py-1.5 text-left font-semibold">OP</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Filial</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Inicio</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Previsao</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Qtd. OP</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Finalizada</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Pendente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {opsModalData.map((op) => (
+                  <tr key={`${op.orderCode}-${op.branchCode}`} className="border-t border-gray-100">
+                    <td className="px-2 py-1.5 font-medium">{op.orderCode}</td>
+                    <td className="px-2 py-1.5">{op.branchName}</td>
+                    <td className="px-2 py-1.5">
+                      <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', STATUS_OP_BADGE[op.status] || 'bg-gray-100 text-gray-600')}>
+                        {op.statusLabel}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5">{op.dtInicio ? formatDate(op.dtInicio) : '-'}</td>
+                    <td className="px-2 py-1.5">{op.dtPrevisao ? formatDate(op.dtPrevisao) : '-'}</td>
+                    <td className="px-2 py-1.5 text-right">{formatNumber(op.quantidadeOp)}</td>
+                    <td className="px-2 py-1.5 text-right">{formatNumber(op.quantidadeFinalizada)}</td>
+                    <td className="px-2 py-1.5 text-right">{formatNumber(op.quantidadePendente)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
