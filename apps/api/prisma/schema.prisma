@@ -300,36 +300,42 @@ model AgrupamentoMembro {
 }
 
 model PcpRelatorioConfig {
-  id                                Int      @id @default(autoincrement())
-  relatorio                         String   @unique @db.VarChar(50)
-  giroDias                          Int      @default(30) @map("giro_dias")
-  coberturaMeses                    Int      @default(3) @map("cobertura_meses")
-  atacadoCoberturaBase              String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
-  createdById                       Int?     @map("created_by")
-  createdAt                         DateTime @default(now()) @map("created_at")
-  updatedAt                         DateTime @updatedAt @map("updated_at")
-  custoCode                         Int      @default(2) @map("custo_code")
-  pdvAtacadoCode                    Int      @default(3) @map("pdv_atacado_code")
-  pdvVarejoCode                     Int      @default(1) @map("pdv_varejo_code")
-  precoCustoBranchCode              Int      @default(1) @map("preco_custo_branch_code")
-  riscoCoberturaMeses               Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
-  coberturaLimiteVerde              Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
-  coberturaLimiteVermelho           Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  maturacaoDias                     Int      @default(15) @map("maturacao_dias")
-  diasAnaliseVendas                 Int      @default(30) @map("dias_analise_vendas")
+  id                                   Int      @id @default(autoincrement())
+  relatorio                            String   @unique @db.VarChar(50)
+  giroDias                             Int      @default(30) @map("giro_dias")
+  coberturaMeses                       Int      @default(3) @map("cobertura_meses")
+  atacadoCoberturaBase                 String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
+  createdById                          Int?     @map("created_by")
+  createdAt                            DateTime @default(now()) @map("created_at")
+  updatedAt                            DateTime @updatedAt @map("updated_at")
+  custoCode                            Int      @default(2) @map("custo_code")
+  pdvAtacadoCode                       Int      @default(3) @map("pdv_atacado_code")
+  pdvVarejoCode                        Int      @default(1) @map("pdv_varejo_code")
+  precoCustoBranchCode                 Int      @default(1) @map("preco_custo_branch_code")
+  riscoCoberturaMeses                  Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
+  coberturaLimiteVerde                 Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho              Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  maturacaoDias                        Int      @default(15) @map("maturacao_dias")
+  diasAnaliseVendas                    Int      @default(30) @map("dias_analise_vendas")
+  // Colunas orfas: o modulo Gestao de Transferencia (que usava esses 2 campos) foi
+  // removido do codigo (substituido por Redistribuicao), mas as colunas continuam no
+  // banco - nao apagamos por seguranca (regra do projeto: nunca dropar coluna nao
+  // vazia/nao reconhecida sem confirmar a origem primeiro).
+  transferencia_cobertura_dias_amarelo Int      @default(120)
+  transferencia_cobertura_dias_verde   Int      @default(75)
   // Sugestao de Producao (relatorio='sugestao_producao'): coberturaMeses reaproveitado
   // como janela da venda media (denominador do estoque minimo), giroDias reaproveitado
   // como tamanho de cada um dos 2 periodos comparados. coberturaAlvoMeses e o
   // multiplicador da venda media que define o estoque minimo alvo (default 1x, pedido
   // literal do usuario: "a media de venda deve ser o estoque minimo"). corteMinimoDefault
   // e o corte usado quando o SKU nao tem override em PcpCorteMinimoSku.
-  coberturaAlvoMeses                Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
-  corteMinimoDefault                Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
+  coberturaAlvoMeses                   Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
+  corteMinimoDefault                   Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
   // Configuracoes de Redistribuicao
-  redistribuicaoLojasRemetentes     Int[]    @default([]) @map("redistribuicao_lojas_remetentes")
-  redistribuicaoLojasDestinatarias  Int[]    @default([]) @map("redistribuicao_lojas_destinatarias")
-  redistribuicaoEstoqueMinimo       Int      @default(1) @map("redistribuicao_estoque_minimo")
-  createdBy                         User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  redistribuicaoLojasDestinatarias     Int[]    @default([]) @map("redistribuicao_lojas_destinatarias")
+  redistribuicaoLojasRemetentes        Int[]    @default([]) @map("redistribuicao_lojas_remetentes")
+  redistribuicaoEstoqueMinimo          Int      @default(1) @map("redistribuicao_estoque_minimo")
+  createdBy                            User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
 }
