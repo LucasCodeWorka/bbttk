@@ -97,11 +97,13 @@ export interface ResumoPromocaoResponse {
 
 // ========== Funções Auxiliares ==========
 
-function buildBranchFilter(branches?: number[]): Prisma.Sql {
+function buildBranchFilter(branches?: number[], alias = 't'): Prisma.Sql {
   if (!branches || branches.length === 0) {
     // Exclui Fábrica (branch_code = 2) por padrão
+    if (alias === 'ps') return Prisma.sql`ps.branch_code != 2`;
     return Prisma.sql`t.branch_code != 2`;
   }
+  if (alias === 'ps') return Prisma.sql`ps.branch_code IN (${Prisma.join(branches)})`;
   return Prisma.sql`t.branch_code IN (${Prisma.join(branches)})`;
 }
 
@@ -377,9 +379,8 @@ export async function getResumoPromocao(filtro: {
     ? Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(statusPromo)})`
     : Prisma.sql`TRIM(a.class_status) NOT IN ('ATIVO', '')`;
 
-  const branchFilter = branches && branches.length > 0
-    ? Prisma.sql`t.branch_code IN (${Prisma.join(branches)})`
-    : Prisma.sql`t.branch_code != 2`; // Exclui Fábrica por padrão
+  const branchFilter = buildBranchFilter(branches, 't');
+  const branchFilterPs = buildBranchFilter(branches, 'ps');
 
   // Query para resumo por loja
   const rows = await prisma.$queryRaw<Array<{
@@ -393,7 +394,11 @@ export async function getResumoPromocao(filtro: {
     WITH vendas_por_loja AS (
       SELECT
         t.branch_code,
-        b.description AS branch_name,
+        TRIM(REGEXP_REPLACE(
+          COALESCE(b.description, b.branch_name, ''),
+          '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+          ''
+        )) AS branch_name,
         -- Faturamento em promoção
         SUM(
           CASE
@@ -446,7 +451,7 @@ export async function getResumoPromocao(filtro: {
       ) ps
       JOIN produtos p ON p.product_sku = ps.product_sku
       LEFT JOIN produto_analitico a ON a.product_sku = ps.product_sku
-      WHERE ${branchFilter.sql?.replace('t.branch_code', 'ps.branch_code') || Prisma.sql`ps.branch_code != 2`}
+      WHERE ${branchFilterPs}
       GROUP BY ps.branch_code
     )
     SELECT
@@ -531,7 +536,13 @@ export async function getFiltrosVendaDesconto(): Promise<VendaDescontoFiltrosDis
       ORDER BY valor
     `,
     prisma.$queryRaw<Array<{ branch_code: number; branch_name: string }>>`
-      SELECT branch_code, COALESCE(description, branch_name) AS branch_name
+      SELECT
+        branch_code,
+        TRIM(REGEXP_REPLACE(
+          COALESCE(description, branch_name, ''),
+          '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+          ''
+        )) AS branch_name
       FROM branches
       WHERE branch_code != 2
       ORDER BY branch_code
