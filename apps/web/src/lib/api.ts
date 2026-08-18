@@ -257,11 +257,13 @@ export interface PcpEstoqueSemGiroConfig {
   coberturaLimiteVermelho: number;
 }
 
-export interface PcpTransferenciaConfig {
+export interface PcpRedistribuicaoConfig {
   relatorio: string;
-  diasAnaliseVendas: number;
-  transferenciaCoberturaDiasVerde: number;
-  transferenciaCoberturaDiasAmarelo: number;
+  coberturaIdealMeses: number;
+  maturacaoDias: number;
+  estoqueMinimoPecas: number;
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
 }
 
 export interface PcpCoberturaIdealItem {
@@ -392,11 +394,11 @@ export const pcpConfigApi = {
       body: JSON.stringify(data),
     }),
 
-  getTransferenciaConfig: (token: string, relatorio = 'gestao_transferencia') =>
-    fetchApi<{ config: PcpTransferenciaConfig }>(`/api/pcp-config/transferencia?relatorio=${relatorio}`, { token }),
+  getRedistribuicaoConfig: (token: string, relatorio = 'redistribuicao') =>
+    fetchApi<{ config: PcpRedistribuicaoConfig }>(`/api/pcp-config/redistribuicao?relatorio=${relatorio}`, { token }),
 
-  updateTransferenciaConfig: (token: string, data: PcpTransferenciaConfig) =>
-    fetchApi<{ config: PcpTransferenciaConfig }>('/api/pcp-config/transferencia', {
+  updateRedistribuicaoConfig: (token: string, data: PcpRedistribuicaoConfig) =>
+    fetchApi<{ config: PcpRedistribuicaoConfig }>('/api/pcp-config/redistribuicao', {
       token,
       method: 'PUT',
       body: JSON.stringify(data),

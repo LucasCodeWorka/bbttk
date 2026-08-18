@@ -49,14 +49,22 @@ export function formatMoney(value: number): string {
 }
 
 // Formatar número
-export function formatNumber(value: number): string {
-  return new Intl.NumberFormat('pt-BR').format(value);
+export function formatNumber(value: number, decimals?: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value);
 }
 
-// Formatar percentual
+// Formatar percentual (com prefixo + para valores positivos)
 export function formatPercent(value: number): string {
   const prefix = value > 0 ? '+' : '';
   return `${prefix}${value.toFixed(1)}%`;
+}
+
+// Formatar percentual simples (sem prefixo +, apenas sinal de negativo)
+export function formatPercentSimple(value: number, decimals = 2): string {
+  return `${value.toFixed(decimals)}%`;
 }
 
 // Distribui um valor total entre itens proporcionalmente aos pesos passados, garantindo

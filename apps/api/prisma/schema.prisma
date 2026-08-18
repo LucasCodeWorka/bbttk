@@ -26,7 +26,7 @@ model User {
   pcpCurvaAbcConfigs       PcpCurvaAbcConfig[]
   pcpMetaClassificacoes    PcpMetaClassificacao[]
   pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
-  pcp_redistribuicao_jobs  pcp_redistribuicao_jobs[]
+  pcpRedistribuicaoJobs    PcpRedistribuicaoJob[]
   pcpRelatorioConfigs      PcpRelatorioConfig[]
 
   @@map("users")
@@ -300,31 +300,36 @@ model AgrupamentoMembro {
 }
 
 model PcpRelatorioConfig {
-  id                                 Int      @id @default(autoincrement())
-  relatorio                          String   @unique @db.VarChar(50)
-  giroDias                           Int      @default(30) @map("giro_dias")
-  coberturaMeses                     Int      @default(3) @map("cobertura_meses")
-  atacadoCoberturaBase               String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
-  createdById                        Int?     @map("created_by")
-  createdAt                          DateTime @default(now()) @map("created_at")
-  updatedAt                          DateTime @updatedAt @map("updated_at")
-  custoCode                          Int      @default(2) @map("custo_code")
-  pdvAtacadoCode                     Int      @default(3) @map("pdv_atacado_code")
-  pdvVarejoCode                      Int      @default(1) @map("pdv_varejo_code")
-  precoCustoBranchCode               Int      @default(1) @map("preco_custo_branch_code")
-  riscoCoberturaMeses                Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
-  coberturaLimiteVerde               Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
-  coberturaLimiteVermelho            Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  maturacaoDias                      Int      @default(15) @map("maturacao_dias")
-  diasAnaliseVendas                  Int      @default(30) @map("dias_analise_vendas")
-  transferenciaCoberturaDiasAmarelo  Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
-  transferenciaCoberturaDiasVerde    Int      @default(75) @map("transferencia_cobertura_dias_verde")
-  coberturaAlvoMeses                 Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
-  corteMinimoDefault                 Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
-  redistribuicao_lojas_destinatarias Int[]    @default([])
-  redistribuicao_lojas_remetentes    Int[]    @default([])
-  redistribuicao_estoque_minimo      Int      @default(1)
-  createdBy                          User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                Int      @id @default(autoincrement())
+  relatorio                         String   @unique @db.VarChar(50)
+  giroDias                          Int      @default(30) @map("giro_dias")
+  coberturaMeses                    Int      @default(3) @map("cobertura_meses")
+  atacadoCoberturaBase              String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
+  createdById                       Int?     @map("created_by")
+  createdAt                         DateTime @default(now()) @map("created_at")
+  updatedAt                         DateTime @updatedAt @map("updated_at")
+  custoCode                         Int      @default(2) @map("custo_code")
+  pdvAtacadoCode                    Int      @default(3) @map("pdv_atacado_code")
+  pdvVarejoCode                     Int      @default(1) @map("pdv_varejo_code")
+  precoCustoBranchCode              Int      @default(1) @map("preco_custo_branch_code")
+  riscoCoberturaMeses               Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
+  coberturaLimiteVerde              Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho           Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  maturacaoDias                     Int      @default(15) @map("maturacao_dias")
+  diasAnaliseVendas                 Int      @default(30) @map("dias_analise_vendas")
+  // Sugestao de Producao (relatorio='sugestao_producao'): coberturaMeses reaproveitado
+  // como janela da venda media (denominador do estoque minimo), giroDias reaproveitado
+  // como tamanho de cada um dos 2 periodos comparados. coberturaAlvoMeses e o
+  // multiplicador da venda media que define o estoque minimo alvo (default 1x, pedido
+  // literal do usuario: "a media de venda deve ser o estoque minimo"). corteMinimoDefault
+  // e o corte usado quando o SKU nao tem override em PcpCorteMinimoSku.
+  coberturaAlvoMeses                Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
+  corteMinimoDefault                Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
+  // Configuracoes de Redistribuicao
+  redistribuicaoLojasRemetentes     Int[]    @default([]) @map("redistribuicao_lojas_remetentes")
+  redistribuicaoLojasDestinatarias  Int[]    @default([]) @map("redistribuicao_lojas_destinatarias")
+  redistribuicaoEstoqueMinimo       Int      @default(1) @map("redistribuicao_estoque_minimo")
+  createdBy                         User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
 }
@@ -721,30 +726,31 @@ model dim_vendedor {
   updated_at             DateTime? @default(now()) @db.Timestamp(6)
 }
 
-model pcp_redistribuicao_jobs {
-  id                           Int       @id @default(autoincrement())
-  status                       String    @default("pending") @db.VarChar(20)
-  created_by                   Int
-  created_at                   DateTime  @default(now())
-  started_at                   DateTime?
-  completed_at                 DateTime?
-  filtro_categoria             String[]  @default([])
-  filtro_linha                 String[]  @default([])
-  filtro_genero                String[]  @default([])
-  filtro_referencia            String?
-  filtro_branches              Int[]     @default([])
-  config_maturacao_dias        Int       @default(30)
-  config_cobertura_ideal_meses Decimal   @default(3) @db.Decimal(6, 2)
-  config_peso_cobertura        Decimal   @default(0.4) @db.Decimal(4, 2)
-  config_peso_curva            Decimal   @default(0.3) @db.Decimal(4, 2)
-  config_peso_giro             Decimal   @default(0.2) @db.Decimal(4, 2)
-  resultado_json               Json?
-  resultado_skus_total         Int?
-  resultado_sugestoes_total    Int?
-  error_message                String?
-  users                        User      @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+model PcpRedistribuicaoJob {
+  id                        Int       @id @default(autoincrement())
+  status                    String    @default("pending") @db.VarChar(20)
+  createdById               Int       @map("created_by")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  startedAt                 DateTime? @map("started_at")
+  completedAt               DateTime? @map("completed_at")
+  filtroCategoria           String[]  @default([]) @map("filtro_categoria")
+  filtroLinha               String[]  @default([]) @map("filtro_linha")
+  filtroGenero              String[]  @default([]) @map("filtro_genero")
+  filtroReferencia          String?   @map("filtro_referencia")
+  filtroBranches            Int[]     @default([]) @map("filtro_branches")
+  configMaturacaoDias       Int       @default(30) @map("config_maturacao_dias")
+  configCoberturaIdealMeses Decimal   @default(3) @map("config_cobertura_ideal_meses") @db.Decimal(6, 2)
+  configPesoCobertura       Decimal   @default(0.4) @map("config_peso_cobertura") @db.Decimal(4, 2)
+  configPesoCurva           Decimal   @default(0.3) @map("config_peso_curva") @db.Decimal(4, 2)
+  configPesoGiro            Decimal   @default(0.2) @map("config_peso_giro") @db.Decimal(4, 2)
+  resultadoJson             Json?     @map("resultado_json")
+  resultadoSkusTotal        Int?      @map("resultado_skus_total")
+  resultadoSugestoesTotal   Int?      @map("resultado_sugestoes_total")
+  errorMessage              String?   @map("error_message")
+  createdBy                 User      @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([created_at])
-  @@index([created_by])
   @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("pcp_redistribuicao_jobs")
 }

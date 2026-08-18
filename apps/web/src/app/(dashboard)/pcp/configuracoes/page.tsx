@@ -19,7 +19,7 @@ import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
 
 const RELATORIO_BASE = 'relatorio_base';
 const RELATORIO_ESTOQUE_SEM_GIRO = 'estoque_sem_giro';
-const RELATORIO_TRANSFERENCIA = 'gestao_transferencia';
+const RELATORIO_REDISTRIBUICAO = 'redistribuicao';
 const RELATORIO_SUGESTAO_PRODUCAO = 'sugestao_producao';
 
 const ATACADO_COBERTURA_OPTIONS = [
@@ -29,7 +29,7 @@ const ATACADO_COBERTURA_OPTIONS = [
 
 const FILIAIS_REAIS = RELATORIO_BASE_BRANCH_ORDER.filter((b) => b.branchCode > 0);
 
-type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'transferencia' | 'sugestao-producao';
+type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'redistribuicao' | 'sugestao-producao';
 
 export default function ConfiguracoesPcpPage() {
   const { token } = useAuth();
@@ -63,11 +63,13 @@ export default function ConfiguracoesPcpPage() {
   const [coberturaLimiteVermelho, setCoberturaLimiteVermelho] = useState('4.01');
   const [salvandoEstoqueSemGiro, setSalvandoEstoqueSemGiro] = useState(false);
 
-  // === TRANSFERENCIA ===
-  const [diasAnaliseVendas, setDiasAnaliseVendas] = useState('30');
-  const [transferenciaLimiteVerde, setTransferenciaLimiteVerde] = useState('75');
-  const [transferenciaLimiteAmarelo, setTransferenciaLimiteAmarelo] = useState('120');
-  const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
+  // === REDISTRIBUICAO ===
+  const [redistribuicaoCoberturaIdeal, setRedistribuicaoCoberturaIdeal] = useState('4');
+  const [redistribuicaoMaturacao, setRedistribuicaoMaturacao] = useState('30');
+  const [redistribuicaoEstoqueMinimo, setRedistribuicaoEstoqueMinimo] = useState('1');
+  const [redistribuicaoLojasRemetentes, setRedistribuicaoLojasRemetentes] = useState<number[]>([]);
+  const [redistribuicaoLojasDestinatarias, setRedistribuicaoLojasDestinatarias] = useState<number[]>([]);
+  const [salvandoRedistribuicao, setSalvandoRedistribuicao] = useState(false);
 
   // === SUGESTAO DE PRODUCAO ===
   const [sugestaoGiroDias, setSugestaoGiroDias] = useState('30');
@@ -86,12 +88,12 @@ export default function ConfiguracoesPcpPage() {
     if (!token) return;
     setIsLoading(true);
     try {
-      const [configRes, coberturaRes, curvaRes, estoqueRes, transferenciaRes, sugestaoRes, corteMinimoRes] = await Promise.all([
+      const [configRes, coberturaRes, curvaRes, estoqueRes, redistribuicaoRes, sugestaoRes, corteMinimoRes] = await Promise.all([
         pcpConfigApi.getConfig(token, RELATORIO_BASE),
         pcpConfigApi.getCoberturaIdeal(token, RELATORIO_BASE),
         pcpConfigApi.getCurvaAbcConfig(token),
         pcpConfigApi.getEstoqueSemGiroConfig(token, RELATORIO_ESTOQUE_SEM_GIRO),
-        pcpConfigApi.getTransferenciaConfig(token, RELATORIO_TRANSFERENCIA),
+        pcpConfigApi.getRedistribuicaoConfig(token, RELATORIO_REDISTRIBUICAO),
         pcpConfigApi.getSugestaoProducaoConfig(token, RELATORIO_SUGESTAO_PRODUCAO),
         pcpConfigApi.getCorteMinimoSkus(token, RELATORIO_SUGESTAO_PRODUCAO),
       ]);
@@ -119,10 +121,12 @@ export default function ConfiguracoesPcpPage() {
       setCoberturaLimiteVerde(String(estoqueRes.config.coberturaLimiteVerde));
       setCoberturaLimiteVermelho(String(estoqueRes.config.coberturaLimiteVermelho));
 
-      // Transferencia
-      setDiasAnaliseVendas(String(transferenciaRes.config.diasAnaliseVendas));
-      setTransferenciaLimiteVerde(String(transferenciaRes.config.transferenciaCoberturaDiasVerde));
-      setTransferenciaLimiteAmarelo(String(transferenciaRes.config.transferenciaCoberturaDiasAmarelo));
+      // Redistribuicao
+      setRedistribuicaoCoberturaIdeal(String(redistribuicaoRes.config.coberturaIdealMeses));
+      setRedistribuicaoMaturacao(String(redistribuicaoRes.config.maturacaoDias));
+      setRedistribuicaoEstoqueMinimo(String(redistribuicaoRes.config.estoqueMinimoPecas ?? 1));
+      setRedistribuicaoLojasRemetentes(redistribuicaoRes.config.lojasRemetentes || []);
+      setRedistribuicaoLojasDestinatarias(redistribuicaoRes.config.lojasDestinatarias || []);
 
       // Sugestao de Producao
       setSugestaoGiroDias(String(sugestaoRes.config.giroDias));
@@ -361,45 +365,71 @@ export default function ConfiguracoesPcpPage() {
     }
   }
 
-  // === HANDLER TRANSFERENCIA ===
-  async function handleSalvarTransferencia() {
+  // === HANDLER REDISTRIBUICAO ===
+  function toggleLojaRemetente(branchCode: number) {
+    setRedistribuicaoLojasRemetentes((prev) =>
+      prev.includes(branchCode) ? prev.filter((bc) => bc !== branchCode) : [...prev, branchCode]
+    );
+  }
+
+  function toggleLojaDestinataria(branchCode: number) {
+    setRedistribuicaoLojasDestinatarias((prev) =>
+      prev.includes(branchCode) ? prev.filter((bc) => bc !== branchCode) : [...prev, branchCode]
+    );
+  }
+
+  function selecionarTodasRemetentes() {
+    if (redistribuicaoLojasRemetentes.length === FILIAIS_REAIS.length) {
+      setRedistribuicaoLojasRemetentes([]);
+    } else {
+      setRedistribuicaoLojasRemetentes(FILIAIS_REAIS.map((b) => b.branchCode));
+    }
+  }
+
+  function selecionarTodasDestinatarias() {
+    if (redistribuicaoLojasDestinatarias.length === FILIAIS_REAIS.length) {
+      setRedistribuicaoLojasDestinatarias([]);
+    } else {
+      setRedistribuicaoLojasDestinatarias(FILIAIS_REAIS.map((b) => b.branchCode));
+    }
+  }
+
+  async function handleSalvarRedistribuicao() {
     if (!token) return;
 
-    const diasAnaliseVendasNum = parseInt(diasAnaliseVendas, 10);
-    const limiteVerdeNum = parseInt(transferenciaLimiteVerde, 10);
-    const limiteAmareloNum = parseInt(transferenciaLimiteAmarelo, 10);
+    const coberturaIdealNum = parseFloat(redistribuicaoCoberturaIdeal);
+    const maturacaoNum = parseInt(redistribuicaoMaturacao, 10);
+    const estoqueMinNum = parseInt(redistribuicaoEstoqueMinimo, 10);
 
-    if (!Number.isInteger(diasAnaliseVendasNum) || diasAnaliseVendasNum <= 0) {
-      showToast('Periodo de analise precisa ser um numero inteiro positivo', 'error');
+    if (!Number.isFinite(coberturaIdealNum) || coberturaIdealNum <= 0) {
+      showToast('Cobertura ideal precisa ser um numero positivo', 'error');
       return;
     }
-    if (!Number.isInteger(limiteVerdeNum) || limiteVerdeNum <= 0) {
-      showToast('Limite Verde precisa ser um numero inteiro positivo', 'error');
+    if (!Number.isInteger(maturacaoNum) || maturacaoNum < 0) {
+      showToast('Periodo de maturacao precisa ser um numero inteiro nao-negativo', 'error');
       return;
     }
-    if (!Number.isInteger(limiteAmareloNum) || limiteAmareloNum <= 0) {
-      showToast('Limite Amarelo precisa ser um numero inteiro positivo', 'error');
-      return;
-    }
-    if (limiteVerdeNum >= limiteAmareloNum) {
-      showToast('Limite Verde deve ser menor que Limite Amarelo', 'error');
+    if (!Number.isInteger(estoqueMinNum) || estoqueMinNum < 0) {
+      showToast('Estoque minimo precisa ser um numero inteiro nao-negativo', 'error');
       return;
     }
 
-    setSalvandoTransferencia(true);
+    setSalvandoRedistribuicao(true);
     try {
-      await pcpConfigApi.updateTransferenciaConfig(token, {
-        relatorio: RELATORIO_TRANSFERENCIA,
-        diasAnaliseVendas: diasAnaliseVendasNum,
-        transferenciaCoberturaDiasVerde: limiteVerdeNum,
-        transferenciaCoberturaDiasAmarelo: limiteAmareloNum,
+      await pcpConfigApi.updateRedistribuicaoConfig(token, {
+        relatorio: RELATORIO_REDISTRIBUICAO,
+        coberturaIdealMeses: coberturaIdealNum,
+        maturacaoDias: maturacaoNum,
+        estoqueMinimoPecas: estoqueMinNum,
+        lojasRemetentes: redistribuicaoLojasRemetentes,
+        lojasDestinatarias: redistribuicaoLojasDestinatarias,
       });
       showToast('Configuracao salva!', 'success');
     } catch (error) {
       showToast('Erro ao salvar configuracao', 'error');
       console.error(error);
     } finally {
-      setSalvandoTransferencia(false);
+      setSalvandoRedistribuicao(false);
     }
   }
 
@@ -515,7 +545,7 @@ export default function ConfiguracoesPcpPage() {
   const secoes = [
     { id: 'relatorio-base' as const, label: 'Relatorio Base' },
     { id: 'estoque-sem-giro' as const, label: 'Estoque Sem Giro' },
-    { id: 'transferencia' as const, label: 'Transferencia' },
+    { id: 'redistribuicao' as const, label: 'Redistribuicao' },
     { id: 'sugestao-producao' as const, label: 'Sugestao de Producao' },
   ];
 
@@ -826,77 +856,109 @@ export default function ConfiguracoesPcpPage() {
         </div>
       )}
 
-      {/* === SECAO TRANSFERENCIA === */}
-      {secaoAtiva === 'transferencia' && (
+      {/* === SECAO REDISTRIBUICAO === */}
+      {secaoAtiva === 'redistribuicao' && (
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Periodo de Analise de Vendas</CardTitle>
+              <CardTitle>Parametros de Sugestao</CardTitle>
             </CardHeader>
             <p className="text-sm text-gray-500 -mt-2 mb-4">
-              Define quantos dias de historico de vendas serao utilizados para calcular a cobertura de estoque.
+              Configura os criterios usados pelo algoritmo de sugestao de redistribuicao.
             </p>
             <div className="flex flex-wrap gap-4 items-end">
               <Input
-                label="Periodo de analise (dias)"
+                label="Cobertura ideal (meses)"
                 type="number"
-                min="1"
-                value={diasAnaliseVendas}
-                onChange={(e) => setDiasAnaliseVendas(e.target.value)}
+                step="0.5"
+                min="0.5"
+                value={redistribuicaoCoberturaIdeal}
+                onChange={(e) => setRedistribuicaoCoberturaIdeal(e.target.value)}
+                className="w-48"
+                disabled={isLoading}
+              />
+              <Input
+                label="Maturacao (dias)"
+                type="number"
+                min="0"
+                value={redistribuicaoMaturacao}
+                onChange={(e) => setRedistribuicaoMaturacao(e.target.value)}
+                className="w-48"
+                disabled={isLoading}
+              />
+              <Input
+                label="Estoque minimo (pecas)"
+                type="number"
+                min="0"
+                value={redistribuicaoEstoqueMinimo}
+                onChange={(e) => setRedistribuicaoEstoqueMinimo(e.target.value)}
                 className="w-48"
                 disabled={isLoading}
               />
             </div>
             <p className="text-xs text-gray-400 mt-2">
-              Recomendado: 30 a 60 dias. Periodos mais curtos refletem tendencias recentes.
+              <strong>Cobertura ideal:</strong> SKUs com cobertura acima desse valor em uma loja serao considerados para envio.
+              <br />
+              <strong>Maturacao:</strong> Produtos que chegaram na loja ha menos tempo que esse periodo nao serao sugeridos para redistribuicao. Use 0 para desabilitar.
+              <br />
+              <strong>Estoque minimo:</strong> Quantidade minima de pecas que deve permanecer na loja origem apos a redistribuicao. Use 0 para permitir enviar todo o estoque.
             </p>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Legenda de Cobertura</CardTitle>
+              <CardTitle>Lojas Remetentes</CardTitle>
+              <Button variant="secondary" size="sm" onClick={selecionarTodasRemetentes}>
+                {redistribuicaoLojasRemetentes.length === FILIAIS_REAIS.length ? 'Desmarcar todas' : 'Selecionar todas'}
+              </Button>
             </CardHeader>
             <p className="text-sm text-gray-500 -mt-2 mb-4">
-              Define os limites de dias de cobertura para coloracao da tabela de transferencias.
+              Quais lojas podem <strong>enviar</strong> estoque na sugestao de redistribuicao. Se nenhuma for selecionada, considera todas.
             </p>
-            <div className="flex flex-wrap gap-4 items-end">
-              <Input
-                label="Limite Verde (dias)"
-                type="number"
-                min="1"
-                value={transferenciaLimiteVerde}
-                onChange={(e) => setTransferenciaLimiteVerde(e.target.value)}
-                className="w-48"
-                disabled={isLoading}
-              />
-              <Input
-                label="Limite Amarelo (dias)"
-                type="number"
-                min="1"
-                value={transferenciaLimiteAmarelo}
-                onChange={(e) => setTransferenciaLimiteAmarelo(e.target.value)}
-                className="w-48"
-                disabled={isLoading}
-              />
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+              {FILIAIS_REAIS.map((b) => (
+                <label key={b.branchCode} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded">
+                  <input
+                    type="checkbox"
+                    checked={redistribuicaoLojasRemetentes.includes(b.branchCode)}
+                    onChange={() => toggleLojaRemetente(b.branchCode)}
+                    disabled={isLoading}
+                    className="w-4 h-4 text-[#6B5B95] border-gray-300 rounded focus:ring-[#6B5B95]"
+                  />
+                  <span className="text-sm text-gray-700">{b.label}</span>
+                </label>
+              ))}
             </div>
-            <div className="mt-3 space-y-1 text-xs">
-              <p className="flex items-center gap-2">
-                <span className="inline-block w-4 h-4 bg-[#CC222E]/20 border border-[#CC222E] rounded"></span>
-                <span className="text-gray-600">Ruptura: cobertura &lt; {transferenciaLimiteVerde} dias (pode receber transferencia)</span>
-              </p>
-              <p className="flex items-center gap-2">
-                <span className="inline-block w-4 h-4 bg-[#F5A623]/20 border border-[#F5A623] rounded"></span>
-                <span className="text-gray-600">Equilibrio: cobertura entre {transferenciaLimiteVerde} e {transferenciaLimiteAmarelo} dias</span>
-              </p>
-              <p className="flex items-center gap-2">
-                <span className="inline-block w-4 h-4 bg-[#6B5B95]/20 border border-[#6B5B95] rounded"></span>
-                <span className="text-gray-600">Excesso: cobertura &gt; {transferenciaLimiteAmarelo} dias (pode enviar transferencia)</span>
-              </p>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Lojas Destinatarias</CardTitle>
+              <Button variant="secondary" size="sm" onClick={selecionarTodasDestinatarias}>
+                {redistribuicaoLojasDestinatarias.length === FILIAIS_REAIS.length ? 'Desmarcar todas' : 'Selecionar todas'}
+              </Button>
+            </CardHeader>
+            <p className="text-sm text-gray-500 -mt-2 mb-4">
+              Quais lojas podem <strong>receber</strong> estoque na sugestao de redistribuicao. Se nenhuma for selecionada, considera todas.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+              {FILIAIS_REAIS.map((b) => (
+                <label key={b.branchCode} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded">
+                  <input
+                    type="checkbox"
+                    checked={redistribuicaoLojasDestinatarias.includes(b.branchCode)}
+                    onChange={() => toggleLojaDestinataria(b.branchCode)}
+                    disabled={isLoading}
+                    className="w-4 h-4 text-[#6B5B95] border-gray-300 rounded focus:ring-[#6B5B95]"
+                  />
+                  <span className="text-sm text-gray-700">{b.label}</span>
+                </label>
+              ))}
             </div>
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSalvarTransferencia} isLoading={salvandoTransferencia} disabled={isLoading}>
+            <Button onClick={handleSalvarRedistribuicao} isLoading={salvandoRedistribuicao} disabled={isLoading}>
               Salvar Configuracoes
             </Button>
           </div>

@@ -876,50 +876,6 @@ export const raioXApi = {
   },
 };
 
-// Gestão de Transferência
-export interface TransferenciaLoja {
-  branchCode: number;
-  branchName: string;
-  estoquePorTamanho: Record<string, number>;
-  estoqueTotal: number;
-  vendasPorTamanho: Record<string, number>;
-  coberturaPorTamanho: Record<string, number>;
-}
-
-export interface TransferenciaGrupo {
-  referencia: string;
-  descricao: string;
-  cor: string | null;
-  tamanhos: string[];
-  lojas: TransferenciaLoja[];
-}
-
-export interface TransferenciaResponse {
-  grupos: TransferenciaGrupo[];
-}
-
-export interface ReferenciaSearchResult {
-  referencia: string;
-  descricao: string;
-  cor?: string;
-}
-
-export const transferenciaApi = {
-  getTransferencia: (token: string, referencia: string, agruparPorCor: boolean) => {
-    const params = new URLSearchParams();
-    params.set('referencia', referencia);
-    params.set('agruparPorCor', String(agruparPorCor));
-    return fetchPcpApi<TransferenciaResponse>(`/api/pcp/transferencia?${params.toString()}`, { token });
-  },
-
-  buscarReferencias: (token: string, search: string, limit: number = 20) => {
-    const params = new URLSearchParams();
-    params.set('search', search);
-    params.set('limit', String(limit));
-    return fetchPcpApi<ReferenciaSearchResult[]>(`/api/pcp/transferencia/referencias?${params.toString()}`, { token });
-  },
-};
-
 // ---- Venda do Dia por Classificação ----
 
 export type VendaDiaTipoClassificacao = 'categoria' | 'linha' | 'colecao' | 'status';
@@ -1049,6 +1005,124 @@ export interface AcompanhamentoDiarioResponse {
   };
   linhas: AcompanhamentoDiarioLinha[];
 }
+
+// ---- Redistribuicao ----
+
+export interface RedistribuicaoFiltro {
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  referencia?: string;
+  branches?: number[];
+}
+
+export interface RedistribuicaoConfig {
+  maturacaoDias: number;
+  coberturaIdealMeses: number;
+  estoqueMinimoPecas: number;
+  pesos: {
+    cobertura: number;
+    curva: number;
+    giro: number;
+  };
+  lojasRemetentes: number[];
+  lojasDestinatarias: number[];
+}
+
+export interface RedistribuicaoSugestao {
+  sku: string;
+  productCode: number;
+  referenceCode: string;
+  referenceName: string;
+  cor: string | null;
+  tamanho: string;
+  curva: 'A' | 'B' | 'C' | null;
+  origem: {
+    branchCode: number;
+    branchName: string;
+    estoqueAtual: number;
+    coberturaMeses: number | null;
+    giro3m: number;
+    mediaMensal: number;
+    primeiraEntrada: string | null;
+  };
+  destino: {
+    branchCode: number;
+    branchName: string;
+    estoqueAtual: number;
+    coberturaMeses: number | null;
+    giro3m: number;
+    mediaMensal: number;
+    vendeu: boolean;
+  };
+  quantidadeSugerida: number;
+  scorePrioridade: number;
+  motivoScore: string;
+}
+
+export interface RedistribuicaoResultado {
+  calculadoEm: string;
+  configSnapshot: RedistribuicaoConfig;
+  kpis: {
+    skusAnalisados: number;
+    skusElegiveis: number;
+    sugestoesCriadas: number;
+    pecasASugerir: number;
+  };
+  sugestoes: RedistribuicaoSugestao[];
+}
+
+export interface RedistribuicaoJobStatus {
+  jobId: number;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'timeout';
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  resultado?: RedistribuicaoResultado;
+  errorMessage?: string;
+}
+
+export interface RedistribuicaoDadosBase {
+  config: RedistribuicaoConfig;
+  resumo: {
+    skusComEstoque: number;
+    lojasAtivas: number;
+  };
+  distribuicaoPorLoja: Array<{
+    branchCode: number;
+    branchName: string;
+    skusExcesso: number;
+    skusRuptura: number;
+    estoqueTotal: number;
+  }>;
+}
+
+export const redistribuicaoApi = {
+  getDadosBase: (token: string) =>
+    fetchPcpApi<RedistribuicaoDadosBase>('/api/pcp/redistribuicao/dados-base', { token }),
+
+  iniciarJob: (token: string, filtros: RedistribuicaoFiltro) =>
+    fetchPcpApi<{ jobId: number }>('/api/pcp/redistribuicao/jobs', {
+      token,
+      method: 'POST',
+      body: JSON.stringify(filtros),
+    }),
+
+  getJobStatus: (token: string, jobId: number) =>
+    fetchPcpApi<RedistribuicaoJobStatus>(`/api/pcp/redistribuicao/jobs/${jobId}`, { token }),
+
+  listarJobs: (token: string, limit: number = 10) =>
+    fetchPcpApi<
+      Array<{
+        jobId: number;
+        status: string;
+        createdAt: string;
+        completedAt: string | null;
+        resultadoSkusTotal: number | null;
+        resultadoSugestoesTotal: number | null;
+      }>
+    >(`/api/pcp/redistribuicao/jobs?limit=${limit}`, { token }),
+};
 
 // ---- Sugestao de Producao ----
 
@@ -1206,5 +1280,126 @@ export const pesosGradesApi = {
     appendList(params, 'status', filtro.status);
     const query = params.toString();
     return fetchPcpApi<{ referencias: PesosGradesReferenciaOpcao[] }>(`/api/pcp/pesos-grades/referencias${query ? `?${query}` : ''}`, { token });
+  },
+};
+
+// ---- Venda e Desconto por Classificação (Relatório 5) ----
+
+export type VendaDescontoClassificacao = 'categoria' | 'linha' | 'colecao' | 'status';
+
+export interface VendaDescontoFiltro {
+  dataInicio: string;
+  dataFim: string;
+  branches?: number[];
+  agruparLojas?: boolean;
+  classificacao: VendaDescontoClassificacao;
+  itensClassificacao?: string[];
+}
+
+export interface VendaDescontoRow {
+  codigo: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  status: string | null;
+  colecao: string | null;
+  custoProducao: number;
+  pdvOriginal: number;
+  pdvAtual: number;
+  markup: number;
+  descontoPct: number;
+  pdvVenda: number;
+  vendas: number;
+  estoqueFim: number;
+  giro: number;
+  ttEstqVdaOriginal: number;
+  ttEstqVdaAtual: number;
+  pctDesconto: number;
+  ttVdaVda: number;
+  ttDescontoVenda: number;
+}
+
+export interface VendaDescontoTotais {
+  vendas: number;
+  estoqueFim: number;
+  giro: number;
+  ttEstqVdaOriginal: number;
+  ttEstqVdaAtual: number;
+  pctDesconto: number;
+  ttVdaVda: number;
+  ttDescontoVenda: number;
+}
+
+export interface VendaDescontoGerais {
+  vendaTotalGeralQtd: number;
+  participacaoPromoQtd: number;
+  vendaTotalGeralValor: number;
+  participacaoPromoValor: number;
+}
+
+export interface VendaDescontoResponse {
+  filtro: VendaDescontoFiltro;
+  rows: VendaDescontoRow[];
+  totais: VendaDescontoTotais;
+  gerais: VendaDescontoGerais;
+}
+
+export interface VendaDescontoFiltrosResponse {
+  categorias: string[];
+  linhas: string[];
+  colecoes: string[];
+  status: string[];
+  branches: Array<{ branch_code: number; branch_name: string }>;
+}
+
+export const vendaDescontoApi = {
+  getVendaDesconto: (token: string, filtro: VendaDescontoFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    params.set('classificacao', filtro.classificacao);
+    if (filtro.agruparLojas !== undefined) params.set('agruparLojas', String(filtro.agruparLojas));
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'itensClassificacao', filtro.itensClassificacao);
+    return fetchPcpApi<VendaDescontoResponse>(`/api/pcp/venda-desconto?${params.toString()}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<VendaDescontoFiltrosResponse>('/api/pcp/venda-desconto/filtros', { token }),
+};
+
+// ---- Resumo da Promoção por Loja (Relatório 5.1) ----
+
+export interface ResumoPromocaoFiltro {
+  dataInicio: string;
+  dataFim: string;
+  branches?: number[];
+  statusPromo?: string[];
+}
+
+export interface ResumoPromocaoLojaRow {
+  branchCode: number;
+  branchName: string;
+  vendaTotalPromo: number;
+  vendaTotalGeralPeriodo: number;
+  participacaoPromoPct: number;
+  estoqueFinalPromo: number;
+  estoqueFinalGeralPecas: number;
+  participacaoEstoquePromoPct: number;
+}
+
+export interface ResumoPromocaoResponse {
+  filtro: ResumoPromocaoFiltro;
+  rows: ResumoPromocaoLojaRow[];
+}
+
+export const resumoPromocaoApi = {
+  getResumoPromocao: (token: string, filtro: ResumoPromocaoFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'statusPromo', filtro.statusPromo);
+    return fetchPcpApi<ResumoPromocaoResponse>(`/api/pcp/resumo-promocao?${params.toString()}`, { token });
   },
 };

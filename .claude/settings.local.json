@@ -39,7 +39,10 @@
       "Bash(netstat -ano)",
       "Bash(curl -s -o /dev/null -w \"web \\(3000\\): HTTP %{http_code}\\\\n\" http://localhost:3000)",
       "Bash(curl -s -o /dev/null -w \"api \\(3001\\): HTTP %{http_code}\\\\n\" http://localhost:3001/api/metas?ano=2026)",
-      "Bash(curl -s -o /dev/null -w \"api \\(3001\\): HTTP %{http_code}\\\\n\" \"http://localhost:3001/api/metas?ano=2026&mes=8\")"
+      "Bash(curl -s -o /dev/null -w \"api \\(3001\\): HTTP %{http_code}\\\\n\" \"http://localhost:3001/api/metas?ano=2026&mes=8\")",
+      "Bash(ls:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

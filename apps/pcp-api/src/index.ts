@@ -9,12 +9,13 @@ import visaoGeralRoutes from './routes/visaoGeral.routes.js';
 import analiseGradeRoutes from './routes/analiseGrade.routes.js';
 import curvaAbcRoutes from './routes/curvaAbc.routes.js';
 import raioXRoutes from './routes/raioX.routes.js';
-import transferenciaRoutes from './routes/transferencia.routes.js';
+import redistribuicaoRoutes from './routes/redistribuicao.routes.js';
 import performanceColecaoRoutes from './routes/performanceColecao.routes.js';
 import emProducaoRoutes from './routes/emProducao.routes.js';
 import vendaDiaRoutes from './routes/vendaDia.routes.js';
 import sugestaoProducaoRoutes from './routes/sugestaoProducao.routes.js';
 import pesosGradesRoutes from './routes/pesosGrades.routes.js';
+import vendaDescontoRoutes from './routes/vendaDesconto.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -37,12 +38,13 @@ app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), visaoGeralRoute
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), raioXRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), transferenciaRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), redistribuicaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), performanceColecaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDiaRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), sugestaoProducaoRoutes);
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), pesosGradesRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDescontoRoutes);
 
 async function start() {
   try {

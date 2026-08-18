@@ -202,35 +202,6 @@ router.put('/pcp-config/estoque-sem-giro', async (req: Request, res: Response) =
   }
 });
 
-// Configuracoes da Gestao de Transferencia (periodo de analise de vendas)
-router.get('/pcp-config/transferencia', async (req: Request, res: Response) => {
-  try {
-    const relatorio = (req.query.relatorio as string) || 'gestao_transferencia';
-    const config = await pcpConfigService.getTransferenciaConfig(relatorio);
-    res.json({ config });
-  } catch (error) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-router.put('/pcp-config/transferencia', async (req: Request, res: Response) => {
-  try {
-    const { relatorio, diasAnaliseVendas, transferenciaCoberturaDiasVerde, transferenciaCoberturaDiasAmarelo } = req.body;
-    if (!relatorio) {
-      res.status(400).json({ error: 'relatorio e obrigatorio' });
-      return;
-    }
-
-    const config = await pcpConfigService.updateTransferenciaConfig(
-      { relatorio, diasAnaliseVendas, transferenciaCoberturaDiasVerde, transferenciaCoberturaDiasAmarelo },
-      req.user?.userId
-    );
-    res.json({ config });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
 // Configuracoes da Sugestao de Producao (periodos de venda, cobertura alvo, corte minimo padrao)
 router.get('/pcp-config/sugestao-producao', async (req: Request, res: Response) => {
   try {
@@ -312,6 +283,35 @@ router.post('/pcp-config/corte-minimo-sku/upload', upload.single('file'), async 
     }
     const salvos = await pcpConfigService.upsertCorteMinimoSkus(relatorio, items, req.user?.userId);
     res.json({ items: salvos, total_salvos: salvos.length, linhas_invalidas: linhasInvalidas });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Configuracoes de Redistribuicao
+router.get('/pcp-config/redistribuicao', async (req: Request, res: Response) => {
+  try {
+    const relatorio = (req.query.relatorio as string) || 'redistribuicao';
+    const config = await pcpConfigService.getRedistribuicaoConfig(relatorio);
+    res.json({ config });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.put('/pcp-config/redistribuicao', async (req: Request, res: Response) => {
+  try {
+    const { relatorio, coberturaIdealMeses, maturacaoDias, estoqueMinimoPecas, lojasRemetentes, lojasDestinatarias } = req.body;
+    if (!relatorio) {
+      res.status(400).json({ error: 'relatorio e obrigatorio' });
+      return;
+    }
+
+    const config = await pcpConfigService.updateRedistribuicaoConfig(
+      { relatorio, coberturaIdealMeses, maturacaoDias, estoqueMinimoPecas, lojasRemetentes, lojasDestinatarias },
+      req.user?.userId
+    );
+    res.json({ config });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }

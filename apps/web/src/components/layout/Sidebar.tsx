@@ -148,11 +148,12 @@ const navEntries: NavEntry[] = [
       { label: 'Acompanhamento por Linha', href: '/relatorios/acompanhamento-linha', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Raio X', href: '/relatorios/raio-x', icon: iconRaioX, moduleKey: 'pcp_servico' },
       { label: 'Em Producao', href: '/relatorios/em-producao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
-      { label: 'Gestão de Transferência', href: '/pcp/transferencia', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Sugestão de Redistribuição', href: '/pcp/redistribuicao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Performance Colecao', href: '/pcp-performance-colecao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Venda do Dia', href: '/relatorios/venda-dia', icon: iconVendaDia, moduleKey: 'pcp_servico' },
       { label: 'Sugestão de Produção', href: '/relatorios/sugestao-producao', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
       { label: 'Pesos e Grades para Produção', href: '/relatorios/pesos-grades', icon: iconAgrupamentoCores, moduleKey: 'pcp_servico' },
+      { label: 'Venda e Desconto', href: '/relatorios/venda-desconto', icon: iconRelatorios, moduleKey: 'pcp_servico' },
     ],
   },
 ];

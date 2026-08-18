@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { RedistribuicaoJobProvider } from '@/contexts/RedistribuicaoJobContext';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { cn } from '@/lib/utils';
 import { getModuleForPath, isAdminOnlyPath } from '@/lib/permissions';
@@ -49,11 +50,13 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Sidebar isCollapsed={isCollapsed} onToggleCollapse={() => setIsCollapsed((prev) => !prev)} />
-      <main className={cn('p-6 transition-all duration-300 print:ml-0 print:p-0', isCollapsed ? 'ml-16' : 'ml-64')}>
-        {children}
-      </main>
-    </div>
+    <RedistribuicaoJobProvider>
+      <div className="min-h-screen bg-gray-100">
+        <Sidebar isCollapsed={isCollapsed} onToggleCollapse={() => setIsCollapsed((prev) => !prev)} />
+        <main className={cn('p-6 transition-all duration-300 print:ml-0 print:p-0', isCollapsed ? 'ml-16' : 'ml-64')}>
+          {children}
+        </main>
+      </div>
+    </RedistribuicaoJobProvider>
   );
 }
