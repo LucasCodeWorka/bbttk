@@ -436,6 +436,41 @@ export const pcpConfigApi = {
     ),
 };
 
+// Meta de venda mensal por classificacao (categoria/linha/genero/colecao) - cadastrada
+// no modal da tela "Acompanhamento por Linha" (PCP).
+export interface PcpMetaClassificacaoItem {
+  id: number;
+  ano: number;
+  mes: number;
+  tipoClassificacao: string;
+  valorClassificacao: string;
+  metaValor: number;
+}
+
+export interface PcpMetaClassificacaoInput {
+  tipoClassificacao: string;
+  valorClassificacao: string;
+  metaValor: number;
+}
+
+export const metaClassificacaoApi = {
+  getMetas: (token: string, ano: number, mes: number) =>
+    fetchApi<{ metas: PcpMetaClassificacaoItem[] }>(`/api/pcp-meta-classificacao?ano=${ano}&mes=${mes}`, { token }),
+
+  salvarMetas: (token: string, ano: number, mes: number, items: PcpMetaClassificacaoInput[]) =>
+    fetchApi<{ metas: PcpMetaClassificacaoItem[] }>('/api/pcp-meta-classificacao', {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({ ano, mes, items }),
+    }),
+
+  deleteMeta: (token: string, id: number) =>
+    fetchApi<{ success: boolean }>(`/api/pcp-meta-classificacao/${id}`, { token, method: 'DELETE' }),
+
+  getValores: (token: string, tipo: string) =>
+    fetchApi<{ valores: string[] }>(`/api/pcp-meta-classificacao/valores/${tipo}`, { token }),
+};
+
 // Metas
 export const metasApi = {
   getNiveis: () =>

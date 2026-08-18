@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ClassificacaoOption {
   value: string;
@@ -22,17 +23,37 @@ interface ClassificacaoMultiSelectProps {
 export function ClassificacaoMultiSelect({ label, options, selected, onChange, className }: ClassificacaoMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [busca, setBusca] = useState('');
+  const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const alvo = e.target as Node;
+      const dentroDoBotao = containerRef.current?.contains(alvo);
+      const dentroDoDropdown = dropdownRef.current?.contains(alvo);
+      if (!dentroDoBotao && !dentroDoDropdown) {
         setOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // O dropdown e desenhado num portal (document.body) com position:fixed calculada
+  // pelo retangulo do botao, em vez de position:absolute dentro do proprio container -
+  // isso evita ficar cortado quando o componente e usado dentro de um Modal (que tem
+  // overflow-y-auto e uma altura limitada, cortando qualquer filho absolute que
+  // ultrapasse a area visivel). Sem tracking de scroll de proposito (fecha e reabre
+  // resolve, e mantem simples).
+  function toggleOpen() {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPosicao({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 256) });
+    }
+    setOpen((prev) => !prev);
+  }
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -70,8 +91,9 @@ export function ClassificacaoMultiSelect({ label, options, selected, onChange, c
       <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
       <div className="relative">
         <button
+          ref={buttonRef}
           type="button"
-          onClick={() => setOpen(!open)}
+          onClick={toggleOpen}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-[var(--bbtk-red)] focus:border-transparent"
         >
           <span className="truncate text-left">{displayText}</span>
@@ -85,8 +107,12 @@ export function ClassificacaoMultiSelect({ label, options, selected, onChange, c
           </svg>
         </button>
 
-        {open && (
-          <div className="absolute z-20 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg">
+        {open && posicao && typeof document !== 'undefined' && createPortal(
+          <div
+            ref={dropdownRef}
+            className="fixed z-[60] bg-white border border-gray-200 rounded-lg shadow-lg"
+            style={{ top: posicao.top, left: posicao.left, width: posicao.width }}
+          >
             {options.length > 8 && (
               <div className="p-2 border-b border-gray-100">
                 <input
@@ -150,7 +176,8 @@ export function ClassificacaoMultiSelect({ label, options, selected, onChange, c
                 })
               )}
             </div>
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     </div>

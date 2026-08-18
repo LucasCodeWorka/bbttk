@@ -15,6 +15,10 @@ export const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operatio
 export const SALE_OPERATION_FILTER = Prisma.sql`(${IS_VENDA} OR ${IS_DEVOLUCAO})`;
 // Giro liquido de devolucao (mesmo padrao do resto do sistema - venda/peca sempre liquida)
 export const QUANTIDADE_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
+// Faturamento liquido de devolucao, mesmo padrao de vendas.service.ts:52 (apps/api) -
+// ABS() normaliza o sinal que o ETL gravou pra devolucao (inconsistente, as vezes vem
+// positivo, as vezes negativo) antes de aplicar o sinal negativo de verdade.
+export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
 
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';

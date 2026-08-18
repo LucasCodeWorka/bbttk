@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { SugestaoProducaoFiltro, getSugestaoProducao, getFiltrosSugestaoProducao } from '../services/sugestaoProducao.service.js';
+import { SugestaoProducaoFiltro, getSugestaoProducao, getFiltrosSugestaoProducao, getOpsDetalhePorProductCode } from '../services/sugestaoProducao.service.js';
 
 const router = Router();
 
@@ -33,6 +33,19 @@ router.get('/sugestao-producao', async (req: Request, res: Response) => {
       apenasComSugestao: parseBoolean(req.query.apenasComSugestao),
     };
     res.json(await getSugestaoProducao(filtro));
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.get('/sugestao-producao/ops/:productCode', async (req: Request, res: Response) => {
+  try {
+    const productCode = Number(req.params.productCode);
+    if (!Number.isFinite(productCode)) {
+      res.status(400).json({ error: 'productCode invalido' });
+      return;
+    }
+    res.json(await getOpsDetalhePorProductCode(productCode));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

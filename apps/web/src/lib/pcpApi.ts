@@ -993,7 +993,63 @@ export const vendaDiaApi = {
 
   getFiltros: (token: string) =>
     fetchPcpApi<VendaDiaFiltrosResponse>('/api/pcp/venda-dia/filtros', { token }),
+
+  getAcompanhamento: (token: string, filtro: AcompanhamentoDiarioFiltro) => {
+    const params = new URLSearchParams();
+    params.set('tipoClassificacao', filtro.tipoClassificacao);
+    params.set('canal', filtro.canal);
+    if (filtro.branches && filtro.branches.length > 0) {
+      params.set('branches', filtro.branches.join(','));
+    }
+    if (filtro.dataInicio) params.set('dataInicio', filtro.dataInicio);
+    if (filtro.dataFim) params.set('dataFim', filtro.dataFim);
+    return fetchPcpApi<AcompanhamentoDiarioResponse>(`/api/pcp/venda-dia/acompanhamento?${params.toString()}`, { token });
+  },
 };
+
+// ---- Acompanhamento Diario por Categoria/Linha/Genero (aba de Venda do Dia) ----
+
+export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero';
+export type Canal = 'varejo' | 'atacado' | 'todos';
+
+export interface AcompanhamentoDiarioFiltro {
+  tipoClassificacao: TipoClassificacaoDiario;
+  canal: Canal;
+  branches?: number[];
+  dataInicio?: string;
+  dataFim?: string;
+}
+
+export interface AcompanhamentoDiarioLinha {
+  classificacao: string;
+  vendaValorAtual: number;
+  vendaValorAnoAnterior: number;
+  evolucaoValorPercent: number | null;
+  vendaPecasAtual: number;
+  vendaPecasAnoAnterior: number;
+  evolucaoPecasPercent: number | null;
+  participacaoPercent: number;
+  coberturaMesesAtual: number | null;
+  coberturaMesesAnoAnterior: number | null;
+  estoqueFisico: number;
+  pecasEmProducao: number;
+}
+
+export interface AcompanhamentoDiarioResponse {
+  periodoAtual: { inicio: string; fim: string };
+  periodoAnoAnterior: { inicio: string; fim: string };
+  tipoClassificacao: TipoClassificacaoDiario;
+  canal: Canal;
+  kpis: {
+    vendaValorTotal: number;
+    vendaValorAnoAnteriorTotal: number;
+    evolucaoValorPercent: number | null;
+    estoqueFisicoTotal: number;
+    pecasEmProducaoTotal: number;
+  };
+  linhas: AcompanhamentoDiarioLinha[];
+}
+
 // ---- Sugestao de Producao ----
 
 export interface SugestaoProducaoFiltro {
@@ -1047,6 +1103,19 @@ export interface SugestaoProducaoFiltrosResponse {
   status: PcpClassificacaoOpcao[];
 }
 
+export interface SugestaoProducaoOpDetalhe {
+  orderCode: number;
+  branchCode: number;
+  branchName: string;
+  status: number;
+  statusLabel: string;
+  dtInicio: string | null;
+  dtPrevisao: string | null;
+  quantidadeOp: number;
+  quantidadeFinalizada: number;
+  quantidadePendente: number;
+}
+
 export const sugestaoProducaoApi = {
   getSugestaoProducao: (token: string, filtro: SugestaoProducaoFiltro = {}) => {
     const params = new URLSearchParams();
@@ -1062,4 +1131,80 @@ export const sugestaoProducaoApi = {
 
   getFiltros: (token: string) =>
     fetchPcpApi<SugestaoProducaoFiltrosResponse>('/api/pcp/sugestao-producao/filtros', { token }),
+
+  getOpsDetalhe: (token: string, productCode: number) =>
+    fetchPcpApi<SugestaoProducaoOpDetalhe[]>(`/api/pcp/sugestao-producao/ops/${productCode}`, { token }),
+};
+
+// ---- Pesos e Grades para Producao ----
+
+export type TipoAnalisePesosGrades = 'item' | 'categoria';
+
+export interface PesosGradesFiltro {
+  tipoAnalise: TipoAnalisePesosGrades;
+  referencias?: string[];
+  categorias?: string[];
+  dataInicio: string;
+  dataFim: string;
+  fatorDivisor: number;
+}
+
+export interface PesosGradesTamanho {
+  tamanho: string;
+  quantidadeVendida: number;
+  frequencia: number;
+}
+
+export interface PesosGradesReferencia {
+  referenceCode: string;
+  descricao: string;
+  tamanhos: PesosGradesTamanho[];
+}
+
+export interface PesosGradesResponse {
+  fatorDivisor: number;
+  periodo: { inicio: string; fim: string };
+  referencias: PesosGradesReferencia[];
+}
+
+export interface PesosGradesReferenciaOpcao {
+  referenceCode: string;
+  referenceName: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+}
+
+export interface BuscarReferenciasPesosGradesFiltro {
+  search?: string;
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  status?: string[];
+  limit?: number;
+}
+
+export const pesosGradesApi = {
+  getPesosGrades: (token: string, filtro: PesosGradesFiltro) => {
+    const params = new URLSearchParams();
+    params.set('tipoAnalise', filtro.tipoAnalise);
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    params.set('fatorDivisor', String(filtro.fatorDivisor));
+    appendList(params, 'referencias', filtro.referencias);
+    appendList(params, 'categorias', filtro.categorias);
+    return fetchPcpApi<PesosGradesResponse>(`/api/pcp/pesos-grades?${params.toString()}`, { token });
+  },
+
+  buscarReferencias: (token: string, filtro: BuscarReferenciasPesosGradesFiltro = {}) => {
+    const params = new URLSearchParams();
+    if (filtro.search) params.set('search', filtro.search);
+    if (filtro.limit) params.set('limit', String(filtro.limit));
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
+    const query = params.toString();
+    return fetchPcpApi<{ referencias: PesosGradesReferenciaOpcao[] }>(`/api/pcp/pesos-grades/referencias${query ? `?${query}` : ''}`, { token });
+  },
 };

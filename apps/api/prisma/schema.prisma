@@ -22,11 +22,12 @@ model User {
   agrupamentoGrupos        AgrupamentoGrupo[]
   metaDistributions        MetaDistribution[]
   pcpCoberturaIdealFiliais PcpCoberturaIdealFilial[]
+  pcpCorteMinimoSkus       PcpCorteMinimoSku[]
   pcpCurvaAbcConfigs       PcpCurvaAbcConfig[]
+  pcpMetaClassificacoes    PcpMetaClassificacao[]
   pcpMetaVisaoGerais       PcpMetaVisaoGeral[]
   pcp_redistribuicao_jobs  pcp_redistribuicao_jobs[]
   pcpRelatorioConfigs      PcpRelatorioConfig[]
-  pcpCorteMinimoSkus       PcpCorteMinimoSku[]
 
   @@map("users")
 }
@@ -299,34 +300,31 @@ model AgrupamentoMembro {
 }
 
 model PcpRelatorioConfig {
-  id                                Int      @id @default(autoincrement())
-  relatorio                         String   @unique @db.VarChar(50)
-  giroDias                          Int      @default(30) @map("giro_dias")
-  coberturaMeses                    Int      @default(3) @map("cobertura_meses")
-  atacadoCoberturaBase              String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
-  createdById                       Int?     @map("created_by")
-  createdAt                         DateTime @default(now()) @map("created_at")
-  updatedAt                         DateTime @updatedAt @map("updated_at")
-  custoCode                         Int      @default(2) @map("custo_code")
-  pdvAtacadoCode                    Int      @default(3) @map("pdv_atacado_code")
-  pdvVarejoCode                     Int      @default(1) @map("pdv_varejo_code")
-  precoCustoBranchCode              Int      @default(1) @map("preco_custo_branch_code")
-  riscoCoberturaMeses               Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
-  coberturaLimiteVerde              Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
-  coberturaLimiteVermelho           Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
-  maturacaoDias                     Int      @default(15) @map("maturacao_dias")
-  diasAnaliseVendas                 Int      @default(30) @map("dias_analise_vendas")
-  transferenciaCoberturaDiasAmarelo Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
-  transferenciaCoberturaDiasVerde   Int      @default(75) @map("transferencia_cobertura_dias_verde")
-  // Sugestao de Producao (relatorio='sugestao_producao'): coberturaMeses reaproveitado
-  // como janela da venda media (denominador do estoque minimo), giroDias reaproveitado
-  // como tamanho de cada um dos 2 periodos comparados. coberturaAlvoMeses e o
-  // multiplicador da venda media que define o estoque minimo alvo (default 1x, pedido
-  // literal do usuario: "a media de venda deve ser o estoque minimo"). corteMinimoDefault
-  // e o corte usado quando o SKU nao tem override em PcpCorteMinimoSku.
-  coberturaAlvoMeses                Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
-  corteMinimoDefault                Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
-  createdBy                         User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                 Int      @id @default(autoincrement())
+  relatorio                          String   @unique @db.VarChar(50)
+  giroDias                           Int      @default(30) @map("giro_dias")
+  coberturaMeses                     Int      @default(3) @map("cobertura_meses")
+  atacadoCoberturaBase               String   @default("fabrica_total") @map("atacado_cobertura_base") @db.VarChar(20)
+  createdById                        Int?     @map("created_by")
+  createdAt                          DateTime @default(now()) @map("created_at")
+  updatedAt                          DateTime @updatedAt @map("updated_at")
+  custoCode                          Int      @default(2) @map("custo_code")
+  pdvAtacadoCode                     Int      @default(3) @map("pdv_atacado_code")
+  pdvVarejoCode                      Int      @default(1) @map("pdv_varejo_code")
+  precoCustoBranchCode               Int      @default(1) @map("preco_custo_branch_code")
+  riscoCoberturaMeses                Decimal  @default(1) @map("risco_cobertura_meses") @db.Decimal(6, 2)
+  coberturaLimiteVerde               Decimal  @default(4.00) @map("cobertura_limite_verde") @db.Decimal(6, 2)
+  coberturaLimiteVermelho            Decimal  @default(4.01) @map("cobertura_limite_vermelho") @db.Decimal(6, 2)
+  maturacaoDias                      Int      @default(15) @map("maturacao_dias")
+  diasAnaliseVendas                  Int      @default(30) @map("dias_analise_vendas")
+  transferenciaCoberturaDiasAmarelo  Int      @default(120) @map("transferencia_cobertura_dias_amarelo")
+  transferenciaCoberturaDiasVerde    Int      @default(75) @map("transferencia_cobertura_dias_verde")
+  coberturaAlvoMeses                 Decimal  @default(1) @map("cobertura_alvo_meses") @db.Decimal(6, 2)
+  corteMinimoDefault                 Decimal  @default(1) @map("corte_minimo_default") @db.Decimal(15, 4)
+  redistribuicao_lojas_destinatarias Int[]    @default([])
+  redistribuicao_lojas_remetentes    Int[]    @default([])
+  redistribuicao_estoque_minimo      Int      @default(1)
+  createdBy                          User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("pcp_relatorio_configs")
 }
@@ -421,11 +419,6 @@ model PcpCoberturaIdealFilial {
   @@map("pcp_cobertura_ideal_filiais")
 }
 
-// Corte minimo de producao por SKU (product_sku = referencia+cor+tamanho) - usado pra
-// arredondar a sugestao de producao do relatorio "Sugestao de Producao" (nunca sugerir
-// cortar menos que o minimo viavel de producao daquele SKU). Sem override aqui, o
-// relatorio cai no corte_minimo_default de PcpRelatorioConfig. Alimentado tanto por
-// edicao individual quanto por upload de CSV (SKU;VALOR) na tela de Configuracoes PCP.
 model PcpCorteMinimoSku {
   id          Int      @id @default(autoincrement())
   relatorio   String   @db.VarChar(50)
@@ -439,6 +432,27 @@ model PcpCorteMinimoSku {
   @@unique([relatorio, sku])
   @@index([sku])
   @@map("pcp_corte_minimo_skus")
+}
+
+// Meta de venda mensal por classificacao (categoria/linha/genero/colecao) - usada pela
+// tela "Acompanhamento por Linha". Diferente de Meta (comercial), que e por loja/
+// vendedor com niveis de comissao - aqui e um valor unico em R$ por classificacao/mes,
+// sem nivel/comissao, cadastrada direto no modal da propria tela de relatorio.
+model PcpMetaClassificacao {
+  id                 Int      @id @default(autoincrement())
+  ano                Int
+  mes                Int
+  tipoClassificacao  String   @map("tipo_classificacao") @db.VarChar(20)
+  valorClassificacao String   @map("valor_classificacao") @db.VarChar(100)
+  metaValor          Decimal  @map("meta_valor") @db.Decimal(15, 2)
+  createdById        Int?     @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([ano, mes, tipoClassificacao, valorClassificacao])
+  @@index([ano, mes])
+  @@map("pcp_meta_classificacao")
 }
 
 model PcpMetaVisaoGeral {
