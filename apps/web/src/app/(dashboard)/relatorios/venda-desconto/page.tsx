@@ -17,8 +17,12 @@ import {
   VendaDescontoClassificacao,
   VendaDescontoRow,
   vendaDescontoApi,
+  ResumoPromocaoFiltro,
+  ResumoPromocaoResponse,
+  ResumoPromocaoLojaRow,
+  resumoPromocaoApi,
 } from '@/lib/pcpApi';
-import { cn, formatDate, formatNumber, formatMoney, formatPercentSimple } from '@/lib/utils';
+import { cn, formatNumber, formatMoney, formatPercentSimple } from '@/lib/utils';
 import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 // Aliases para consistência
@@ -31,6 +35,8 @@ const TIPO_CLASSIFICACAO_OPTIONS: { value: VendaDescontoClassificacao; label: st
   { value: 'colecao', label: 'Por Coleção' },
   { value: 'status', label: 'Por Status' },
 ];
+
+type TabType = 'detalhado' | 'resumo';
 
 function ThSortPcp({
   label,
@@ -76,9 +82,13 @@ export default function VendaDescontoPage() {
   const { token } = useAuth();
   const { showToast } = useToast();
 
+  // Tab ativa
+  const [activeTab, setActiveTab] = useState<TabType>('detalhado');
+
   const [isLoading, setIsLoading] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [data, setData] = useState<VendaDescontoResponse | null>(null);
+  const [resumoData, setResumoData] = useState<ResumoPromocaoResponse | null>(null);
   const [filtros, setFiltros] = useState<VendaDescontoFiltrosResponse | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -92,10 +102,15 @@ export default function VendaDescontoPage() {
   const [classificacao, setClassificacao] = useState<VendaDescontoClassificacao>('status');
   const [itensClassificacao, setItensClassificacao] = useState<string[]>([]);
   const [branchesSelecionados, setBranchesSelecionados] = useState<number[]>([]);
+  const [statusPromoSelecionados, setStatusPromoSelecionados] = useState<string[]>([]);
 
-  // Ordenação
+  // Ordenação - Detalhado
   const [sortKey, setSortKey] = useState<string | null>('vendas');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Ordenação - Resumo
+  const [resumoSortKey, setResumoSortKey] = useState<string | null>('branchCode');
+  const [resumoSortDir, setResumoSortDir] = useState<'asc' | 'desc'>('asc');
 
   const carregarFiltros = useCallback(async () => {
     if (!token) return;
@@ -114,16 +129,28 @@ export default function VendaDescontoPage() {
     setErro(null);
 
     try {
-      const filtro: VendaDescontoFiltro = {
-        dataInicio,
-        dataFim,
-        classificacao,
-        itensClassificacao: itensClassificacao.length > 0 ? itensClassificacao : undefined,
-        branches: branchesSelecionados.length > 0 ? branchesSelecionados : undefined,
-      };
+      if (activeTab === 'detalhado') {
+        const filtro: VendaDescontoFiltro = {
+          dataInicio,
+          dataFim,
+          classificacao,
+          itensClassificacao: itensClassificacao.length > 0 ? itensClassificacao : undefined,
+          branches: branchesSelecionados.length > 0 ? branchesSelecionados : undefined,
+        };
 
-      const response = await vendaDescontoApi.getVendaDesconto(token, filtro);
-      setData(response);
+        const response = await vendaDescontoApi.getVendaDesconto(token, filtro);
+        setData(response);
+      } else {
+        const filtro: ResumoPromocaoFiltro = {
+          dataInicio,
+          dataFim,
+          branches: branchesSelecionados.length > 0 ? branchesSelecionados : undefined,
+          statusPromo: statusPromoSelecionados.length > 0 ? statusPromoSelecionados : undefined,
+        };
+
+        const response = await resumoPromocaoApi.getResumoPromocao(token, filtro);
+        setResumoData(response);
+      }
     } catch (error) {
       const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
       setErro(mensagem);
@@ -131,7 +158,7 @@ export default function VendaDescontoPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, dataInicio, dataFim, classificacao, itensClassificacao, branchesSelecionados, showToast]);
+  }, [token, dataInicio, dataFim, classificacao, itensClassificacao, branchesSelecionados, statusPromoSelecionados, activeTab, showToast]);
 
   useEffect(() => {
     carregarFiltros();
@@ -158,7 +185,13 @@ export default function VendaDescontoPage() {
     }));
   }, [filtros]);
 
-  // Ordenação
+  // Status disponíveis para filtro de promoção
+  const statusOpcoes = useMemo(() => {
+    if (!filtros?.status) return [];
+    return filtros.status.map(s => ({ value: s, label: s }));
+  }, [filtros]);
+
+  // Ordenação - Detalhado
   function handleSort(key: string) {
     if (sortKey === key) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -206,8 +239,62 @@ export default function VendaDescontoPage() {
     });
   }, [data?.rows, sortKey, sortDir]);
 
-  // Export Excel
-  async function handleExport() {
+  // Ordenação - Resumo
+  function handleResumoSort(key: string) {
+    if (resumoSortKey === key) {
+      setResumoSortDir(resumoSortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setResumoSortKey(key);
+      setResumoSortDir('desc');
+    }
+  }
+
+  function getResumoSortValue(row: ResumoPromocaoLojaRow, key: string): string | number {
+    switch (key) {
+      case 'branchCode': return row.branchCode;
+      case 'branchName': return row.branchName;
+      case 'vendaTotalPromo': return row.vendaTotalPromo;
+      case 'vendaTotalGeralPeriodo': return row.vendaTotalGeralPeriodo;
+      case 'participacaoPromoPct': return row.participacaoPromoPct;
+      case 'estoqueFinalPromo': return row.estoqueFinalPromo;
+      case 'estoqueFinalGeralPecas': return row.estoqueFinalGeralPecas;
+      case 'participacaoEstoquePromoPct': return row.participacaoEstoquePromoPct;
+      default: return 0;
+    }
+  }
+
+  const sortedResumoRows = useMemo(() => {
+    if (!resumoData?.rows || !resumoSortKey) return resumoData?.rows || [];
+    return [...resumoData.rows].sort((a, b) => {
+      const aVal = getResumoSortValue(a, resumoSortKey);
+      const bVal = getResumoSortValue(b, resumoSortKey);
+      const cmp = typeof aVal === 'string'
+        ? aVal.localeCompare(bVal as string, 'pt-BR')
+        : (aVal as number) - (bVal as number);
+      return resumoSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [resumoData?.rows, resumoSortKey, resumoSortDir]);
+
+  // Totais Resumo
+  const resumoTotais = useMemo(() => {
+    if (!resumoData?.rows.length) return null;
+    const vendaTotalPromo = resumoData.rows.reduce((sum, r) => sum + r.vendaTotalPromo, 0);
+    const vendaTotalGeralPeriodo = resumoData.rows.reduce((sum, r) => sum + r.vendaTotalGeralPeriodo, 0);
+    const estoqueFinalPromo = resumoData.rows.reduce((sum, r) => sum + r.estoqueFinalPromo, 0);
+    const estoqueFinalGeralPecas = resumoData.rows.reduce((sum, r) => sum + r.estoqueFinalGeralPecas, 0);
+
+    return {
+      vendaTotalPromo,
+      vendaTotalGeralPeriodo,
+      participacaoPromoPct: vendaTotalGeralPeriodo > 0 ? (vendaTotalPromo / vendaTotalGeralPeriodo) * 100 : 0,
+      estoqueFinalPromo,
+      estoqueFinalGeralPecas,
+      participacaoEstoquePromoPct: estoqueFinalGeralPecas > 0 ? (estoqueFinalPromo / estoqueFinalGeralPecas) * 100 : 0,
+    };
+  }, [resumoData]);
+
+  // Export Excel - Detalhado
+  async function handleExportDetalhado() {
     if (!data?.rows.length) return;
     setExportando(true);
 
@@ -248,10 +335,42 @@ export default function VendaDescontoPage() {
     }
   }
 
+  // Export Excel - Resumo
+  async function handleExportResumo() {
+    if (!resumoData?.rows.length) return;
+    setExportando(true);
+
+    try {
+      const columns: ExcelColumn[] = [
+        { header: 'Loja', key: 'branchName', width: 30 },
+        { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, type: 'currency' },
+        { header: 'Venda Total R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
+        { header: '% Participação Venda', key: 'participacaoPromoPct', width: 20, type: 'percent' },
+        { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, type: 'number' },
+        { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, type: 'number' },
+        { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
+      ];
+
+      exportToExcel({
+        data: sortedResumoRows as unknown as Record<string, unknown>[],
+        columns,
+        filename: `resumo-promocao-${dataInicio}-${dataFim}`,
+      });
+      showToast('Exportado com sucesso', 'success');
+    } catch {
+      showToast('Erro ao exportar', 'error');
+    } finally {
+      setExportando(false);
+    }
+  }
+
   // Reset classificação quando muda o tipo
   useEffect(() => {
     setItensClassificacao([]);
   }, [classificacao]);
+
+  const handleExport = activeTab === 'detalhado' ? handleExportDetalhado : handleExportResumo;
+  const hasData = activeTab === 'detalhado' ? !!data?.rows.length : !!resumoData?.rows.length;
 
   return (
     <div className="space-y-6">
@@ -274,11 +393,39 @@ export default function VendaDescontoPage() {
           </Button>
           <Button
             onClick={handleExport}
-            disabled={exportando || !data?.rows.length}
+            disabled={exportando || !hasData}
           >
             {exportando ? 'Exportando...' : 'Exportar Excel'}
           </Button>
         </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('detalhado')}
+            className={cn(
+              'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm',
+              activeTab === 'detalhado'
+                ? 'border-[var(--bbtk-purple)] text-[var(--bbtk-purple)]'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            )}
+          >
+            Detalhado por Produto
+          </button>
+          <button
+            onClick={() => setActiveTab('resumo')}
+            className={cn(
+              'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm',
+              activeTab === 'resumo'
+                ? 'border-[var(--bbtk-purple)] text-[var(--bbtk-purple)]'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            )}
+          >
+            Resumo por Loja
+          </button>
+        </nav>
       </div>
 
       {/* Filtros */}
@@ -303,26 +450,51 @@ export default function VendaDescontoPage() {
               onChange={(e) => setDataFim(e.target.value)}
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Classificação</label>
-            <Select
-              value={classificacao}
-              onChange={(e) => setClassificacao(e.target.value as VendaDescontoClassificacao)}
-              options={TIPO_CLASSIFICACAO_OPTIONS}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              {classificacao === 'categoria' ? 'Categorias' :
-               classificacao === 'linha' ? 'Linhas' :
-               classificacao === 'colecao' ? 'Coleções' : 'Status'}
-            </label>
-            <Select
-              value={itensClassificacao[0] || ''}
-              onChange={(e) => setItensClassificacao(e.target.value ? [e.target.value] : [])}
-              options={[{ value: '', label: 'Todos' }, ...classificacaoOpcoes]}
-            />
-          </div>
+
+          {activeTab === 'detalhado' ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Classificação</label>
+                <Select
+                  value={classificacao}
+                  onChange={(e) => setClassificacao(e.target.value as VendaDescontoClassificacao)}
+                  options={TIPO_CLASSIFICACAO_OPTIONS}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {classificacao === 'categoria' ? 'Categorias' :
+                   classificacao === 'linha' ? 'Linhas' :
+                   classificacao === 'colecao' ? 'Coleções' : 'Status'}
+                </label>
+                <Select
+                  value={itensClassificacao[0] || ''}
+                  onChange={(e) => setItensClassificacao(e.target.value ? [e.target.value] : [])}
+                  options={[{ value: '', label: 'Todos' }, ...classificacaoOpcoes]}
+                />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status Promoção</label>
+              <select
+                multiple
+                value={statusPromoSelecionados}
+                onChange={(e) => setStatusPromoSelecionados(
+                  Array.from(e.target.selectedOptions, opt => opt.value)
+                )}
+                className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--bbtk-purple)] focus:border-transparent"
+              >
+                {statusOpcoes.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Ctrl+click para múltipla seleção. Vazio = todos exceto ATIVO.
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Lojas</label>
             <FilialMultiSelect
@@ -339,32 +511,6 @@ export default function VendaDescontoPage() {
         </div>
       </Card>
 
-      {/* KPIs */}
-      {data && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <KPICard
-            title="Venda Total Qtd"
-            value={formatNumber(data.gerais.vendaTotalGeralQtd)}
-            subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoQtd)}`}
-          />
-          <KPICard
-            title="Venda Total R$"
-            value={formatCurrency(data.gerais.vendaTotalGeralValor)}
-            subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoValor)}`}
-          />
-          <KPICard
-            title="Total Vendido"
-            value={formatCurrency(data.totais.ttVdaVda)}
-            subtitle={`${formatNumber(data.totais.vendas)} peças`}
-          />
-          <KPICard
-            title="Desconto Concedido"
-            value={formatCurrency(data.totais.ttDescontoVenda)}
-            subtitle={`Giro: ${formatPercent(data.totais.giro)}`}
-          />
-        </div>
-      )}
-
       {/* Erro */}
       {erro && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
@@ -372,129 +518,258 @@ export default function VendaDescontoPage() {
         </div>
       )}
 
-      {/* Tabela */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Detalhamento por Produto</CardTitle>
+      {/* Conteúdo baseado na tab ativa */}
+      {activeTab === 'detalhado' ? (
+        <>
+          {/* KPIs - Detalhado */}
           {data && (
-            <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} produtos</span>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KPICard
+                title="Venda Total Qtd"
+                value={formatNumber(data.gerais.vendaTotalGeralQtd)}
+                subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoQtd)}`}
+              />
+              <KPICard
+                title="Venda Total R$"
+                value={formatCurrency(data.gerais.vendaTotalGeralValor)}
+                subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoValor)}`}
+              />
+              <KPICard
+                title="Total Vendido"
+                value={formatCurrency(data.totais.ttVdaVda)}
+                subtitle={`${formatNumber(data.totais.vendas)} peças`}
+              />
+              <KPICard
+                title="Desconto Concedido"
+                value={formatCurrency(data.totais.ttDescontoVenda)}
+                subtitle={`Giro: ${formatPercent(data.totais.giro)}`}
+              />
+            </div>
           )}
-        </CardHeader>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <ThSortPcp label="Código" sortKeyName="codigo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Descrição" sortKeyName="descricao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Categoria" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Linha" sortKeyName="linha" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Status" sortKeyName="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Coleção" sortKeyName="colecao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Custo Prod." sortKeyName="custoProducao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Custo de Produção" />
-                <ThSortPcp label="PDV Orig." sortKeyName="pdvOriginal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="PDV Original" />
-                <ThSortPcp label="PDV Atual" sortKeyName="pdvAtual" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="Markup" sortKeyName="markup" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="% Desc" sortKeyName="descontoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="% Desconto" />
-                <ThSortPcp label="PDV Venda" sortKeyName="pdvVenda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Preço Médio de Venda" />
-                <ThSortPcp label="Vendas" sortKeyName="vendas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="Est. Fim" sortKeyName="estoqueFim" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque Final" />
-                <ThSortPcp label="Giro" sortKeyName="giro" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="TT Est Orig" sortKeyName="ttEstqVdaOriginal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Estoque x PDV Original" />
-                <ThSortPcp label="TT Est Atual" sortKeyName="ttEstqVdaAtual" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Estoque x PDV Atual" />
-                <ThSortPcp label="% Desc Est" sortKeyName="pctDesconto" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="% Desconto no Estoque" />
-                <ThSortPcp label="TT Venda" sortKeyName="ttVdaVda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Faturamento" />
-                <ThSortPcp label="TT Desc Vda" sortKeyName="ttDescontoVenda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Desconto nas Vendas" />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={20} align="center" className="py-8 text-gray-500">
-                    Carregando...
-                  </TableCell>
-                </TableRow>
-              ) : !data?.rows.length ? (
-                <TableRow>
-                  <TableCell colSpan={20} align="center" className="py-8 text-gray-500">
-                    Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                <>
-                  {sortedRows.map((row, idx) => (
-                    <TableRow key={row.codigo + idx} className="hover:bg-gray-50">
-                      <TableCell className="font-mono text-xs">{row.codigo}</TableCell>
-                      <TableCell className="max-w-[200px] truncate" title={row.descricao}>{row.descricao}</TableCell>
-                      <TableCell>{row.categoria || '-'}</TableCell>
-                      <TableCell>{row.linha || '-'}</TableCell>
-                      <TableCell>{row.status || '-'}</TableCell>
-                      <TableCell>{row.colecao || '-'}</TableCell>
-                      <TableCell align="right">{formatCurrency(row.custoProducao)}</TableCell>
-                      <TableCell align="right">{formatCurrency(row.pdvOriginal)}</TableCell>
-                      <TableCell align="right">{formatCurrency(row.pdvAtual)}</TableCell>
-                      <TableCell align="right">{formatNumber(row.markup, 2)}</TableCell>
-                      <TableCell align="right" className={row.descontoPct > 0 ? 'text-red-600' : ''}>
-                        {formatPercent(row.descontoPct)}
-                      </TableCell>
-                      <TableCell align="right">{formatCurrency(row.pdvVenda)}</TableCell>
-                      <TableCell align="right">{formatNumber(row.vendas)}</TableCell>
-                      <TableCell align="right">{formatNumber(row.estoqueFim)}</TableCell>
-                      <TableCell align="right">{formatPercent(row.giro)}</TableCell>
-                      <TableCell align="right">{formatCurrency(row.ttEstqVdaOriginal)}</TableCell>
-                      <TableCell align="right">{formatCurrency(row.ttEstqVdaAtual)}</TableCell>
-                      <TableCell align="right" className={row.pctDesconto > 0 ? 'text-red-600' : ''}>
-                        {formatPercent(row.pctDesconto)}
-                      </TableCell>
-                      <TableCell align="right">{formatCurrency(row.ttVdaVda)}</TableCell>
-                      <TableCell align="right" className={row.ttDescontoVenda > 0 ? 'text-orange-600' : ''}>
-                        {formatCurrency(row.ttDescontoVenda)}
+
+          {/* Tabela - Detalhado */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Detalhamento por Produto</CardTitle>
+              {data && (
+                <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} produtos</span>
+              )}
+            </CardHeader>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <ThSortPcp label="Código" sortKeyName="codigo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Descrição" sortKeyName="descricao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Categoria" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Linha" sortKeyName="linha" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Status" sortKeyName="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Coleção" sortKeyName="colecao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                    <ThSortPcp label="Custo Prod." sortKeyName="custoProducao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Custo de Produção" />
+                    <ThSortPcp label="PDV Orig." sortKeyName="pdvOriginal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="PDV Original" />
+                    <ThSortPcp label="PDV Atual" sortKeyName="pdvAtual" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                    <ThSortPcp label="Markup" sortKeyName="markup" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                    <ThSortPcp label="% Desc" sortKeyName="descontoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="% Desconto" />
+                    <ThSortPcp label="PDV Venda" sortKeyName="pdvVenda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Preço Médio de Venda" />
+                    <ThSortPcp label="Vendas" sortKeyName="vendas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                    <ThSortPcp label="Est. Fim" sortKeyName="estoqueFim" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque Final" />
+                    <ThSortPcp label="Giro" sortKeyName="giro" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                    <ThSortPcp label="TT Est Orig" sortKeyName="ttEstqVdaOriginal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Estoque x PDV Original" />
+                    <ThSortPcp label="TT Est Atual" sortKeyName="ttEstqVdaAtual" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Estoque x PDV Atual" />
+                    <ThSortPcp label="% Desc Est" sortKeyName="pctDesconto" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="% Desconto no Estoque" />
+                    <ThSortPcp label="TT Venda" sortKeyName="ttVdaVda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Faturamento" />
+                    <ThSortPcp label="TT Desc Vda" sortKeyName="ttDescontoVenda" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Total Desconto nas Vendas" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={20} align="center" className="py-8 text-gray-500">
+                        Carregando...
                       </TableCell>
                     </TableRow>
-                  ))}
-                  {/* Linha de totais */}
-                  <TableRow className="bg-gray-100 font-semibold">
-                    <TableCell colSpan={12} align="right">TOTAL</TableCell>
-                    <TableCell align="right">{formatNumber(data.totais.vendas)}</TableCell>
-                    <TableCell align="right">{formatNumber(data.totais.estoqueFim)}</TableCell>
-                    <TableCell align="right">{formatPercent(data.totais.giro)}</TableCell>
-                    <TableCell align="right">{formatCurrency(data.totais.ttEstqVdaOriginal)}</TableCell>
-                    <TableCell align="right">{formatCurrency(data.totais.ttEstqVdaAtual)}</TableCell>
-                    <TableCell align="right">{formatPercent(data.totais.pctDesconto)}</TableCell>
-                    <TableCell align="right">{formatCurrency(data.totais.ttVdaVda)}</TableCell>
-                    <TableCell align="right">{formatCurrency(data.totais.ttDescontoVenda)}</TableCell>
-                  </TableRow>
-                </>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
+                  ) : !data?.rows.length ? (
+                    <TableRow>
+                      <TableCell colSpan={20} align="center" className="py-8 text-gray-500">
+                        Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <>
+                      {sortedRows.map((row, idx) => (
+                        <TableRow key={row.codigo + idx} className="hover:bg-gray-50">
+                          <TableCell className="font-mono text-xs">{row.codigo}</TableCell>
+                          <TableCell className="max-w-[200px] truncate" title={row.descricao}>{row.descricao}</TableCell>
+                          <TableCell>{row.categoria || '-'}</TableCell>
+                          <TableCell>{row.linha || '-'}</TableCell>
+                          <TableCell>{row.status || '-'}</TableCell>
+                          <TableCell>{row.colecao || '-'}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.custoProducao)}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.pdvOriginal)}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.pdvAtual)}</TableCell>
+                          <TableCell align="right">{formatNumber(row.markup, 2)}</TableCell>
+                          <TableCell align="right" className={row.descontoPct > 0 ? 'text-red-600' : ''}>
+                            {formatPercent(row.descontoPct)}
+                          </TableCell>
+                          <TableCell align="right">{formatCurrency(row.pdvVenda)}</TableCell>
+                          <TableCell align="right">{formatNumber(row.vendas)}</TableCell>
+                          <TableCell align="right">{formatNumber(row.estoqueFim)}</TableCell>
+                          <TableCell align="right">{formatPercent(row.giro)}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.ttEstqVdaOriginal)}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.ttEstqVdaAtual)}</TableCell>
+                          <TableCell align="right" className={row.pctDesconto > 0 ? 'text-red-600' : ''}>
+                            {formatPercent(row.pctDesconto)}
+                          </TableCell>
+                          <TableCell align="right">{formatCurrency(row.ttVdaVda)}</TableCell>
+                          <TableCell align="right" className={row.ttDescontoVenda > 0 ? 'text-orange-600' : ''}>
+                            {formatCurrency(row.ttDescontoVenda)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {/* Linha de totais */}
+                      <TableRow className="bg-gray-100 font-semibold">
+                        <TableCell colSpan={12} align="right">TOTAL</TableCell>
+                        <TableCell align="right">{formatNumber(data.totais.vendas)}</TableCell>
+                        <TableCell align="right">{formatNumber(data.totais.estoqueFim)}</TableCell>
+                        <TableCell align="right">{formatPercent(data.totais.giro)}</TableCell>
+                        <TableCell align="right">{formatCurrency(data.totais.ttEstqVdaOriginal)}</TableCell>
+                        <TableCell align="right">{formatCurrency(data.totais.ttEstqVdaAtual)}</TableCell>
+                        <TableCell align="right">{formatPercent(data.totais.pctDesconto)}</TableCell>
+                        <TableCell align="right">{formatCurrency(data.totais.ttVdaVda)}</TableCell>
+                        <TableCell align="right">{formatCurrency(data.totais.ttDescontoVenda)}</TableCell>
+                      </TableRow>
+                    </>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
 
-      {/* Resumo Gerais */}
-      {data && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Participação no Período</CardTitle>
-          </CardHeader>
-          <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
-            <div>
-              <p className="text-gray-500">Venda Total Geral (Qtd)</p>
-              <p className="text-xl font-semibold">{formatNumber(data.gerais.vendaTotalGeralQtd)}</p>
+          {/* Resumo Gerais */}
+          {data && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Participação no Período</CardTitle>
+              </CardHeader>
+              <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+                <div>
+                  <p className="text-gray-500">Venda Total Geral (Qtd)</p>
+                  <p className="text-xl font-semibold">{formatNumber(data.gerais.vendaTotalGeralQtd)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Participação Promoção (Qtd)</p>
+                  <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoQtd)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Venda Total Geral (R$)</p>
+                  <p className="text-xl font-semibold">{formatCurrency(data.gerais.vendaTotalGeralValor)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Participação Promoção (R$)</p>
+                  <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoValor)}</p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </>
+      ) : (
+        <>
+          {/* KPIs - Resumo */}
+          {resumoTotais && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KPICard
+                title="Venda Promoção"
+                value={formatCurrency(resumoTotais.vendaTotalPromo)}
+                subtitle={`${formatPercent(resumoTotais.participacaoPromoPct)} do total`}
+              />
+              <KPICard
+                title="Venda Total"
+                value={formatCurrency(resumoTotais.vendaTotalGeralPeriodo)}
+                subtitle="Período selecionado"
+              />
+              <KPICard
+                title="Estoque Promoção"
+                value={formatNumber(resumoTotais.estoqueFinalPromo)}
+                subtitle={`${formatPercent(resumoTotais.participacaoEstoquePromoPct)} do total`}
+              />
+              <KPICard
+                title="Estoque Total"
+                value={formatNumber(resumoTotais.estoqueFinalGeralPecas)}
+                subtitle="Peças em estoque"
+              />
             </div>
-            <div>
-              <p className="text-gray-500">Participação Promoção (Qtd)</p>
-              <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoQtd)}</p>
+          )}
+
+          {/* Tabela - Resumo */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Resumo por Loja</CardTitle>
+              {resumoData && (
+                <span className="text-sm text-gray-500">{formatNumber(resumoData.rows.length)} lojas</span>
+              )}
+            </CardHeader>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <ThSortPcp label="Loja" sortKeyName="branchName" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="left" />
+                    <ThSortPcp label="Venda Promoção R$" sortKeyName="vendaTotalPromo" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" />
+                    <ThSortPcp label="Venda Total R$" sortKeyName="vendaTotalGeralPeriodo" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" />
+                    <ThSortPcp label="% Participação" sortKeyName="participacaoPromoPct" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" title="Participação da promoção na venda" />
+                    <ThSortPcp label="Estoque Promo" sortKeyName="estoqueFinalPromo" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" title="Estoque final em promoção (peças)" />
+                    <ThSortPcp label="Estoque Total" sortKeyName="estoqueFinalGeralPecas" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" title="Estoque final total (peças)" />
+                    <ThSortPcp label="% Estoque Promo" sortKeyName="participacaoEstoquePromoPct" sortKey={resumoSortKey} sortDir={resumoSortDir} onSort={handleResumoSort} align="right" title="Participação do estoque em promoção" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" className="py-8 text-gray-500">
+                        Carregando...
+                      </TableCell>
+                    </TableRow>
+                  ) : !resumoData?.rows.length ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" className="py-8 text-gray-500">
+                        Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <>
+                      {sortedResumoRows.map((row) => (
+                        <TableRow key={row.branchCode} className="hover:bg-gray-50">
+                          <TableCell className="font-medium">{row.branchName}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.vendaTotalPromo)}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.vendaTotalGeralPeriodo)}</TableCell>
+                          <TableCell align="right" className={row.participacaoPromoPct > 20 ? 'text-green-600 font-medium' : ''}>
+                            {formatPercent(row.participacaoPromoPct)}
+                          </TableCell>
+                          <TableCell align="right">{formatNumber(row.estoqueFinalPromo)}</TableCell>
+                          <TableCell align="right">{formatNumber(row.estoqueFinalGeralPecas)}</TableCell>
+                          <TableCell align="right" className={row.participacaoEstoquePromoPct > 30 ? 'text-orange-600 font-medium' : ''}>
+                            {formatPercent(row.participacaoEstoquePromoPct)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {/* Linha de totais */}
+                      {resumoTotais && (
+                        <TableRow className="bg-gray-100 font-semibold">
+                          <TableCell>TOTAL</TableCell>
+                          <TableCell align="right">{formatCurrency(resumoTotais.vendaTotalPromo)}</TableCell>
+                          <TableCell align="right">{formatCurrency(resumoTotais.vendaTotalGeralPeriodo)}</TableCell>
+                          <TableCell align="right">{formatPercent(resumoTotais.participacaoPromoPct)}</TableCell>
+                          <TableCell align="right">{formatNumber(resumoTotais.estoqueFinalPromo)}</TableCell>
+                          <TableCell align="right">{formatNumber(resumoTotais.estoqueFinalGeralPecas)}</TableCell>
+                          <TableCell align="right">{formatPercent(resumoTotais.participacaoEstoquePromoPct)}</TableCell>
+                        </TableRow>
+                      )}
+                    </>
+                  )}
+                </TableBody>
+              </Table>
             </div>
-            <div>
-              <p className="text-gray-500">Venda Total Geral (R$)</p>
-              <p className="text-xl font-semibold">{formatCurrency(data.gerais.vendaTotalGeralValor)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Participação Promoção (R$)</p>
-              <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoValor)}</p>
-            </div>
-          </div>
-        </Card>
+          </Card>
+        </>
       )}
     </div>
   );
