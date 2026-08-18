@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,28 @@ import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 // Aliases para consistência
 const formatCurrency = formatMoney;
 const formatPercent = formatPercentSimple;
+
+// Cache em memória para respostas rápidas (5 minutos)
+const CACHE_TTL = 5 * 60 * 1000;
+const cache = new Map<string, { data: unknown; timestamp: number }>();
+
+function getCacheKey(type: 'detalhado' | 'resumo', filtro: Record<string, unknown>): string {
+  return `${type}:${JSON.stringify(filtro)}`;
+}
+
+function getFromCache<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache(key: string, data: unknown): void {
+  cache.set(key, { data, timestamp: Date.now() });
+}
 
 const TIPO_CLASSIFICACAO_OPTIONS: { value: VendaDescontoClassificacao; label: string }[] = [
   { value: 'categoria', label: 'Por Categoria' },
@@ -122,10 +144,9 @@ export default function VendaDescontoPage() {
     }
   }, [token]);
 
-  const carregarDados = useCallback(async () => {
+  const carregarDados = useCallback(async (forceRefresh = false) => {
     if (!token || !dataInicio || !dataFim) return;
 
-    setIsLoading(true);
     setErro(null);
 
     try {
@@ -138,8 +159,21 @@ export default function VendaDescontoPage() {
           branches: branchesSelecionados.length > 0 ? branchesSelecionados : undefined,
         };
 
+        const cacheKey = getCacheKey('detalhado', filtro as unknown as Record<string, unknown>);
+
+        // Verificar cache primeiro
+        if (!forceRefresh) {
+          const cached = getFromCache<VendaDescontoResponse>(cacheKey);
+          if (cached) {
+            setData(cached);
+            return;
+          }
+        }
+
+        setIsLoading(true);
         const response = await vendaDescontoApi.getVendaDesconto(token, filtro);
         setData(response);
+        setCache(cacheKey, response);
       } else {
         const filtro: ResumoPromocaoFiltro = {
           dataInicio,
@@ -148,8 +182,21 @@ export default function VendaDescontoPage() {
           statusPromo: statusPromoSelecionados.length > 0 ? statusPromoSelecionados : undefined,
         };
 
+        const cacheKey = getCacheKey('resumo', filtro as unknown as Record<string, unknown>);
+
+        // Verificar cache primeiro
+        if (!forceRefresh) {
+          const cached = getFromCache<ResumoPromocaoResponse>(cacheKey);
+          if (cached) {
+            setResumoData(cached);
+            return;
+          }
+        }
+
+        setIsLoading(true);
         const response = await resumoPromocaoApi.getResumoPromocao(token, filtro);
         setResumoData(response);
+        setCache(cacheKey, response);
       }
     } catch (error) {
       const mensagem = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -160,9 +207,28 @@ export default function VendaDescontoPage() {
     }
   }, [token, dataInicio, dataFim, classificacao, itensClassificacao, branchesSelecionados, statusPromoSelecionados, activeTab, showToast]);
 
+  // Carregar filtros ao montar
   useEffect(() => {
     carregarFiltros();
   }, [carregarFiltros]);
+
+  // Flag para controlar carregamento inicial
+  const initialLoadDone = useRef(false);
+
+  // Carregar dados automaticamente ao entrar na página (após filtros carregados)
+  useEffect(() => {
+    if (token && filtros && !initialLoadDone.current) {
+      initialLoadDone.current = true;
+      carregarDados();
+    }
+  }, [token, filtros, carregarDados]);
+
+  // Recarregar quando trocar de tab
+  useEffect(() => {
+    if (initialLoadDone.current) {
+      carregarDados();
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Opções de classificação baseadas no tipo selecionado
   const classificacaoOpcoes = useMemo(() => {
@@ -386,7 +452,7 @@ export default function VendaDescontoPage() {
         <div className="flex gap-2">
           <Button
             variant="secondary"
-            onClick={carregarDados}
+            onClick={() => carregarDados(true)}
             disabled={isLoading}
           >
             {isLoading ? 'Carregando...' : 'Atualizar'}
@@ -505,7 +571,7 @@ export default function VendaDescontoPage() {
           </div>
         </div>
         <div className="px-4 pb-4">
-          <Button onClick={carregarDados} disabled={isLoading}>
+          <Button onClick={() => carregarDados()} disabled={isLoading}>
             {isLoading ? 'Carregando...' : 'Buscar'}
           </Button>
         </div>
