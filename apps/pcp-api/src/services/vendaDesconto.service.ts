@@ -394,7 +394,7 @@ export async function getResumoPromocao(filtro: {
     WITH vendas_por_loja AS (
       SELECT
         t.branch_code,
-        TRIM(REGEXP_REPLACE(
+        MAX(TRIM(REGEXP_REPLACE(
           REGEXP_REPLACE(
             COALESCE(b.description, b.branch_name, ''),
             '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
@@ -403,7 +403,7 @@ export async function getResumoPromocao(filtro: {
           '^BEBETENKITE[[:space:]]*-[[:space:]]*',
           '',
           'i'
-        )) AS branch_name,
+        ))) AS branch_name,
         -- Faturamento em promoção
         SUM(
           CASE
@@ -433,7 +433,7 @@ export async function getResumoPromocao(filtro: {
         AND ${SALE_OPERATION_FILTER}
         AND t.customer_code < 110000000
         AND ${branchFilter}
-      GROUP BY t.branch_code, b.description
+      GROUP BY t.branch_code
     ),
     estoque_por_loja AS (
       SELECT
