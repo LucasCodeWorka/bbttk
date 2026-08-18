@@ -204,12 +204,12 @@ export default function ResumoPromocaoPage() {
     try {
       const columns: ExcelColumn[] = [
         { header: 'Loja', key: 'branchName', width: 30 },
-        { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, format: 'currency' },
-        { header: 'Venda Total R$', key: 'vendaTotalGeralPeriodo', width: 18, format: 'currency' },
-        { header: '% Participação Venda', key: 'participacaoPromoPct', width: 20, format: 'percent' },
-        { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, format: 'number' },
-        { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, format: 'number' },
-        { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, format: 'percent' },
+        { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, type: 'currency' },
+        { header: 'Venda Total R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
+        { header: '% Participação Venda', key: 'participacaoPromoPct', width: 20, type: 'percent' },
+        { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, type: 'number' },
+        { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, type: 'number' },
+        { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
       ];
 
       await exportToExcel(
