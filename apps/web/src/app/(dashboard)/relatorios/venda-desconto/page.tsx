@@ -153,7 +153,7 @@ export default function VendaDescontoPage() {
   const lojasParaSelecao = useMemo(() => {
     if (!filtros?.branches) return [];
     return filtros.branches.map(b => ({
-      branchCode: b.branch_code,
+      value: b.branch_code,
       label: b.branch_name,
     }));
   }, [filtros]);
@@ -235,11 +235,11 @@ export default function VendaDescontoPage() {
         { header: 'TT Desc Venda', key: 'ttDescontoVenda', width: 14, type: 'currency' },
       ];
 
-      await exportToExcel(
-        sortedRows,
+      exportToExcel({
+        data: sortedRows as unknown as Record<string, unknown>[],
         columns,
-        `venda-desconto-${dataInicio}-${dataFim}.xlsx`,
-      );
+        filename: `venda-desconto-${dataInicio}-${dataFim}`,
+      });
       showToast('Exportado com sucesso', 'success');
     } catch {
       showToast('Erro ao exportar', 'error');
@@ -326,10 +326,9 @@ export default function VendaDescontoPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Lojas</label>
             <FilialMultiSelect
-              lojas={lojasParaSelecao}
-              value={branchesSelecionados}
+              options={lojasParaSelecao}
+              selected={branchesSelecionados}
               onChange={setBranchesSelecionados}
-              placeholder="Todas"
             />
           </div>
         </div>

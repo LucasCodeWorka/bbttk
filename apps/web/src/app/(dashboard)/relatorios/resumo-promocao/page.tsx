@@ -131,7 +131,7 @@ export default function ResumoPromocaoPage() {
   const lojasParaSelecao = useMemo(() => {
     if (!filtros?.branches) return [];
     return filtros.branches.map(b => ({
-      branchCode: b.branch_code,
+      value: b.branch_code,
       label: b.branch_name,
     }));
   }, [filtros]);
@@ -212,11 +212,11 @@ export default function ResumoPromocaoPage() {
         { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
       ];
 
-      await exportToExcel(
-        sortedRows,
+      exportToExcel({
+        data: sortedRows as unknown as Record<string, unknown>[],
         columns,
-        `resumo-promocao-${dataInicio}-${dataFim}.xlsx`,
-      );
+        filename: `resumo-promocao-${dataInicio}-${dataFim}`,
+      });
       showToast('Exportado com sucesso', 'success');
     } catch {
       showToast('Erro ao exportar', 'error');
@@ -278,10 +278,9 @@ export default function ResumoPromocaoPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Lojas</label>
             <FilialMultiSelect
-              lojas={lojasParaSelecao}
-              value={branchesSelecionados}
+              options={lojasParaSelecao}
+              selected={branchesSelecionados}
               onChange={setBranchesSelecionados}
-              placeholder="Todas"
             />
           </div>
           <div>
