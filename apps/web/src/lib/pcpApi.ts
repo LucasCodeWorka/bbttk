@@ -1137,3 +1137,124 @@ export const sugestaoProducaoApi = {
   getFiltros: (token: string) =>
     fetchPcpApi<SugestaoProducaoFiltrosResponse>('/api/pcp/sugestao-producao/filtros', { token }),
 };
+
+// ---- Venda e Desconto por Classificação (Relatório 5) ----
+
+export type VendaDescontoClassificacao = 'categoria' | 'linha' | 'colecao' | 'status';
+
+export interface VendaDescontoFiltro {
+  dataInicio: string;
+  dataFim: string;
+  branches?: number[];
+  agruparLojas?: boolean;
+  classificacao: VendaDescontoClassificacao;
+  itensClassificacao?: string[];
+}
+
+export interface VendaDescontoRow {
+  codigo: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  status: string | null;
+  colecao: string | null;
+  custoProducao: number;
+  pdvOriginal: number;
+  pdvAtual: number;
+  markup: number;
+  descontoPct: number;
+  pdvVenda: number;
+  vendas: number;
+  estoqueFim: number;
+  giro: number;
+  ttEstqVdaOriginal: number;
+  ttEstqVdaAtual: number;
+  pctDesconto: number;
+  ttVdaVda: number;
+  ttDescontoVenda: number;
+}
+
+export interface VendaDescontoTotais {
+  vendas: number;
+  estoqueFim: number;
+  giro: number;
+  ttEstqVdaOriginal: number;
+  ttEstqVdaAtual: number;
+  pctDesconto: number;
+  ttVdaVda: number;
+  ttDescontoVenda: number;
+}
+
+export interface VendaDescontoGerais {
+  vendaTotalGeralQtd: number;
+  participacaoPromoQtd: number;
+  vendaTotalGeralValor: number;
+  participacaoPromoValor: number;
+}
+
+export interface VendaDescontoResponse {
+  filtro: VendaDescontoFiltro;
+  rows: VendaDescontoRow[];
+  totais: VendaDescontoTotais;
+  gerais: VendaDescontoGerais;
+}
+
+export interface VendaDescontoFiltrosResponse {
+  categorias: string[];
+  linhas: string[];
+  colecoes: string[];
+  status: string[];
+  branches: Array<{ branch_code: number; branch_name: string }>;
+}
+
+export const vendaDescontoApi = {
+  getVendaDesconto: (token: string, filtro: VendaDescontoFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    params.set('classificacao', filtro.classificacao);
+    if (filtro.agruparLojas !== undefined) params.set('agruparLojas', String(filtro.agruparLojas));
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'itensClassificacao', filtro.itensClassificacao);
+    return fetchPcpApi<VendaDescontoResponse>(`/api/pcp/venda-desconto?${params.toString()}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<VendaDescontoFiltrosResponse>('/api/pcp/venda-desconto/filtros', { token }),
+};
+
+// ---- Resumo da Promoção por Loja (Relatório 5.1) ----
+
+export interface ResumoPromocaoFiltro {
+  dataInicio: string;
+  dataFim: string;
+  branches?: number[];
+  statusPromo?: string[];
+}
+
+export interface ResumoPromocaoLojaRow {
+  branchCode: number;
+  branchName: string;
+  vendaTotalPromo: number;
+  vendaTotalGeralPeriodo: number;
+  participacaoPromoPct: number;
+  estoqueFinalPromo: number;
+  estoqueFinalGeralPecas: number;
+  participacaoEstoquePromoPct: number;
+}
+
+export interface ResumoPromocaoResponse {
+  filtro: ResumoPromocaoFiltro;
+  rows: ResumoPromocaoLojaRow[];
+}
+
+export const resumoPromocaoApi = {
+  getResumoPromocao: (token: string, filtro: ResumoPromocaoFiltro) => {
+    const params = new URLSearchParams();
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'statusPromo', filtro.statusPromo);
+    return fetchPcpApi<ResumoPromocaoResponse>(`/api/pcp/resumo-promocao?${params.toString()}`, { token });
+  },
+};

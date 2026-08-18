@@ -8,13 +8,14 @@ interface KPICardProps {
   title: string;
   value: string;
   variation?: number;
+  subtitle?: string;
   icon?: React.ReactNode;
   color?: 'red' | 'green' | 'yellow' | 'purple' | 'blue';
   isLoading?: boolean;
   valueSize?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
-export function KPICard({ title, value, variation, icon, color = 'red', isLoading, valueSize = 'lg' }: KPICardProps) {
+export function KPICard({ title, value, variation, subtitle, icon, color = 'red', isLoading, valueSize = 'lg' }: KPICardProps) {
   const colors = {
     red: 'border-l-4 border-l-[var(--bbtk-red)]',
     green: 'border-l-4 border-l-[var(--bbtk-green)]',
@@ -39,6 +40,7 @@ export function KPICard({ title, value, variation, icon, color = 'red', isLoadin
         {variation !== undefined && <VariationBadge value={variation} className="shrink-0" />}
       </div>
       <CardValue size={valueSize} className="truncate mt-2">{value}</CardValue>
+      {subtitle && <p className="text-xs text-gray-500 truncate mt-1">{subtitle}</p>}
     </Card>
   );
 }
