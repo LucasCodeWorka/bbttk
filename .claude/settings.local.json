@@ -17,7 +17,8 @@
       "Bash(git add:*)",
       "Bash(rm:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nPCP: configurações, ordenação universal e melhorias no dashboard\n\n## Módulo PCP\n- Implementada tela de configuração para Estoque Sem Giro \\(/pcp/estoque-sem-giro-config\\)\n  * Período de maturação configurável \\(default 30 dias\\)\n  * Limiares de cobertura \\(verde/vermelho\\) ajustáveis\n- Adicionado campo `abrev` na tabela branches para exibir identificadores curtos \\(3 letras\\)\n- Ordenação clicável habilitada em todas as colunas das principais tabelas PCP:\n  * Estoque Sem Giro \\(já tinha ordenação completa\\)\n  * Análise de Grade \\(12 colunas na tabela + heatmap independente\\)\n  * Relatório Base \\(25 colunas fixas + N×3 dinâmicas por filial\\)\n  * Curva ABC \\(15 ou 13 colunas, sincronizado com dropdown\\)\n- Componente reutilizável `ThSortPcp` com indicadores visuais consistentes\n\n## Dashboard Comercial\n- Reduzida coluna PRODUTO para max-w-[100px] para liberar espaço horizontal\n- Implementada barra de scroll horizontal sincronizada no Ranking Vendedores\n- Adicionada ordenação clicável em todas as colunas:\n  * Ranking Vendedores: 9 colunas ordenáveis\n  * Top Produtos: 4 colunas ordenáveis\n  * Comparativo por Filial: melhorias visuais mantendo funcionalidade\n- Melhorias visuais nos cabeçalhos ordenáveis:\n  * Indicador sempre visível \\(setinha cinza quando inativo\\)\n  * Background highlight quando coluna ativa\n  * Efeitos hover e alinhamento correto\n\n## Infraestrutura\n- Schema Prisma: campo maturacaoDias em pcp_relatorio_configs, campo abrev em branches\n- Novos endpoints: GET/PUT /api/pcp-config/estoque-sem-giro\n- Componente Table.tsx com forwardRef para suportar scroll sincronizado\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(timeout /t 5)"
+      "Bash(timeout /t 5)",
+      "Bash(ls:*)"
     ]
   }
 }
