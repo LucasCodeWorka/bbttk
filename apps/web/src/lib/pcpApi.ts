@@ -1258,5 +1258,3 @@ export const resumoPromocaoApi = {
     return fetchPcpApi<ResumoPromocaoResponse>(`/api/pcp/resumo-promocao?${params.toString()}`, { token });
   },
 };
->>>>>>> Stashed changes
->>>>>>> d4eb4bc (feat: add Relatorio 5 Venda e Desconto por Classificacao)
