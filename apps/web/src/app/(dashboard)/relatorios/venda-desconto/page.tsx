@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { MultiSelect } from '@/components/ui/MultiSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -242,17 +243,17 @@ export default function VendaDescontoPage() {
     return map[classificacao]?.map(v => ({ value: v, label: v })) || [];
   }, [filtros, classificacao]);
 
-  // Lojas para o seletor
+  // Lojas para o seletor - remove prefixo numérico (ex: "01 - IGUATEMI" -> "IGUATEMI")
   const lojasParaSelecao = useMemo(() => {
     if (!filtros?.branches) return [];
     return filtros.branches.map(b => ({
       value: b.branch_code,
-      label: b.branch_name,
+      label: b.branch_name.replace(/^\d+\s*[-–]\s*/, ''),
     }));
   }, [filtros]);
 
-  // Status disponíveis para filtro de promoção
-  const statusOpcoes = useMemo(() => {
+  // Status disponíveis para filtro de promoção (multi-select)
+  const statusPromoOpcoes = useMemo(() => {
     if (!filtros?.status) return [];
     return filtros.status.map(s => ({ value: s, label: s }));
   }, [filtros]);
@@ -543,21 +544,13 @@ export default function VendaDescontoPage() {
           ) : (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status Promoção</label>
-              <select
-                multiple
-                value={statusPromoSelecionados}
-                onChange={(e) => setStatusPromoSelecionados(
-                  Array.from(e.target.selectedOptions, opt => opt.value)
-                )}
-                className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--bbtk-purple)] focus:border-transparent"
-              >
-                {statusOpcoes.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Ctrl+click para múltipla seleção. Vazio = todos exceto ATIVO.
-              </p>
+              <MultiSelect
+                options={statusPromoOpcoes}
+                selected={statusPromoSelecionados}
+                onChange={(vals) => setStatusPromoSelecionados(vals as string[])}
+                allLabel="Todos"
+                className="w-full"
+              />
             </div>
           )}
 
