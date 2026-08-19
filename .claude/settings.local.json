@@ -42,7 +42,12 @@
       "Bash(curl -s -o /dev/null -w \"api \\(3001\\): HTTP %{http_code}\\\\n\" \"http://localhost:3001/api/metas?ano=2026&mes=8\")",
       "Bash(ls:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Read(//tmp/**)",
+      "Bash(xxd)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }

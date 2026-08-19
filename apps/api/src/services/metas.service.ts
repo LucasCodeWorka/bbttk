@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import { NIVEL_PERCENTUAIS } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -274,6 +275,15 @@ interface LinhaDistribuicao {
     comissaoOverride?: ComissaoOverride | null;
     isGerente?: boolean;
   }>;
+  // true quando o frontend carregou a lista COMPLETA de vendedores dessa loja
+  // (ex: tela de Editar Meta por Loja, que sempre busca o vinculo oficial antes de
+  // salvar) - nesse caso, sincronizamos de verdade: qualquer Meta de vendedor dessa
+  // loja/periodo que nao esteja em `vendedores` e apagada (nao so deixada de fora do
+  // upsert). Sem essa flag (ex: Cadastro de Metas multi-loja, onde uma loja pode ser
+  // selecionada sem nunca expandir "Distribuir vendedores"), mantem o comportamento
+  // antigo de so upsert - `vendedores: []` nesse caso significa "nao carregado", nao
+  // "zerar todo mundo".
+  sincronizarVendedores?: boolean;
 }
 
 function calcularNiveis(valor: number) {
@@ -367,6 +377,27 @@ export async function salvarDistribuicaoCompleta(data: {
       override: ComissaoOverride | null | undefined
     ) {
       const niveis = calcularNiveis(valor);
+
+      // Postgres trata NULL != NULL numa constraint unica, entao ON CONFLICT nunca
+      // "acha" a linha da loja (seller_code sempre NULL) pra atualizar - cada save
+      // criava uma linha nova em vez de atualizar a existente (achado ao testar a
+      // tela de Editar Meta por Loja, que re-salva a mesma loja repetidas vezes).
+      // Delete+insert dentro da mesma transacao contorna a limitacao so pra esse caso.
+      if (sellerCode === null) {
+        await tx.$executeRaw`
+          DELETE FROM metas WHERE ano = ${data.ano} AND mes = ${data.mes} AND branch_code = ${branchCode} AND seller_code IS NULL
+        `;
+        await tx.$executeRaw`
+          INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
+            comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
+          VALUES (${data.ano}, ${data.mes}, ${branchCode}, NULL,
+                  ${niveis.nivel1}, ${niveis.nivel2}, ${niveis.nivel3}, ${niveis.nivel4}, ${niveis.nivel5},
+                  ${override?.nivel1 ?? null}, ${override?.nivel2 ?? null}, ${override?.nivel3 ?? null},
+                  ${override?.nivel4 ?? null}, ${override?.nivel5 ?? null})
+        `;
+        return niveis;
+      }
+
       await tx.$executeRaw`
         INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
           comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
@@ -417,6 +448,21 @@ export async function salvarDistribuicaoCompleta(data: {
             nivel5: niveisVendedor.nivel5,
           },
         });
+      }
+
+      if (loja.sincronizarVendedores) {
+        const sellerCodesAtuais = loja.vendedores.map((v) => v.sellerCode);
+        // NOT IN () vazio e invalido em SQL - com a lista vazia (loja sincronizada
+        // sem nenhum vendedor), o guarda -1 faz a clausula sempre verdadeira, ou
+        // seja, apaga todas as metas de vendedor dessa loja/periodo (comportamento
+        // correto: a lista sincronizada e "ninguem").
+        const guarda = sellerCodesAtuais.length > 0 ? sellerCodesAtuais : [-1];
+        await tx.$executeRaw`
+          DELETE FROM metas
+          WHERE ano = ${data.ano} AND mes = ${data.mes} AND branch_code = ${loja.branchCode}
+            AND seller_code IS NOT NULL
+            AND seller_code NOT IN (${Prisma.join(guarda)})
+        `;
       }
     }
   });

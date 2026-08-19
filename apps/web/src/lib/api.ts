@@ -952,6 +952,11 @@ export interface SalvarDistribuicaoLoja {
   valor: number;
   comissaoOverride?: ComissaoOverrideData | null;
   vendedores: SalvarDistribuicaoVendedor[];
+  // true = a lista de vendedores acima e a lista COMPLETA e definitiva dessa loja/
+  // periodo (backend apaga quem nao estiver nela); omitido/false = so upsert do que
+  // veio, sem apagar ninguem (usado quando a loja foi selecionada mas a lista de
+  // vendedores nunca foi carregada nessa sessao). Ver metas.service.ts.
+  sincronizarVendedores?: boolean;
 }
 
 export interface SalvarDistribuicaoData {

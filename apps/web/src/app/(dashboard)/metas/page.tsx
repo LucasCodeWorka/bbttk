@@ -8,7 +8,7 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { CadastroMetaModal } from '@/components/metas/CadastroMetaModal';
-import { EditarMetaModal } from '@/components/metas/EditarMetaModal';
+import { EditarMetaLojaModal } from '@/components/metas/EditarMetaLojaModal';
 import { metasApi, vendasApi, Meta, MetaNivel } from '@/lib/api';
 import { formatMoney, FILIAIS, MESES } from '@/lib/utils';
 
@@ -27,7 +27,7 @@ export default function MetasPage() {
   const [vendedoresLista, setVendedoresLista] = useState<{ code: number; name: string }[]>([]);
 
   const [showCadastroModal, setShowCadastroModal] = useState(false);
-  const [editingMeta, setEditingMeta] = useState<Meta | null>(null);
+  const [editingBranchCode, setEditingBranchCode] = useState<number | null>(null);
 
   const [deletingMetaId, setDeletingMetaId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -244,7 +244,7 @@ export default function MetasPage() {
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => setEditingMeta(m)}
+                        onClick={() => setEditingBranchCode(m.branch_code)}
                       >
                         Editar
                       </Button>
@@ -274,16 +274,15 @@ export default function MetasPage() {
         onSaved={carregarDados}
       />
 
-      <EditarMetaModal
-        isOpen={!!editingMeta}
-        onClose={() => setEditingMeta(null)}
-        meta={editingMeta}
+      <EditarMetaLojaModal
+        isOpen={editingBranchCode !== null}
+        onClose={() => setEditingBranchCode(null)}
+        ano={ano}
+        mes={mes}
+        branchCode={editingBranchCode ?? 0}
+        branchName={editingBranchCode !== null ? FILIAIS[editingBranchCode] || `Loja ${editingBranchCode}` : ''}
         niveis={niveis}
-        vendedorNome={
-          editingMeta?.seller_code
-            ? vendedoresLista.find((v) => v.code === editingMeta.seller_code)?.name || `Vendedor ${editingMeta.seller_code}`
-            : null
-        }
+        vendedoresLista={vendedoresLista}
         onSaved={carregarDados}
       />
     </div>
