@@ -1053,10 +1053,10 @@ export default function DashboardPage() {
                 </TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{comparativo.total.atual.pa.toFixed(2)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{comparativo.total.ano_anterior.pa.toFixed(2)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pa.percentual} /></TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.tm)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.tm)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.tm.percentual} /></TableCell>
                 <TableCell align="right" className="whitespace-nowrap">-</TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.pecas)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.pecas)}</TableCell>
@@ -1067,10 +1067,10 @@ export default function DashboardPage() {
                 <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pecas.percentual} /></TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatMoney(comparativo.total.atual.pm)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(comparativo.total.ano_anterior.pm)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.pm.percentual} /></TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.clientes)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.clientes)}</TableCell>
-                <TableCell align="center" className="whitespace-nowrap">-</TableCell>
+                <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.clientes.percentual} /></TableCell>
                 <TableCell align="right" className="font-bold whitespace-nowrap">{formatNumber(comparativo.total.atual.transacoes)}</TableCell>
                 <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(comparativo.total.ano_anterior.transacoes)}</TableCell>
                 <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={comparativo.total.variacao.transacoes.percentual} /></TableCell>
