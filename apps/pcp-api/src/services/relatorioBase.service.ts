@@ -298,10 +298,11 @@ async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[]
   `;
 }
 
-// Giro TT de rede (soma de todas as filiais) por product_code, nas janelas de 1/3/6 meses
-async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
-  return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+// Giro TT por product_code x branch_code, nas janelas de 1/3/6 meses. Retorna detalhado
+// por filial pra permitir que os cards KPIs respeitem o filtro de loja selecionado.
+async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
+  return prisma.$queryRaw<ProductCodeAggRow[]>`
+    SELECT ti.product_code, t.branch_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
@@ -309,7 +310,7 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null): Prom
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code
+    GROUP BY ti.product_code, t.branch_code
   `;
 }
 
@@ -599,12 +600,26 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const vendaAtacadoMesesPorProductCode = new Map<number, number>();
   for (const r of vendaAtacadoMesesRows) vendaAtacadoMesesPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
 
-  const giroTt1PorProductCode = new Map<number, number>();
-  for (const r of giroTt1Rows) giroTt1PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-  const giroTt3PorProductCode = new Map<number, number>();
-  for (const r of giroTt3Rows) giroTt3PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-  const giroTt6PorProductCode = new Map<number, number>();
-  for (const r of giroTt6Rows) giroTt6PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+  // Giro TT por product_code x branch_code - estrutura igual a venda12mPorProductCode,
+  // permite filtrar por loja nos cards KPIs (SKUs, Estoque Total, Giro TT 1/3/6).
+  const giroTt1PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt1Rows) {
+    const mapa = giroTt1PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt1PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt3PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt3Rows) {
+    const mapa = giroTt3PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt3PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt6PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt6Rows) {
+    const mapa = giroTt6PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt6PorProductCode.set(r.product_code, mapa);
+  }
 
   const custoPrecoPorProductCode = new Map<number, { custo: number | null; pdvVar: number | null; pdvAta: number | null }>();
   for (const r of custoPrecoRows) {
@@ -634,6 +649,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     if (!mapa) return 0;
     let soma = 0;
     for (const v of mapa.values()) soma += v;
+    return soma;
+  }
+
+  // Soma valores de um mapa branch_code -> valor, respeitando o filtro de filiais.
+  // Se branchFiltro for null (nenhum filtro), soma todas as filiais.
+  function somaMapaFiltrado(mapa: Map<number, number> | undefined, filtro: Set<number> | null): number {
+    if (!mapa) return 0;
+    let soma = 0;
+    if (filtro) {
+      for (const [branchCode, valor] of mapa) {
+        if (filtro.has(branchCode)) soma += valor;
+      }
+    } else {
+      for (const valor of mapa.values()) soma += valor;
+    }
     return soma;
   }
 
@@ -714,9 +744,17 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
     const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
 
-    // EST.TT = soma de todas as filiais reais (inclui a Fabrica/branch_code=2)
+    // EST.TT = soma das filiais selecionadas no filtro (ou todas se nenhuma selecionada).
+    // Quando ha filtro de branch, soma so o estoque das lojas filtradas - assim os cards
+    // "SKUs" e "Estoque Total" refletem a selecao do usuario.
     let estTt = 0;
-    for (const valor of estoqueDoSku.values()) estTt += valor;
+    if (branchFiltro) {
+      for (const [branchCode, valor] of estoqueDoSku) {
+        if (branchFiltro.has(branchCode)) estTt += valor;
+      }
+    } else {
+      for (const valor of estoqueDoSku.values()) estTt += valor;
+    }
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
     const mediaMensalPorBranchDoSku = new Map<number, number>();
@@ -750,9 +788,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensal);
     }
 
-    const giroTt1 = productCode !== null ? giroTt1PorProductCode.get(productCode) || 0 : 0;
-    const giroTt3 = productCode !== null ? giroTt3PorProductCode.get(productCode) || 0 : 0;
-    const giroTt6 = productCode !== null ? giroTt6PorProductCode.get(productCode) || 0 : 0;
+    // Giro TT respeita o filtro de loja - se filtrado por branch, soma so o giro das
+    // lojas selecionadas. Assim os cards "Giro TT 1/3/6" ficam coerentes com "Estoque Total".
+    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltro) : 0;
+    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltro) : 0;
+    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltro) : 0;
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
