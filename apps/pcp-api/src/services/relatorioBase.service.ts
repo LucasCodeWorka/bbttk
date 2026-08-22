@@ -525,6 +525,15 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const config = await getConfig();
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
 
+  // Mapeamento de branch para busca de dados: ATACADO_BRANCH_CODE (-2) é um código sintético
+  // que representa o canal Atacado. Os dados de estoque/giro estão gravados com
+  // FABRICA_BRANCH_CODE (2). Quando o usuário filtra por Atacado, precisamos buscar os
+  // dados da Fábrica. Este Set é usado para verificar se um branch_code do banco bate
+  // com o filtro do usuário, mapeando -2 -> 2.
+  const branchFiltroParaDados = branchFiltro
+    ? new Set([...branchFiltro].map((b) => (b === ATACADO_BRANCH_CODE ? FABRICA_BRANCH_CODE : b)))
+    : null;
+
   // Busca identidade PRIMEIRO (respeitando os filtros de classificacao/busca), depois
   // usa o resultado pra restringir as queries auxiliares (venda/giro/custo/em
   // producao) ao mesmo universo - antes elas sempre escaneavam o catalogo inteiro,
@@ -747,10 +756,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     // EST.TT = soma das filiais selecionadas no filtro (ou todas se nenhuma selecionada).
     // Quando ha filtro de branch, soma so o estoque das lojas filtradas - assim os cards
     // "SKUs" e "Estoque Total" refletem a selecao do usuario.
+    // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2) pois os dados do
+    // banco usam branch_code=2 para a Fabrica/Atacado.
     let estTt = 0;
-    if (branchFiltro) {
+    if (branchFiltroParaDados) {
       for (const [branchCode, valor] of estoqueDoSku) {
-        if (branchFiltro.has(branchCode)) estTt += valor;
+        if (branchFiltroParaDados.has(branchCode)) estTt += valor;
       }
     } else {
       for (const valor of estoqueDoSku.values()) estTt += valor;
@@ -790,9 +801,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     // Giro TT respeita o filtro de loja - se filtrado por branch, soma so o giro das
     // lojas selecionadas. Assim os cards "Giro TT 1/3/6" ficam coerentes com "Estoque Total".
-    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltro) : 0;
-    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltro) : 0;
-    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltro) : 0;
+    // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2).
+    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
