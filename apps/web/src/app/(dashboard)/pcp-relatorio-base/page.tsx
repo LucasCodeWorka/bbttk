@@ -738,18 +738,6 @@ export default function PcpRelatorioBasePage() {
         )}
       </div>
 
-      <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
-        <p className="text-sm font-medium text-gray-800">Painel em fase de teste</p>
-        <p className="text-xs text-gray-600 mt-1">
-          Custo/PDV/Mkup vêm do TOTVS (Configurações &gt; Config. Relatório PCP - escolha os códigos e sincronize) e
-          podem aparecer como &quot;—&quot; pra SKUs ainda não sincronizados. &quot;PDV Atual&quot; usa o mesmo valor
-          do PDV Real (Varejo). &quot;Em Produção&quot; também precisa ser sincronizado lá (Ordens de Produção
-          abertas no TOTVS). Estoque previsto/disponível, lançamento e última entrada ainda não têm fonte de dado.
-          Janelas de giro/cobertura e cobertura ideal por loja também são ajustáveis lá. &quot;Estoque morto&quot; usa
-          o status do TOTVS (qualquer variante de &quot;FORA DE LINHA&quot;), não dias sem venda. Sem histórico
-          mensal ainda - os cards mostram só o valor atual, não uma série ao longo do tempo.
-        </p>
-      </Card>
 
       <div className="flex flex-wrap items-end gap-3">
         {classificacoes.map((dim) => (
