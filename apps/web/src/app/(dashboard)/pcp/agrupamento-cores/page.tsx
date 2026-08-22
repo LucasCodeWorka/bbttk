@@ -54,6 +54,10 @@ export default function AgrupamentoCoresPage() {
   const [grupoEditando, setGrupoEditando] = useState<AgrupamentoGrupo | null>(null);
   const [nomeEdicao, setNomeEdicao] = useState('');
   const [salvandoNome, setSalvandoNome] = useState(false);
+
+  // Controla quais grupos estao expandidos (mostra todos os membros)
+  const [gruposExpandidos, setGruposExpandidos] = useState<Set<number>>(new Set());
+  const MEMBROS_VISIVEIS_COLAPSADO = 5;
   const [coresNovasEdicao, setCoresNovasEdicao] = useState<string[]>([]);
   const [showModalCoresEdicao, setShowModalCoresEdicao] = useState(false);
   const [impactoEdicao, setImpactoEdicao] = useState<ImpactoAgrupamentoItem[]>([]);
@@ -208,6 +212,18 @@ export default function AgrupamentoCoresPage() {
     setCoresSelecionadas([]);
     setImpacto([]);
     setRemovidosManualmente(new Set());
+  }
+
+  function toggleExpandirGrupo(grupoId: number) {
+    setGruposExpandidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(grupoId)) {
+        next.delete(grupoId);
+      } else {
+        next.add(grupoId);
+      }
+      return next;
+    });
   }
 
   async function handleExcluirGrupo(id: number, nome: string) {
@@ -545,42 +561,65 @@ export default function AgrupamentoCoresPage() {
           <div className="py-10 text-center text-gray-500">Nenhum agrupamento criado ainda</div>
         ) : (
           <div className="space-y-3">
-            {grupos.map((grupo) => (
-              <div key={grupo.id} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-gray-900">{grupo.nome}</span>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => abrirEdicao(grupo)}>
-                      Editar
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}
-                      isLoading={excluindoGrupoId === grupo.id}
-                    >
-                      Excluir Grupo
-                    </Button>
+            {grupos.map((grupo) => {
+              const expandido = gruposExpandidos.has(grupo.id);
+              const totalMembros = grupo.membros.length;
+              const membrosVisiveis = expandido
+                ? grupo.membros
+                : grupo.membros.slice(0, MEMBROS_VISIVEIS_COLAPSADO);
+              const membrosOcultos = totalMembros - MEMBROS_VISIVEIS_COLAPSADO;
+
+              return (
+                <div key={grupo.id} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-gray-900">
+                      {grupo.nome}
+                      <span className="ml-2 text-sm font-normal text-gray-500">
+                        ({totalMembros} {totalMembros === 1 ? 'item' : 'itens'})
+                      </span>
+                    </span>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => abrirEdicao(grupo)}>
+                        Editar
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleExcluirGrupo(grupo.id, grupo.nome)}
+                        isLoading={excluindoGrupoId === grupo.id}
+                      >
+                        Excluir Grupo
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {grupo.membros.map((m) => (
-                    <Badge key={m.id} variant="default" className="pr-1">
-                      {m.referenceCode} - {m.colorName || m.colorCode}
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {membrosVisiveis.map((m) => (
+                      <Badge key={m.id} variant="default" className="pr-1">
+                        {m.referenceCode} - {m.colorName || m.colorCode}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoverMembro(m.id)}
+                          disabled={removendoMembroId === m.id}
+                          className="ml-1.5 hover:text-red-600 disabled:opacity-50 disabled:cursor-wait"
+                          title="Remover essa combinacao do grupo"
+                        >
+                          {removendoMembroId === m.id ? '…' : '×'}
+                        </button>
+                      </Badge>
+                    ))}
+                    {totalMembros > MEMBROS_VISIVEIS_COLAPSADO && (
                       <button
                         type="button"
-                        onClick={() => handleRemoverMembro(m.id)}
-                        disabled={removendoMembroId === m.id}
-                        className="ml-1.5 hover:text-red-600 disabled:opacity-50 disabled:cursor-wait"
-                        title="Remover essa combinacao do grupo"
+                        onClick={() => toggleExpandirGrupo(grupo.id)}
+                        className="text-sm text-[var(--bbtk-red)] hover:underline font-medium"
                       >
-                        {removendoMembroId === m.id ? '…' : '×'}
+                        {expandido ? 'Ver menos' : `+${membrosOcultos} mais`}
                       </button>
-                    </Badge>
-                  ))}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
