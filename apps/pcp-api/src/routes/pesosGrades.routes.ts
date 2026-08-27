@@ -41,6 +41,8 @@ router.get('/pesos-grades', async (req: Request, res: Response) => {
       tipoAnalise,
       referencias: parseList(req.query.referencias),
       categorias: parseList(req.query.categorias),
+      linhas: parseList(req.query.linhas),
+      generos: parseList(req.query.generos),
       dataInicio,
       dataFim,
       fatorDivisor,

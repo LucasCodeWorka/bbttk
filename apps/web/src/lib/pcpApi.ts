@@ -1016,6 +1016,8 @@ export interface PesosGradesFiltro {
   tipoAnalise: TipoAnalisePesosGrades;
   referencias?: string[];
   categorias?: string[];
+  linhas?: string[];
+  generos?: string[];
   dataInicio: string;
   dataFim: string;
   fatorDivisor: number;
@@ -1031,6 +1033,7 @@ export interface PesosGradesReferencia {
   referenceCode: string;
   descricao: string;
   tamanhos: PesosGradesTamanho[];
+  totalVendido: number;
 }
 
 export interface PesosGradesResponse {
@@ -1065,6 +1068,8 @@ export const pesosGradesApi = {
     params.set('fatorDivisor', String(filtro.fatorDivisor));
     appendList(params, 'referencias', filtro.referencias);
     appendList(params, 'categorias', filtro.categorias);
+    appendList(params, 'linhas', filtro.linhas);
+    appendList(params, 'generos', filtro.generos);
     return fetchPcpApi<PesosGradesResponse>(`/api/pcp/pesos-grades?${params.toString()}`, { token });
   },
 
