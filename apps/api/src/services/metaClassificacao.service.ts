@@ -4,12 +4,13 @@ import { prisma } from '../config/database.js';
 // tela PCP "Acompanhamento por Linha". Cadastrada direto no modal da propria tela de
 // relatorio (apps/pcp-api nao grava, so le pra comparar - cadastro fica aqui, junto do
 // resto das telas de config/cadastro do projeto).
-const TIPOS_VALIDOS = ['categoria', 'linha', 'genero', 'colecao'];
+const TIPOS_VALIDOS = ['categoria', 'linha', 'genero', 'colecao', 'status'];
 const CAMPO_POR_TIPO: Record<string, string> = {
   categoria: 'class_categoria',
   linha: 'class_linha',
   genero: 'class_genero',
   colecao: 'class_colecao',
+  status: 'class_status',
 };
 
 export interface MetaClassificacaoItem {

@@ -416,7 +416,7 @@ export async function getFiltrosVendaDia(): Promise<VendaDiaFiltrosResponse> {
 // vez de por loja). E a segunda aba de Venda do Dia - mesma tela, visao trocada.
 // ============================================================================
 
-export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero';
+export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero' | 'colecao' | 'status';
 export type Canal = 'varejo' | 'atacado' | 'todos';
 
 export interface AcompanhamentoDiarioFiltro {
@@ -438,12 +438,16 @@ export interface AcompanhamentoDiarioLinha {
   vendaPecasAtual: number;
   vendaPecasAnoAnterior: number;
   evolucaoPecasPercent: number | null;
+  metaPeriodo: number | null;
+  atingimentoMetaPercent: number | null;
   participacaoPercent: number;
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
   pecasEmProducao: number;
 }
+
+export type AcompanhamentoDiarioTotais = Omit<AcompanhamentoDiarioLinha, 'classificacao'>;
 
 export interface AcompanhamentoDiarioResponse {
   periodoAtual: { inicio: string; fim: string };
@@ -458,12 +462,15 @@ export interface AcompanhamentoDiarioResponse {
     pecasEmProducaoTotal: number;
   };
   linhas: AcompanhamentoDiarioLinha[];
+  totais: AcompanhamentoDiarioTotais;
 }
 
 const CAMPO_CLASSIFICACAO_DIARIO: Record<TipoClassificacaoDiario, string> = {
   categoria: 'a.class_categoria',
   linha: 'a.class_linha',
   genero: 'a.class_genero',
+  colecao: 'a.class_colecao',
+  status: 'a.class_status',
 };
 
 // Canal define locais logicos: DPA representa os saldos fisico/segunda qualidade
@@ -568,32 +575,96 @@ async function getEstoqueFisicoPorClassificacaoDiario(
   `;
 }
 
-// Pecas pendentes em Ordem de Producao aberta, por categoria/linha/genero -
-// sempre rede inteira (producao nao e por loja), mesmo dado de ops_em_producao ja
-// usado em relatorioBase.service.ts e sugestaoProducao.service.ts.
+// Pecas pendentes em Ordem de Producao aberta, por classificacao. A producao e
+// sempre da fabrica; componentes tecnicos nao entram, para manter o mesmo universo
+// de produtos acabados/embalagens usado nos indicadores do PCP e no BI Industrial.
 async function getEmProducaoPorClassificacaoDiario(tipo: TipoClassificacaoDiario): Promise<EstoqueClassificacaoRow[]> {
   const campo = CAMPO_CLASSIFICACAO_DIARIO[tipo];
   return prisma.$queryRaw<EstoqueClassificacaoRow[]>`
     SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, SUM(o.quantidade_pendente) AS quantidade
     FROM ops_em_producao o
     JOIN produto_analitico a ON a.product_code = o.product_code
-    WHERE ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
+    WHERE ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
     GROUP BY TRIM(${Prisma.raw(campo)})
   `;
 }
 
-function diasEntre(inicio: string, fim: string): number {
-  const ms = new Date(fim).getTime() - new Date(inicio).getTime();
-  return Math.max(1, Math.round(ms / 86400000) + 1);
+interface PeriodoCalendario {
+  ano: number;
+  mes: number;
+  diasSelecionados: number;
+  diasNoMes: number;
 }
 
-// Cobertura sempre em MESES (pedido do usuario, "cobertura sempre em mes primeiro de
-// tudo") - venda media mensal equivalente = pecas do periodo levadas pra uma base de
-// 30 dias, cobertura = estoque / essa media.
-function coberturaMeses(estoque: number, pecasPeriodo: number, dias: number): number | null {
-  const mediaMensal = (pecasPeriodo / dias) * 30;
+// Quebra o intervalo em meses de calendario. Assim uma meta mensal e a cobertura
+// nao usam uma aproximacao fixa de 30 dias (que distorcia, principalmente, o A.A.).
+function getPeriodosCalendario(inicio: string, fim: string): PeriodoCalendario[] {
+  const parse = (valor: string) => {
+    const [ano, mes, dia] = valor.split('-').map(Number);
+    return new Date(Date.UTC(ano, mes - 1, dia));
+  };
+  const dataInicio = parse(inicio);
+  const dataFim = parse(fim);
+  const periodos: PeriodoCalendario[] = [];
+  let cursor = new Date(Date.UTC(dataInicio.getUTCFullYear(), dataInicio.getUTCMonth(), 1));
+
+  while (cursor <= dataFim) {
+    const ano = cursor.getUTCFullYear();
+    const mes = cursor.getUTCMonth() + 1;
+    const diasNoMes = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    const primeiroDia = ano === dataInicio.getUTCFullYear() && mes === dataInicio.getUTCMonth() + 1
+      ? dataInicio.getUTCDate()
+      : 1;
+    const ultimoDia = ano === dataFim.getUTCFullYear() && mes === dataFim.getUTCMonth() + 1
+      ? dataFim.getUTCDate()
+      : diasNoMes;
+    periodos.push({ ano, mes, diasSelecionados: ultimoDia - primeiroDia + 1, diasNoMes });
+    cursor = new Date(Date.UTC(ano, mes, 1));
+  }
+
+  return periodos;
+}
+
+// Cobertura em meses = estoque / venda media mensal equivalente. A media e
+// normalizada pelos dias reais de cada mes do periodo, inclusive no ano anterior.
+function coberturaMeses(estoque: number, pecasPeriodo: number, periodos: PeriodoCalendario[]): number | null {
+  const mesesEquivalentes = periodos.reduce((total, periodo) => total + periodo.diasSelecionados / periodo.diasNoMes, 0);
+  const mediaMensal = mesesEquivalentes > 0 ? pecasPeriodo / mesesEquivalentes : 0;
   if (mediaMensal <= 0) return null;
   return round(estoque / mediaMensal, 1);
+}
+
+async function getMetasPeriodo(
+  tipoClassificacao: TipoClassificacaoDiario,
+  periodos: PeriodoCalendario[]
+): Promise<Map<string, number>> {
+  const metas = await prisma.pcpMetaClassificacao.findMany({
+    where: {
+      tipoClassificacao,
+      OR: periodos.map(({ ano, mes }) => ({ ano, mes })),
+    },
+    select: { ano: true, mes: true, valorClassificacao: true, metaValor: true },
+  });
+  return new Map(metas.map((meta) => [
+    `${meta.ano}-${meta.mes}-${meta.valorClassificacao.trim()}`,
+    decimalToNumber(meta.metaValor),
+  ]));
+}
+
+function calcularMetaPeriodo(
+  classificacao: string,
+  periodos: PeriodoCalendario[],
+  metas: Map<string, number>
+): number | null {
+  let metaPeriodo = 0;
+  for (const periodo of periodos) {
+    const metaMensal = metas.get(`${periodo.ano}-${periodo.mes}-${classificacao}`);
+    // Sem meta em qualquer mes abrangido, o campo precisa permanecer em branco.
+    if (metaMensal === undefined) return null;
+    metaPeriodo += (metaMensal / periodo.diasNoMes) * periodo.diasSelecionados;
+  }
+  return round(metaPeriodo, 2);
 }
 
 export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro): Promise<AcompanhamentoDiarioResponse> {
@@ -627,15 +698,16 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   const dataInicioAA = fmt(anoAnteriorInicio);
   const dataFimAA = fmt(anoAnteriorFim);
 
-  const diasAtual = diasEntre(dataInicio, dataFim);
-  const diasAnoAnterior = diasEntre(dataInicioAA, dataFimAA);
+  const periodosAtual = getPeriodosCalendario(dataInicio, dataFim);
+  const periodosAnoAnterior = getPeriodosCalendario(dataInicioAA, dataFimAA);
 
-  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, emProducaoRows] = await Promise.all([
+  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, emProducaoRows, metas] = await Promise.all([
     getVendaPorClassificacaoDiario(dataInicio, dataFim, filtro.tipoClassificacao, branches),
     getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branches),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, null),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, dataFimAA),
     getEmProducaoPorClassificacaoDiario(filtro.tipoClassificacao),
+    getMetasPeriodo(filtro.tipoClassificacao, periodosAtual),
   ]);
 
   const vendaAtualMap = new Map(vendaAtualRows.map((r) => [r.classificacao, { valor: decimalToNumber(r.valor), pecas: decimalToNumber(r.pecas) }]));
@@ -648,6 +720,7 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     ...vendaAtualMap.keys(),
     ...vendaAAMap.keys(),
     ...estoqueMap.keys(),
+    ...estoqueAAMap.keys(),
     ...emProducaoMap.keys(),
   ]);
 
@@ -661,8 +734,9 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     const estoqueFisicoAA = round(estoqueAAMap.get(classificacao) || 0, 0);
     const pecasEmProducao = round(emProducaoMap.get(classificacao) || 0, 0);
 
-    const coberturaAtual = coberturaMeses(estoqueFisico, vAtual.pecas, diasAtual);
-    const coberturaAA = coberturaMeses(estoqueFisicoAA, vAA.pecas, diasAnoAnterior);
+    const coberturaAtual = coberturaMeses(estoqueFisico, vAtual.pecas, periodosAtual);
+    const coberturaAA = coberturaMeses(estoqueFisicoAA, vAA.pecas, periodosAnoAnterior);
+    const metaPeriodo = calcularMetaPeriodo(classificacao, periodosAtual, metas);
 
     linhas.push({
       classificacao,
@@ -672,6 +746,8 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       vendaPecasAtual: round(vAtual.pecas, 0),
       vendaPecasAnoAnterior: round(vAA.pecas, 0),
       evolucaoPecasPercent: vAA.pecas > 0 ? round(((vAtual.pecas - vAA.pecas) / vAA.pecas) * 100, 1) : null,
+      metaPeriodo,
+      atingimentoMetaPercent: metaPeriodo && metaPeriodo > 0 ? round((vAtual.valor / metaPeriodo) * 100, 1) : null,
       participacaoPercent: vendaValorTotalAtual > 0 ? round((vAtual.valor / vendaValorTotalAtual) * 100, 1) : 0,
       coberturaMesesAtual: coberturaAtual,
       coberturaMesesAnoAnterior: coberturaAA,
@@ -683,6 +759,14 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   linhas.sort((a, b) => b.vendaValorAtual - a.vendaValorAtual);
 
   const vendaValorAnoAnteriorTotal = [...vendaAAMap.values()].reduce((s, v) => s + v.valor, 0);
+  const vendaPecasTotalAtual = [...vendaAtualMap.values()].reduce((s, v) => s + v.pecas, 0);
+  const vendaPecasTotalAnoAnterior = [...vendaAAMap.values()].reduce((s, v) => s + v.pecas, 0);
+  const estoqueFisicoTotal = [...estoqueMap.values()].reduce((s, v) => s + v, 0);
+  const estoqueFisicoAnoAnteriorTotal = [...estoqueAAMap.values()].reduce((s, v) => s + v, 0);
+  const pecasEmProducaoTotal = [...emProducaoMap.values()].reduce((s, v) => s + v, 0);
+  const metaPeriodoTotal = linhas.every((linha) => linha.metaPeriodo !== null)
+    ? round(linhas.reduce((s, linha) => s + (linha.metaPeriodo || 0), 0), 2)
+    : null;
 
   return {
     periodoAtual: { inicio: dataInicio, fim: dataFim },
@@ -693,9 +777,24 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       vendaValorTotal: round(vendaValorTotalAtual, 0),
       vendaValorAnoAnteriorTotal: round(vendaValorAnoAnteriorTotal, 0),
       evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotalAtual - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
-      estoqueFisicoTotal: round([...estoqueMap.values()].reduce((s, v) => s + v, 0), 0),
-      pecasEmProducaoTotal: round([...emProducaoMap.values()].reduce((s, v) => s + v, 0), 0),
+      estoqueFisicoTotal: round(estoqueFisicoTotal, 0),
+      pecasEmProducaoTotal: round(pecasEmProducaoTotal, 0),
     },
     linhas,
+    totais: {
+      vendaValorAtual: round(vendaValorTotalAtual, 0),
+      vendaValorAnoAnterior: round(vendaValorAnoAnteriorTotal, 0),
+      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotalAtual - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
+      vendaPecasAtual: round(vendaPecasTotalAtual, 0),
+      vendaPecasAnoAnterior: round(vendaPecasTotalAnoAnterior, 0),
+      evolucaoPecasPercent: vendaPecasTotalAnoAnterior > 0 ? round(((vendaPecasTotalAtual - vendaPecasTotalAnoAnterior) / vendaPecasTotalAnoAnterior) * 100, 1) : null,
+      metaPeriodo: metaPeriodoTotal,
+      atingimentoMetaPercent: metaPeriodoTotal && metaPeriodoTotal > 0 ? round((vendaValorTotalAtual / metaPeriodoTotal) * 100, 1) : null,
+      participacaoPercent: vendaValorTotalAtual > 0 ? 100 : 0,
+      coberturaMesesAtual: coberturaMeses(estoqueFisicoTotal, vendaPecasTotalAtual, periodosAtual),
+      coberturaMesesAnoAnterior: coberturaMeses(estoqueFisicoAnoAnteriorTotal, vendaPecasTotalAnoAnterior, periodosAnoAnterior),
+      estoqueFisico: round(estoqueFisicoTotal, 0),
+      pecasEmProducao: round(pecasEmProducaoTotal, 0),
+    },
   };
 }

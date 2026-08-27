@@ -961,7 +961,7 @@ export const vendaDiaApi = {
   },
 };
 
-export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero';
+export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero' | 'colecao' | 'status';
 export type Canal = 'varejo' | 'atacado' | 'todos';
 
 export interface AcompanhamentoDiarioFiltro {
@@ -980,12 +980,16 @@ export interface AcompanhamentoDiarioLinha {
   vendaPecasAtual: number;
   vendaPecasAnoAnterior: number;
   evolucaoPecasPercent: number | null;
+  metaPeriodo: number | null;
+  atingimentoMetaPercent: number | null;
   participacaoPercent: number;
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
   pecasEmProducao: number;
 }
+
+export type AcompanhamentoDiarioTotais = Omit<AcompanhamentoDiarioLinha, 'classificacao'>;
 
 export interface AcompanhamentoDiarioResponse {
   periodoAtual: { inicio: string; fim: string };
@@ -1000,6 +1004,7 @@ export interface AcompanhamentoDiarioResponse {
     pecasEmProducaoTotal: number;
   };
   linhas: AcompanhamentoDiarioLinha[];
+  totais: AcompanhamentoDiarioTotais;
 }
 
 export type TipoAnalisePesosGrades = 'item' | 'categoria';
