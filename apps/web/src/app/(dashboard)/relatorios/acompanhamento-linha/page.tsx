@@ -254,6 +254,8 @@ export default function AcompanhamentoLinhaPage() {
           mês × dias do período; sem meta cadastrada, fica em branco. Cobertura é sempre em meses, normalizada pelos
           dias reais de cada mês; a do ano anterior usa o estoque e a venda de então, não o de hoje. Estoque considera
           o saldo físico da loja; para DPA, inclui físico e segunda qualidade, e para Atacado, somente o estoque atacado.
+          Vendas de produtos sem o valor da classificação escolhida aparecem em <strong>SEM CLASSIFICAÇÃO</strong>, para
+          que os totais conciliem com o dashboard comercial.
         </p>
       </Card>
 

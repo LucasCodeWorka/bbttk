@@ -473,6 +473,18 @@ const CAMPO_CLASSIFICACAO_DIARIO: Record<TipoClassificacaoDiario, string> = {
   status: 'a.class_status',
 };
 
+const CLASSIFICACAO_NAO_INFORMADA = 'SEM CLASSIFICAÇÃO';
+
+function expressaoClassificacaoDiario(tipo: TipoClassificacaoDiario): Prisma.Sql {
+  const campo = CAMPO_CLASSIFICACAO_DIARIO[tipo];
+  return Prisma.sql`
+    CASE
+      WHEN ${Prisma.raw(campo)} IS NULL OR TRIM(${Prisma.raw(campo)}) IN ('', '.') THEN ${CLASSIFICACAO_NAO_INFORMADA}
+      ELSE TRIM(${Prisma.raw(campo)})
+    END
+  `;
+}
+
 // Canal define locais logicos: DPA representa os saldos fisico/segunda qualidade
 // da filial 02 e ATACADO representa somente o saldo atacadista dela.
 function getBranchesCanal(canal: Canal, branchesFiltro?: number[]): number[] {
@@ -519,21 +531,20 @@ async function getVendaPorClassificacaoDiario(
   tipo: TipoClassificacaoDiario,
   branches: number[]
 ): Promise<ClassificacaoAggRow[]> {
-  const campo = Prisma.raw(CAMPO_CLASSIFICACAO_DIARIO[tipo]);
+  const classificacao = expressaoClassificacaoDiario(tipo);
   const filtroLocal = buildAcompanhamentoVendaFilter(branches);
   return prisma.$queryRaw<ClassificacaoAggRow[]>`
-    SELECT TRIM(${campo}) AS classificacao, SUM(${VALOR_COM_SINAL}) AS valor, SUM(${QUANTIDADE_COM_SINAL}) AS pecas
+    SELECT ${classificacao} AS classificacao, SUM(${VALOR_COM_SINAL}) AS valor, SUM(${QUANTIDADE_COM_SINAL}) AS pecas
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-    JOIN produto_analitico a ON a.product_code = ti.product_code
+    LEFT JOIN produto_analitico a ON a.product_code = ti.product_code
     ${OPERACAO_JOIN}
     WHERE t.transaction_date >= ${dataInicio}::date
       AND t.transaction_date <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroLocal}
-      AND ${campo} IS NOT NULL AND TRIM(${campo}) NOT IN ('', '.')
-    GROUP BY TRIM(${campo})
+    GROUP BY 1
   `;
 }
 
