@@ -213,7 +213,7 @@ export default function VendaDescontoPage() {
 
     try {
       const columns: ExcelColumn[] = [
-        { header: 'Código', key: 'codigo', width: 18 },
+        { header: 'Referência', key: 'codigo', width: 18 },
         { header: 'Descrição', key: 'descricao', width: 40 },
         { header: 'Categoria', key: 'categoria', width: 15 },
         { header: 'Linha', key: 'linha', width: 15 },
@@ -380,11 +380,11 @@ export default function VendaDescontoPage() {
             <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} produtos</span>
           )}
         </CardHeader>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-scroll pb-3" style={{ scrollbarGutter: 'stable' }}>
           <Table>
             <TableHead>
               <TableRow>
-                <ThSortPcp label="Código" sortKeyName="codigo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                <ThSortPcp label="Referência" sortKeyName="codigo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Descrição" sortKeyName="descricao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Categoria" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Linha" sortKeyName="linha" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />

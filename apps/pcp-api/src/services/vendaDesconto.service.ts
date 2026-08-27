@@ -170,13 +170,12 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   }>>`
     WITH vendas_periodo AS (
       SELECT
-        p.product_sku AS codigo,
-        COALESCE(p.reference_name, p.product_name, p.product_sku) AS descricao,
+        COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo,
+        COALESCE(a.reference_name, p.reference_name, p.product_name, p.product_sku) AS descricao,
         TRIM(a.class_categoria) AS categoria,
         TRIM(a.class_linha) AS linha,
         TRIM(a.class_status) AS status,
         TRIM(a.class_colecao) AS colecao,
-        p.product_code,
         -- Quantidade com sinal (devolução negativa)
         SUM(${QUANTIDADE_COM_SINAL}) AS vendas,
         -- Faturamento líquido
@@ -211,7 +210,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       -- Há SKUs com mais de um registro analítico. A seleção lateral garante
       -- uma única classificação por item e impede duplicar venda/desconto.
       LEFT JOIN LATERAL (
-        SELECT class_categoria, class_linha, class_status, class_colecao
+        SELECT reference_code, reference_name, class_categoria, class_linha, class_status, class_colecao
         FROM produto_analitico a
         WHERE a.product_sku = p.product_sku
         ORDER BY a.product_code
@@ -225,26 +224,46 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
         AND ${branchFilter}
         AND ${classFilter}
       GROUP BY
-        p.product_sku, p.reference_name, p.product_name, p.product_code,
+        COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku),
+        COALESCE(a.reference_name, p.reference_name, p.product_name, p.product_sku),
         a.class_categoria, a.class_linha, a.class_status, a.class_colecao
       HAVING SUM(${QUANTIDADE_COM_SINAL}) > 0
     ),
-    estoque_atual AS (
+    estoque_sku AS (
       SELECT DISTINCT ON (ps.product_sku)
         ps.product_sku,
-        ps.product_code,
         COALESCE(SUM(ps.stock) OVER (PARTITION BY ps.product_sku), 0) AS estoque
       FROM prd_saldo ps
       WHERE ${branchFilterPs}
       ORDER BY ps.product_sku, ps.captured_at DESC
     ),
-    custos AS (
+    estoque_atual AS (
+      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, SUM(e.estoque) AS estoque
+      FROM estoque_sku e
+      JOIN produtos p ON p.product_sku = e.product_sku
+      LEFT JOIN LATERAL (
+        SELECT reference_code FROM produto_analitico a
+        WHERE a.product_sku = p.product_sku ORDER BY a.product_code LIMIT 1
+      ) a ON TRUE
+      GROUP BY COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku)
+    ),
+    custos_sku AS (
       SELECT DISTINCT ON (pc.product_code)
         pc.product_code,
         pc.valor AS custo
       FROM produto_custos pc
       WHERE pc.cost_code = 2
       ORDER BY pc.product_code, pc.synced_at DESC
+    ),
+    custos AS (
+      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, AVG(c.valor) AS custo
+      FROM custos_sku c
+      JOIN produtos p ON p.product_code = c.product_code
+      LEFT JOIN LATERAL (
+        SELECT reference_code FROM produto_analitico a
+        WHERE a.product_sku = p.product_sku ORDER BY a.product_code LIMIT 1
+      ) a ON TRUE
+      GROUP BY COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku)
     )
     SELECT
       v.codigo,
@@ -263,8 +282,8 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       v.tt_vda_vda,
       v.tt_desconto_venda
     FROM vendas_periodo v
-    LEFT JOIN estoque_atual e ON e.product_code = v.product_code
-    LEFT JOIN custos c ON c.product_code = v.product_code
+    LEFT JOIN estoque_atual e ON e.codigo = v.codigo
+    LEFT JOIN custos c ON c.codigo = v.codigo
     ORDER BY v.vendas DESC
   `;
 
