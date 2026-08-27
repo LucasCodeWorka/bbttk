@@ -83,8 +83,11 @@ export interface ResumoPromocaoLojaRow {
   branchCode: number;
   branchName: string;
   vendaTotalPromo: number;
+  vendaPromoPecas: number;
   vendaTotalGeralPeriodo: number;
+  vendaBrutaGeralPeriodo: number;
   participacaoPromoPct: number;
+  giroPromoPct: number;
   estoqueFinalPromo: number;
   estoqueFinalGeralPecas: number;
   participacaoEstoquePromoPct: number;
@@ -418,11 +421,12 @@ export async function getResumoPromocao(filtro: {
 }): Promise<ResumoPromocaoResponse> {
   const { dataInicio, dataFim, branches, statusPromo } = filtro;
 
-  // Se não especificou status de promoção, usa todos os status que NÃO são "ATIVO"
-  // (assumindo que produtos em promoção têm status diferente de ATIVO)
+  // Promoção é definida exclusivamente pelos Status escolhidos pelo usuário.
+  // Não inferimos promoção por "diferente de ATIVO", pois há diversos status
+  // comerciais que não representam um produto em promoção.
   const statusFilter = statusPromo && statusPromo.length > 0
     ? Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(statusPromo)})`
-    : Prisma.sql`TRIM(a.class_status) NOT IN ('ATIVO', '')`;
+    : Prisma.sql`FALSE`;
 
   const branchFilter = buildBranchFilter(branches, 't');
   const branchFilterPs = buildBranchFilter(branches, 'ps');
@@ -432,7 +436,9 @@ export async function getResumoPromocao(filtro: {
     branch_code: number;
     branch_name: string;
     venda_promo_valor: Decimal;
+    venda_promo_pecas: Decimal;
     venda_total_valor: Decimal;
+    venda_bruta_valor: Decimal;
     estoque_promo_pecas: Decimal;
     estoque_total_pecas: Decimal;
   }>>`
@@ -460,6 +466,7 @@ export async function getResumoPromocao(filtro: {
             ELSE 0
           END
         ) AS venda_promo_valor,
+        SUM(CASE WHEN ${statusFilter} THEN ${QUANTIDADE_COM_SINAL} ELSE 0 END) AS venda_promo_pecas,
         -- Faturamento total
         SUM(
           CASE
@@ -467,10 +474,15 @@ export async function getResumoPromocao(filtro: {
             ELSE COALESCE(ti.net_value, ti.value, 0)
           END
         ) AS venda_total_valor
+        , SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0)) ELSE COALESCE(ti.value, 0) END) AS venda_bruta_valor
       FROM transacoes t
       JOIN transacao_itens ti ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
       JOIN produtos p ON p.product_code = ti.product_code
-      LEFT JOIN produto_analitico a ON a.product_sku = p.product_sku
+      LEFT JOIN LATERAL (
+        SELECT class_status FROM produto_analitico a
+        WHERE a.product_sku = p.product_sku
+        ORDER BY a.product_code LIMIT 1
+      ) a ON TRUE
       LEFT JOIN branches b ON b.branch_code = t.branch_code
       ${OPERACAO_JOIN}
       WHERE t.transaction_date BETWEEN ${dataInicio}::date AND ${dataFim}::date
@@ -500,7 +512,11 @@ export async function getResumoPromocao(filtro: {
         ORDER BY product_sku, branch_code, stock_code, captured_at DESC
       ) ps
       JOIN produtos p ON p.product_sku = ps.product_sku
-      LEFT JOIN produto_analitico a ON a.product_sku = ps.product_sku
+      LEFT JOIN LATERAL (
+        SELECT class_status FROM produto_analitico a
+        WHERE a.product_sku = ps.product_sku
+        ORDER BY a.product_code LIMIT 1
+      ) a ON TRUE
       WHERE ${branchFilterPs}
       GROUP BY ps.branch_code
     )
@@ -508,7 +524,9 @@ export async function getResumoPromocao(filtro: {
       v.branch_code,
       v.branch_name,
       COALESCE(v.venda_promo_valor, 0) AS venda_promo_valor,
+      COALESCE(v.venda_promo_pecas, 0) AS venda_promo_pecas,
       COALESCE(v.venda_total_valor, 0) AS venda_total_valor,
+      COALESCE(v.venda_bruta_valor, 0) AS venda_bruta_valor,
       COALESCE(e.estoque_promo_pecas, 0) AS estoque_promo_pecas,
       COALESCE(e.estoque_total_pecas, 0) AS estoque_total_pecas
     FROM vendas_por_loja v
@@ -518,7 +536,9 @@ export async function getResumoPromocao(filtro: {
 
   const processedRows: ResumoPromocaoLojaRow[] = rows.map((row) => {
     const vendaTotalPromo = decimalToNumber(row.venda_promo_valor);
+    const vendaPromoPecas = decimalToNumber(row.venda_promo_pecas);
     const vendaTotalGeralPeriodo = decimalToNumber(row.venda_total_valor);
+    const vendaBrutaGeralPeriodo = decimalToNumber(row.venda_bruta_valor);
     const estoqueFinalPromo = decimalToNumber(row.estoque_promo_pecas);
     const estoqueFinalGeralPecas = decimalToNumber(row.estoque_total_pecas);
 
@@ -526,9 +546,14 @@ export async function getResumoPromocao(filtro: {
       branchCode: row.branch_code,
       branchName: row.branch_name,
       vendaTotalPromo: round(vendaTotalPromo, 2),
+      vendaPromoPecas: round(vendaPromoPecas, 0),
       vendaTotalGeralPeriodo: round(vendaTotalGeralPeriodo, 2),
-      participacaoPromoPct: vendaTotalGeralPeriodo > 0
-        ? round((vendaTotalPromo / vendaTotalGeralPeriodo) * 100, 2)
+      vendaBrutaGeralPeriodo: round(vendaBrutaGeralPeriodo, 2),
+      participacaoPromoPct: vendaBrutaGeralPeriodo > 0
+        ? round((vendaTotalPromo / vendaBrutaGeralPeriodo) * 100, 2)
+        : 0,
+      giroPromoPct: vendaPromoPecas + estoqueFinalPromo > 0
+        ? round((vendaPromoPecas / (vendaPromoPecas + estoqueFinalPromo)) * 100, 2)
         : 0,
       estoqueFinalPromo: round(estoqueFinalPromo, 0),
       estoqueFinalGeralPecas: round(estoqueFinalGeralPecas, 0),

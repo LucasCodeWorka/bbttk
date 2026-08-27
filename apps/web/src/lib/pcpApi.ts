@@ -1388,8 +1388,11 @@ export interface ResumoPromocaoLojaRow {
   branchCode: number;
   branchName: string;
   vendaTotalPromo: number;
+  vendaPromoPecas: number;
   vendaTotalGeralPeriodo: number;
+  vendaBrutaGeralPeriodo: number;
   participacaoPromoPct: number;
+  giroPromoPct: number;
   estoqueFinalPromo: number;
   estoqueFinalGeralPecas: number;
   participacaoEstoquePromoPct: number;

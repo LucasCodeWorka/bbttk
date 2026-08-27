@@ -157,8 +157,11 @@ export default function ResumoPromocaoPage() {
       case 'branchCode': return row.branchCode;
       case 'branchName': return row.branchName;
       case 'vendaTotalPromo': return row.vendaTotalPromo;
+      case 'vendaPromoPecas': return row.vendaPromoPecas;
       case 'vendaTotalGeralPeriodo': return row.vendaTotalGeralPeriodo;
+      case 'vendaBrutaGeralPeriodo': return row.vendaBrutaGeralPeriodo;
       case 'participacaoPromoPct': return row.participacaoPromoPct;
+      case 'giroPromoPct': return row.giroPromoPct;
       case 'estoqueFinalPromo': return row.estoqueFinalPromo;
       case 'estoqueFinalGeralPecas': return row.estoqueFinalGeralPecas;
       case 'participacaoEstoquePromoPct': return row.participacaoEstoquePromoPct;
@@ -182,14 +185,19 @@ export default function ResumoPromocaoPage() {
   const totais = useMemo(() => {
     if (!data?.rows.length) return null;
     const vendaTotalPromo = data.rows.reduce((sum, r) => sum + r.vendaTotalPromo, 0);
+    const vendaPromoPecas = data.rows.reduce((sum, r) => sum + r.vendaPromoPecas, 0);
     const vendaTotalGeralPeriodo = data.rows.reduce((sum, r) => sum + r.vendaTotalGeralPeriodo, 0);
+    const vendaBrutaGeralPeriodo = data.rows.reduce((sum, r) => sum + r.vendaBrutaGeralPeriodo, 0);
     const estoqueFinalPromo = data.rows.reduce((sum, r) => sum + r.estoqueFinalPromo, 0);
     const estoqueFinalGeralPecas = data.rows.reduce((sum, r) => sum + r.estoqueFinalGeralPecas, 0);
 
     return {
       vendaTotalPromo,
+      vendaPromoPecas,
       vendaTotalGeralPeriodo,
-      participacaoPromoPct: vendaTotalGeralPeriodo > 0 ? (vendaTotalPromo / vendaTotalGeralPeriodo) * 100 : 0,
+      vendaBrutaGeralPeriodo,
+      participacaoPromoPct: vendaBrutaGeralPeriodo > 0 ? (vendaTotalPromo / vendaBrutaGeralPeriodo) * 100 : 0,
+      giroPromoPct: vendaPromoPecas + estoqueFinalPromo > 0 ? (vendaPromoPecas / (vendaPromoPecas + estoqueFinalPromo)) * 100 : 0,
       estoqueFinalPromo,
       estoqueFinalGeralPecas,
       participacaoEstoquePromoPct: estoqueFinalGeralPecas > 0 ? (estoqueFinalPromo / estoqueFinalGeralPecas) * 100 : 0,
@@ -205,8 +213,11 @@ export default function ResumoPromocaoPage() {
       const columns: ExcelColumn[] = [
         { header: 'Loja', key: 'branchName', width: 30 },
         { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, type: 'currency' },
-        { header: 'Venda Total R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
-        { header: '% Participação Venda', key: 'participacaoPromoPct', width: 20, type: 'percent' },
+        { header: 'Venda Promoção (Peças)', key: 'vendaPromoPecas', width: 20, type: 'number' },
+        { header: 'Venda Bruta R$', key: 'vendaBrutaGeralPeriodo', width: 18, type: 'currency' },
+        { header: 'Venda Líquida R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
+        { header: '% Promo / Bruta', key: 'participacaoPromoPct', width: 20, type: 'percent' },
+        { header: 'Giro Promo', key: 'giroPromoPct', width: 14, type: 'percent' },
         { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, type: 'number' },
         { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, type: 'number' },
         { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
@@ -298,7 +309,7 @@ export default function ResumoPromocaoPage() {
               ))}
             </select>
             <p className="text-xs text-gray-500 mt-1">
-              Ctrl+click para múltipla seleção. Vazio = todos exceto ATIVO.
+              Ctrl+click para múltipla seleção. Se nenhum status for escolhido, o relatório não considera itens como promoção.
             </p>
           </div>
         </div>
@@ -315,10 +326,10 @@ export default function ResumoPromocaoPage() {
           <KPICard
             title="Venda Promoção"
             value={formatCurrency(totais.vendaTotalPromo)}
-            subtitle={`${formatPercent(totais.participacaoPromoPct)} do total`}
+            subtitle={`${formatPercent(totais.participacaoPromoPct)} da venda bruta · Bruta: ${formatCurrency(totais.vendaBrutaGeralPeriodo)}`}
           />
           <KPICard
-            title="Venda Total"
+            title="Venda Líquida"
             value={formatCurrency(totais.vendaTotalGeralPeriodo)}
             subtitle="Período selecionado"
           />
@@ -356,8 +367,11 @@ export default function ResumoPromocaoPage() {
               <TableRow>
                 <ThSortPcp label="Loja" sortKeyName="branchName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Venda Promoção R$" sortKeyName="vendaTotalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="Venda Total R$" sortKeyName="vendaTotalGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-                <ThSortPcp label="% Participação" sortKeyName="participacaoPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Participação da promoção na venda" />
+                <ThSortPcp label="Venda Promo (Peças)" sortKeyName="vendaPromoPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                <ThSortPcp label="Venda Bruta R$" sortKeyName="vendaBrutaGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                <ThSortPcp label="Venda Líquida R$" sortKeyName="vendaTotalGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+                <ThSortPcp label="% Promo / Bruta" sortKeyName="participacaoPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda líquida de promoção dividida pela venda bruta" />
+                <ThSortPcp label="Giro Promo" sortKeyName="giroPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda em peças de promoção do período ÷ (venda em peças + estoque em promoção)" />
                 <ThSortPcp label="Estoque Promo" sortKeyName="estoqueFinalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final em promoção (peças)" />
                 <ThSortPcp label="Estoque Total" sortKeyName="estoqueFinalGeralPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final total (peças)" />
                 <ThSortPcp label="% Estoque Promo" sortKeyName="participacaoEstoquePromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Participação do estoque em promoção" />
@@ -366,13 +380,13 @@ export default function ResumoPromocaoPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
                     Carregando...
                   </TableCell>
                 </TableRow>
               ) : !data?.rows.length ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
                     Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
                   </TableCell>
                 </TableRow>
@@ -382,10 +396,13 @@ export default function ResumoPromocaoPage() {
                     <TableRow key={row.branchCode} className="hover:bg-gray-50">
                       <TableCell className="font-medium">{row.branchName}</TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaTotalPromo)}</TableCell>
+                      <TableCell align="right">{formatNumber(row.vendaPromoPecas)}</TableCell>
+                      <TableCell align="right">{formatCurrency(row.vendaBrutaGeralPeriodo)}</TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaTotalGeralPeriodo)}</TableCell>
                       <TableCell align="right" className={row.participacaoPromoPct > 20 ? 'text-green-600 font-medium' : ''}>
                         {formatPercent(row.participacaoPromoPct)}
                       </TableCell>
+                      <TableCell align="right">{formatPercent(row.giroPromoPct)}</TableCell>
                       <TableCell align="right">{formatNumber(row.estoqueFinalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(row.estoqueFinalGeralPecas)}</TableCell>
                       <TableCell align="right" className={row.participacaoEstoquePromoPct > 30 ? 'text-orange-600 font-medium' : ''}>
@@ -398,8 +415,11 @@ export default function ResumoPromocaoPage() {
                     <TableRow className="bg-gray-100 font-semibold">
                       <TableCell>TOTAL</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaTotalPromo)}</TableCell>
+                      <TableCell align="right">{formatNumber(totais.vendaPromoPecas)}</TableCell>
+                      <TableCell align="right">{formatCurrency(totais.vendaBrutaGeralPeriodo)}</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaTotalGeralPeriodo)}</TableCell>
                       <TableCell align="right">{formatPercent(totais.participacaoPromoPct)}</TableCell>
+                      <TableCell align="right">{formatPercent(totais.giroPromoPct)}</TableCell>
                       <TableCell align="right">{formatNumber(totais.estoqueFinalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(totais.estoqueFinalGeralPecas)}</TableCell>
                       <TableCell align="right">{formatPercent(totais.participacaoEstoquePromoPct)}</TableCell>
