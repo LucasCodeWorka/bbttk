@@ -584,7 +584,7 @@ async function getEmProducaoPorClassificacaoDiario(tipo: TipoClassificacaoDiario
     SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, SUM(o.quantidade_pendente) AS quantidade
     FROM ops_em_producao o
     JOIN produto_analitico a ON a.product_code = o.product_code
-    WHERE ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    WHERE TRUE ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
     GROUP BY TRIM(${Prisma.raw(campo)})
   `;
