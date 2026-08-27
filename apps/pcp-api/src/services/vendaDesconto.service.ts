@@ -428,8 +428,14 @@ export async function getResumoPromocao(filtro: {
     ? Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(statusPromo)})`
     : Prisma.sql`FALSE`;
 
-  const branchFilter = buildBranchFilter(branches, 't');
-  const branchFilterPs = buildBranchFilter(branches, 'ps');
+  // No resumo padrão, a comparação é das lojas físicas. DPA e Atacado só
+  // entram quando forem escolhidos explicitamente no filtro de filiais.
+  const branchFilter = branches?.length
+    ? buildBranchFilter(branches, 't')
+    : Prisma.sql`t.branch_code != ${FABRICA_BRANCH_CODE}`;
+  const branchFilterPs = branches?.length
+    ? buildBranchFilter(branches, 'ps')
+    : Prisma.sql`ps.branch_code != ${FABRICA_BRANCH_CODE} AND ps.stock_code = 1`;
 
   // Query para resumo por loja
   const rows = await prisma.$queryRaw<Array<{
@@ -506,9 +512,12 @@ export async function getResumoPromocao(filtro: {
         SUM(COALESCE(ps.stock, 0)) AS estoque_total_pecas
       FROM (
         SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-          product_sku, branch_code, stock, product_code
+          product_sku, branch_code, stock_code, stock, product_code
         FROM prd_saldo ps
         WHERE ${branchFilterPs}
+          -- Estoque final precisa respeitar a data escolhida no relatório;
+          -- usar o último snapshot global misturava movimentações posteriores.
+          AND captured_at < ${dataFim}::date + INTERVAL '1 day'
         ORDER BY product_sku, branch_code, stock_code, captured_at DESC
       ) ps
       JOIN produtos p ON p.product_sku = ps.product_sku
