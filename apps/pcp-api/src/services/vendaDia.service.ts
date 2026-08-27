@@ -639,17 +639,27 @@ async function getMetasPeriodo(
   tipoClassificacao: TipoClassificacaoDiario,
   periodos: PeriodoCalendario[]
 ): Promise<Map<string, number>> {
-  const metas = await prisma.pcpMetaClassificacao.findMany({
-    where: {
-      tipoClassificacao,
-      OR: periodos.map(({ ano, mes }) => ({ ano, mes })),
-    },
-    select: { ano: true, mes: true, valorClassificacao: true, metaValor: true },
-  });
-  return new Map(metas.map((meta) => [
-    `${meta.ano}-${meta.mes}-${meta.valorClassificacao.trim()}`,
-    decimalToNumber(meta.metaValor),
-  ]));
+  try {
+    const metas = await prisma.pcpMetaClassificacao.findMany({
+      where: {
+        tipoClassificacao,
+        OR: periodos.map(({ ano, mes }) => ({ ano, mes })),
+      },
+      select: { ano: true, mes: true, valorClassificacao: true, metaValor: true },
+    });
+    return new Map(metas.map((meta) => [
+      `${meta.ano}-${meta.mes}-${meta.valorClassificacao.trim()}`,
+      decimalToNumber(meta.metaValor),
+    ]));
+  } catch (error) {
+    // O ambiente de teste pode ainda não ter recebido a tabela de metas. O
+    // relatório continua utilizável e segue a regra de mostrar meta em branco.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021') {
+      console.warn('[Acompanhamento] Tabela pcp_meta_classificacao não encontrada; metas serão exibidas em branco.');
+      return new Map();
+    }
+    throw error;
+  }
 }
 
 function calcularMetaPeriodo(
