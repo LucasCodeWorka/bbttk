@@ -1,7 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
+import {
+  ATACADO_BRANCH_CODE,
+  ATACADO_STOCK_CODE,
+  DPA_BRANCH_CODE,
+  DPA_STOCK_CODES,
+  RELATORIO_BASE_BRANCH_ORDER,
+} from '../config/constants.js';
 
 // Fragmentos de classificacao de venda duplicados de
 // apps/api/src/services/vendas.service.ts:20-54 - workspaces separados, sem
@@ -15,6 +21,10 @@ export const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operatio
 export const SALE_OPERATION_FILTER = Prisma.sql`(${IS_VENDA} OR ${IS_DEVOLUCAO})`;
 // Giro liquido de devolucao (mesmo padrao do resto do sistema - venda/peca sempre liquida)
 export const QUANTIDADE_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.quantity) ELSE ti.quantity END)`;
+// Faturamento liquido de devolucao, mesmo padrao de vendas.service.ts:52 (apps/api) -
+// ABS() normaliza o sinal que o ETL gravou pra devolucao (inconsistente, as vezes vem
+// positivo, as vezes negativo) antes de aplicar o sinal negativo de verdade.
+export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
 
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';
@@ -198,26 +208,36 @@ interface EstoqueRow {
   quantidade_estoque: Decimal;
 }
 
-// Estoque atual por SKU x filial - mesma regra de dedup da tabela analitica externa
-// (PROMPT_TABELA_ANALITICA_PCP_ESTOQUE_SEM_GIRO.md): captura mais recente por
-// product_sku+branch_code+stock_code, depois soma.
+// Estoque atual por SKU x local. A filial 02 e desmembrada em DPA (fisico + segunda
+// qualidade) e ATACADO antes da agregacao, para nunca misturar os dois locais.
 async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[]> {
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-        product_sku, product_code, branch_code, stock, captured_at
+        product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
       WHERE 1=1 ${filtroProductSku(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
-    SELECT us.product_sku, us.product_code, us.branch_code,
+    SELECT us.product_sku, us.product_code,
+           CASE
+             WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+             WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+             ELSE us.branch_code
+           END AS branch_code,
            COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      AND (us.branch_code != ${FABRICA_BRANCH_CODE} OR us.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
-    GROUP BY us.product_sku, us.product_code, us.branch_code
+    GROUP BY us.product_sku, us.product_code,
+      CASE
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+        ELSE us.branch_code
+      END
   `;
 }
 
@@ -230,7 +250,13 @@ interface ProductCodeAggRow {
 // Giro (peca vendida, liquido de devolucao) por product_code x filial, ultimos `dias` dias
 async function getGiroRows(dias: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
   return prisma.$queryRaw<ProductCodeAggRow[]>`
-    SELECT ti.product_code, t.branch_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+    SELECT ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END AS branch_code,
+      SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
@@ -238,7 +264,12 @@ async function getGiroRows(dias: number, productCodes: number[] | null): Promise
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code, t.branch_code
+    GROUP BY ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END
   `;
 }
 
@@ -264,7 +295,13 @@ async function getGiroAtacadoRows(dias: number, productCodes: number[] | null): 
 // cobertura (media_mensal = total / meses).
 async function getVendaPorMesesRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
   return prisma.$queryRaw<ProductCodeAggRow[]>`
-    SELECT ti.product_code, t.branch_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+    SELECT ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END AS branch_code,
+      SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
@@ -272,7 +309,12 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code, t.branch_code
+    GROUP BY ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END
   `;
 }
 
@@ -294,10 +336,17 @@ async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[]
   `;
 }
 
-// Giro TT de rede (soma de todas as filiais) por product_code, nas janelas de 1/3/6 meses
-async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
-  return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+// Giro TT por product_code x branch_code, nas janelas de 1/3/6 meses. Retorna detalhado
+// por filial pra permitir que os cards KPIs respeitem o filtro de loja selecionado.
+async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
+  return prisma.$queryRaw<ProductCodeAggRow[]>`
+    SELECT ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END AS branch_code,
+      SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
@@ -305,7 +354,12 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null): Prom
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code
+    GROUP BY ti.product_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END
   `;
 }
 
@@ -520,6 +574,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const config = await getConfig();
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
 
+  // Mapeamento de branch para busca de dados: ATACADO_BRANCH_CODE (-2) é um código sintético
+  // que representa o canal Atacado. Os dados de estoque/giro estão gravados com
+  // FABRICA_BRANCH_CODE (2). Quando o usuário filtra por Atacado, precisamos buscar os
+  // dados da Fábrica. Este Set é usado para verificar se um branch_code do banco bate
+  // com o filtro do usuário, mapeando -2 -> 2.
+  // As queries normalizam a filial 02 para DPA (-1) ou ATACADO (-2).
+  const branchFiltroParaDados = branchFiltro;
+
   // Busca identidade PRIMEIRO (respeitando os filtros de classificacao/busca), depois
   // usa o resultado pra restringir as queries auxiliares (venda/giro/custo/em
   // producao) ao mesmo universo - antes elas sempre escaneavam o catalogo inteiro,
@@ -595,12 +657,26 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const vendaAtacadoMesesPorProductCode = new Map<number, number>();
   for (const r of vendaAtacadoMesesRows) vendaAtacadoMesesPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
 
-  const giroTt1PorProductCode = new Map<number, number>();
-  for (const r of giroTt1Rows) giroTt1PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-  const giroTt3PorProductCode = new Map<number, number>();
-  for (const r of giroTt3Rows) giroTt3PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-  const giroTt6PorProductCode = new Map<number, number>();
-  for (const r of giroTt6Rows) giroTt6PorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+  // Giro TT por product_code x branch_code - estrutura igual a venda12mPorProductCode,
+  // permite filtrar por loja nos cards KPIs (SKUs, Estoque Total, Giro TT 1/3/6).
+  const giroTt1PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt1Rows) {
+    const mapa = giroTt1PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt1PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt3PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt3Rows) {
+    const mapa = giroTt3PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt3PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt6PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt6Rows) {
+    const mapa = giroTt6PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt6PorProductCode.set(r.product_code, mapa);
+  }
 
   const custoPrecoPorProductCode = new Map<number, { custo: number | null; pdvVar: number | null; pdvAta: number | null }>();
   for (const r of custoPrecoRows) {
@@ -630,6 +706,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     if (!mapa) return 0;
     let soma = 0;
     for (const v of mapa.values()) soma += v;
+    return soma;
+  }
+
+  // Soma valores de um mapa branch_code -> valor, respeitando o filtro de filiais.
+  // Se branchFiltro for null (nenhum filtro), soma todas as filiais.
+  function somaMapaFiltrado(mapa: Map<number, number> | undefined, filtro: Set<number> | null): number {
+    if (!mapa) return 0;
+    let soma = 0;
+    if (filtro) {
+      for (const [branchCode, valor] of mapa) {
+        if (filtro.has(branchCode)) soma += valor;
+      }
+    } else {
+      for (const valor of mapa.values()) soma += valor;
+    }
     return soma;
   }
 
@@ -710,20 +801,30 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
     const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
 
-    // EST.TT = soma de todas as filiais reais (inclui a Fabrica/branch_code=2)
+    // EST.TT = soma das filiais selecionadas no filtro (ou todas se nenhuma selecionada).
+    // Quando ha filtro de branch, soma so o estoque das lojas filtradas - assim os cards
+    // "SKUs" e "Estoque Total" refletem a selecao do usuario.
+    // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2) pois os dados do
+    // banco usam branch_code=2 para a Fabrica/Atacado.
     let estTt = 0;
-    for (const valor of estoqueDoSku.values()) estTt += valor;
+    if (branchFiltroParaDados) {
+      for (const [branchCode, valor] of estoqueDoSku) {
+        if (branchFiltroParaDados.has(branchCode)) estTt += valor;
+      }
+    } else {
+      for (const valor of estoqueDoSku.values()) estTt += valor;
+    }
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
     const mediaMensalPorBranchDoSku = new Map<number, number>();
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) {
-        const estFabrica = estoqueDoSku.get(FABRICA_BRANCH_CODE) || 0;
+        const estFabrica = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
         const giroAtacado = productCode !== null ? giroAtacadoPorProductCode.get(productCode) || 0 : 0;
         const mediaMensalAtacado =
           config.atacadoCoberturaBase === 'atacado_only'
             ? (productCode !== null ? vendaAtacadoMesesPorProductCode.get(productCode) || 0 : 0) / config.coberturaMeses
-            : (vendaMesesDoProduto?.get(FABRICA_BRANCH_CODE) || 0) / config.coberturaMeses;
+            : (vendaMesesDoProduto?.get(ATACADO_BRANCH_CODE) || 0) / config.coberturaMeses;
 
         branches[coluna.branchCode] = {
           giro: round(giroAtacado, 0),
@@ -746,9 +847,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensal);
     }
 
-    const giroTt1 = productCode !== null ? giroTt1PorProductCode.get(productCode) || 0 : 0;
-    const giroTt3 = productCode !== null ? giroTt3PorProductCode.get(productCode) || 0 : 0;
-    const giroTt6 = productCode !== null ? giroTt6PorProductCode.get(productCode) || 0 : 0;
+    // Giro TT respeita o filtro de loja - se filtrado por branch, soma so o giro das
+    // lojas selecionadas. Assim os cards "Giro TT 1/3/6" ficam coerentes com "Estoque Total".
+    // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2).
+    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;

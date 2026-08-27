@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
+import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
 
 // Relatório 5: Venda e Desconto por Classificação
 // Relatório 5.1: Resumo da Promoção por Loja
@@ -97,12 +98,26 @@ export interface ResumoPromocaoResponse {
 
 // ========== Funções Auxiliares ==========
 
-function buildBranchFilter(branches?: number[]): Prisma.Sql {
+function buildBranchFilter(branches?: number[], alias = 't'): Prisma.Sql {
   if (!branches || branches.length === 0) {
-    // Exclui Fábrica (branch_code = 2) por padrão
-    return Prisma.sql`t.branch_code != 2`;
+    return alias === 'ps'
+      ? Prisma.sql`((ps.branch_code != ${FABRICA_BRANCH_CODE} AND ps.stock_code = 1) OR (ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})))`
+      : Prisma.sql`TRUE`;
   }
-  return Prisma.sql`t.branch_code IN (${Prisma.join(branches)})`;
+  const coluna = alias === 'ps' ? Prisma.sql`ps.branch_code` : Prisma.sql`t.branch_code`;
+  const stockCode = alias === 'ps' ? Prisma.sql`ps.stock_code` : null;
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(
+    alias === 'ps'
+      ? Prisma.sql`(${coluna} IN (${Prisma.join(normais)}) AND ${stockCode!} = 1)`
+      : Prisma.sql`${coluna} IN (${Prisma.join(normais)})`
+  );
+  if (alias === 'ps' && branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND ${stockCode!} IN (${Prisma.join(DPA_STOCK_CODES)}))`);
+  if (alias === 'ps' && branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND ${stockCode!} = ${ATACADO_STOCK_CODE})`);
+  if (alias !== 'ps' && branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
+  if (alias !== 'ps' && branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
+  return condicoes.length ? Prisma.sql`(${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`FALSE`;
 }
 
 function buildClassificacaoFilter(
@@ -129,6 +144,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   const { dataInicio, dataFim, branches, classificacao, itensClassificacao } = filtro;
 
   const branchFilter = buildBranchFilter(branches);
+  const branchFilterPs = buildBranchFilter(branches, 'ps');
   const classFilter = buildClassificacaoFilter(classificacao, itensClassificacao);
 
   // Query principal: vendas com desconto por produto
@@ -210,7 +226,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
         ps.product_code,
         COALESCE(SUM(ps.stock) OVER (PARTITION BY ps.product_sku), 0) AS estoque
       FROM prd_saldo ps
-      WHERE ps.stock_code = 1
+      WHERE ${branchFilterPs}
       ORDER BY ps.product_sku, ps.captured_at DESC
     ),
     custos AS (
@@ -377,9 +393,8 @@ export async function getResumoPromocao(filtro: {
     ? Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(statusPromo)})`
     : Prisma.sql`TRIM(a.class_status) NOT IN ('ATIVO', '')`;
 
-  const branchFilter = branches && branches.length > 0
-    ? Prisma.sql`t.branch_code IN (${Prisma.join(branches)})`
-    : Prisma.sql`t.branch_code != 2`; // Exclui Fábrica por padrão
+  const branchFilter = buildBranchFilter(branches, 't');
+  const branchFilterPs = buildBranchFilter(branches, 'ps');
 
   // Query para resumo por loja
   const rows = await prisma.$queryRaw<Array<{
@@ -393,7 +408,16 @@ export async function getResumoPromocao(filtro: {
     WITH vendas_por_loja AS (
       SELECT
         t.branch_code,
-        b.description AS branch_name,
+        MAX(TRIM(REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            COALESCE(b.description, b.branch_name, ''),
+            '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+            ''
+          ),
+          '^BEBETENKITE[[:space:]]*-[[:space:]]*',
+          '',
+          'i'
+        ))) AS branch_name,
         -- Faturamento em promoção
         SUM(
           CASE
@@ -423,7 +447,7 @@ export async function getResumoPromocao(filtro: {
         AND ${SALE_OPERATION_FILTER}
         AND t.customer_code < 110000000
         AND ${branchFilter}
-      GROUP BY t.branch_code, b.description
+      GROUP BY t.branch_code
     ),
     estoque_por_loja AS (
       SELECT
@@ -440,13 +464,13 @@ export async function getResumoPromocao(filtro: {
       FROM (
         SELECT DISTINCT ON (product_sku, branch_code, stock_code)
           product_sku, branch_code, stock, product_code
-        FROM prd_saldo
-        WHERE stock_code = 1
+        FROM prd_saldo ps
+        WHERE ${branchFilterPs}
         ORDER BY product_sku, branch_code, stock_code, captured_at DESC
       ) ps
       JOIN produtos p ON p.product_sku = ps.product_sku
       LEFT JOIN produto_analitico a ON a.product_sku = ps.product_sku
-      WHERE ${branchFilter.sql?.replace('t.branch_code', 'ps.branch_code') || Prisma.sql`ps.branch_code != 2`}
+      WHERE ${branchFilterPs}
       GROUP BY ps.branch_code
     )
     SELECT
@@ -531,7 +555,18 @@ export async function getFiltrosVendaDesconto(): Promise<VendaDescontoFiltrosDis
       ORDER BY valor
     `,
     prisma.$queryRaw<Array<{ branch_code: number; branch_name: string }>>`
-      SELECT branch_code, COALESCE(description, branch_name) AS branch_name
+      SELECT
+        branch_code,
+        TRIM(REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            COALESCE(description, branch_name, ''),
+            '^[[:space:]]*[0-9]+[[:space:]]*[-–—]?[[:space:]]*',
+            ''
+          ),
+          '^BEBETENKITE[[:space:]]*-[[:space:]]*',
+          '',
+          'i'
+        )) AS branch_name
       FROM branches
       WHERE branch_code != 2
       ORDER BY branch_code
@@ -543,6 +578,10 @@ export async function getFiltrosVendaDesconto(): Promise<VendaDescontoFiltrosDis
     linhas: linhas.map((r) => r.valor),
     colecoes: colecoes.map((r) => r.valor),
     status: status.map((r) => r.valor),
-    branches,
+    branches: [
+      { branch_code: DPA_BRANCH_CODE, branch_name: 'DPA' },
+      { branch_code: ATACADO_BRANCH_CODE, branch_name: 'ATACADO' },
+      ...branches,
+    ],
   };
 }

@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
+import { FABRICA_BRANCH_CODE, IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 
@@ -106,10 +106,12 @@ function buildVendaBranchFiltro(branches?: number[]): Prisma.Sql {
   if (!branches?.length) return Prisma.empty;
 
   const normais = branches.filter((branchCode) => branchCode > 0);
+  const incluiDpa = branches.includes(DPA_BRANCH_CODE);
   const incluiAtacado = branches.includes(ATACADO_BRANCH_CODE);
   const condicoes: Prisma.Sql[] = [];
   if (normais.length) condicoes.push(Prisma.sql`t.branch_code IN (${Prisma.join(normais)})`);
-  if (incluiAtacado) condicoes.push(Prisma.sql`(t.branch_code = 2 AND co.description ILIKE '%ATACADO%')`);
+  if (incluiDpa) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
+  if (incluiAtacado) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
   if (condicoes.length === 0) return Prisma.empty;
   return Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})`;
 }
@@ -117,13 +119,12 @@ function buildVendaBranchFiltro(branches?: number[]): Prisma.Sql {
 function buildEstoqueBranchFiltro(branches?: number[]): Prisma.Sql {
   if (!branches?.length) return Prisma.empty;
 
-  const codigos = new Set<number>();
-  for (const branchCode of branches) {
-    if (branchCode === ATACADO_BRANCH_CODE) codigos.add(2);
-    else if (branchCode > 0) codigos.add(branchCode);
-  }
-  if (codigos.size === 0) return Prisma.empty;
-  return Prisma.sql`AND branch_code IN (${Prisma.join([...codigos])})`;
+  const normais = branches.filter((branchCode) => branchCode > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE})`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
 }
 
 async function getConfig() {
@@ -223,6 +224,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
             product_sku, product_code, branch_code, stock, captured_at
           FROM prd_saldo
           WHERE 1=1
+            AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
           ${estoqueBranchFiltro}
           ORDER BY product_sku, branch_code, stock_code, captured_at DESC
         )

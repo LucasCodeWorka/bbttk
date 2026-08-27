@@ -1,6 +1,9 @@
 export const FILIAIS: Record<number, string> = {
   1: 'IGUATEMI',
-  2: 'FABRICA',
+  // A filial 02 do TOTVS e dois locais de estoque distintos. Os codigos negativos
+  // sao sentinelas da aplicacao, para que os filtros nunca misturem os dois.
+  [-1]: 'DPA',
+  [-2]: 'ATACADO',
   3: 'BENFICA',
   4: 'DEL PASEO',
   5: 'PATIO DOM LUIS',
@@ -14,15 +17,16 @@ export const FILIAIS: Record<number, string> = {
   17: 'NORTH SHOPPING',
 };
 
-// Sentinel nao-real de branch_code pra representar a coluna sintetica "Atacado" (canal
-// de venda dentro da Fabrica/branch_code=2, nunca uma filial de verdade). Negativo de
-// proposito, pra nunca colidir com um branch_code real que o TOTVS venha a criar.
+// A filial 02 contem dois locais: DPA (fisico + segunda qualidade) e ATACADO.
+// Os codigos negativos sao propositais, para nunca colidirem com uma filial real.
+export const DPA_BRANCH_CODE = -1;
 export const ATACADO_BRANCH_CODE = -2;
+export const DPA_STOCK_CODES = [1, 5];
+export const ATACADO_STOCK_CODE = 8;
 
-// Ordem exata das 13 colunas de filial do Relatorio Base, igual ao cabecalho da
-// planilha de referencia. branch_code=2 (FABRICA) nunca aparece como coluna propria -
-// e inteiramente consumido pela sintese da coluna Atacado.
+// A filial 02 nunca aparece como coluna propria: DPA e ATACADO sao locais separados.
 export const RELATORIO_BASE_BRANCH_ORDER: { branchCode: number; label: string }[] = [
+  { branchCode: DPA_BRANCH_CODE, label: 'DPA' },
   { branchCode: ATACADO_BRANCH_CODE, label: 'ATACADO' },
   { branchCode: 1, label: 'IGUATEMI' },
   { branchCode: 13, label: 'EUSÉBIO' },

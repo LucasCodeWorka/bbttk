@@ -1,7 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import {
+  OPERACAO_JOIN,
+  SALE_OPERATION_FILTER,
+  QUANTIDADE_COM_SINAL,
+  VALOR_COM_SINAL,
+  PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
+  FABRICA_BRANCH_CODE,
+} from './relatorioBase.service.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
 
 // Lojas de varejo (excluindo Fábrica que é produção)
 const LOJAS_VAREJO = [1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 17];
@@ -88,6 +96,26 @@ interface BranchRow {
   abrev: string | null;
 }
 
+function buildVendaBranchClause(branches?: number[] | null): Prisma.Sql {
+  if (!branches?.length) return Prisma.sql`AND (t.branch_code IN (${Prisma.join(LOJAS_VAREJO)}) OR t.branch_code = ${FABRICA_BRANCH_CODE})`;
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`t.branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
+function buildEstoqueBranchClause(branches?: number[] | null): Prisma.Sql {
+  if (!branches?.length) return Prisma.sql`AND (us.branch_code IN (${Prisma.join(LOJAS_VAREJO)}) OR (us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})))`;
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`us.branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE})`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
 // Vendas por filial em um período (apenas lojas de varejo)
 async function getVendasPorPeriodo(
   dataInicio: string,
@@ -95,9 +123,7 @@ async function getVendasPorPeriodo(
   classificacaoFiltro: Prisma.Sql,
   branchesFiltro: number[] | null
 ): Promise<VendaRow[]> {
-  const branchesClause = branchesFiltro && branchesFiltro.length > 0
-    ? Prisma.sql`AND t.branch_code IN (${Prisma.join(branchesFiltro)})`
-    : Prisma.sql`AND t.branch_code IN (${Prisma.join(LOJAS_VAREJO)})`;
+  const branchesClause = buildVendaBranchClause(branchesFiltro);
 
   // Subconsulta evita multiplicar transacoes por linhas de produto_analitico e garante
   // que vendas e estoque usem o mesmo universo de SKUs do PCP.
@@ -112,7 +138,11 @@ async function getVendasPorPeriodo(
         ${classificacaoFiltro}
     )
     SELECT
-      t.branch_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
       COUNT(DISTINCT t.transaction_code) AS transacoes
     FROM transacoes t
@@ -124,7 +154,11 @@ async function getVendasPorPeriodo(
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
-    GROUP BY t.branch_code
+    GROUP BY CASE
+      WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+      WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+      ELSE t.branch_code
+    END
   `;
 }
 
@@ -133,9 +167,7 @@ async function getEstoquePorFilial(
   classificacaoFiltro: Prisma.Sql,
   branchesFiltro: number[] | null
 ): Promise<EstoqueRow[]> {
-  const branchesClause = branchesFiltro && branchesFiltro.length > 0
-    ? Prisma.sql`AND us.branch_code IN (${Prisma.join(branchesFiltro)})`
-    : Prisma.sql`AND us.branch_code IN (${Prisma.join(LOJAS_VAREJO)})`;
+  const branchesClause = buildEstoqueBranchClause(branchesFiltro);
 
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
@@ -145,7 +177,11 @@ async function getEstoquePorFilial(
       ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
     )
     SELECT
-      us.branch_code,
+      CASE
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+        ELSE us.branch_code
+      END AS branch_code,
       COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -155,18 +191,27 @@ async function getEstoquePorFilial(
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
-    GROUP BY us.branch_code
+    GROUP BY CASE
+      WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+      WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+      ELSE us.branch_code
+    END
   `;
 }
 
 // Lista de lojas com abreviação
 async function getBranches(): Promise<BranchRow[]> {
-  return prisma.$queryRaw<BranchRow[]>`
+  const lojas = await prisma.$queryRaw<BranchRow[]>`
     SELECT branch_code, description, abrev
     FROM branches
     WHERE branch_code IN (${Prisma.join(LOJAS_VAREJO)})
     ORDER BY branch_code
   `;
+  return [
+    { branch_code: DPA_BRANCH_CODE, description: 'DPA', abrev: 'DPA' },
+    { branch_code: ATACADO_BRANCH_CODE, description: 'ATACADO', abrev: 'ATA' },
+    ...lojas,
+  ];
 }
 
 export async function getVendaDia(filtro: VendaDiaFiltro): Promise<VendaDiaResponse> {
@@ -363,4 +408,294 @@ export async function getFiltrosVendaDia(): Promise<VendaDiaFiltrosResponse> {
   }));
 
   return { classificacoes, lojas };
+}
+
+// ============================================================================
+// ACOMPANHAMENTO DIARIO POR CATEGORIA/LINHA/GENERO ("Rel. 1" - venda x ano
+// anterior, cobertura, estoque fisico, peças em producao, por classificacao em
+// vez de por loja). E a segunda aba de Venda do Dia - mesma tela, visao trocada.
+// ============================================================================
+
+export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero';
+export type Canal = 'varejo' | 'atacado' | 'todos';
+
+export interface AcompanhamentoDiarioFiltro {
+  tipoClassificacao: TipoClassificacaoDiario;
+  canal?: Canal;
+  branches?: number[];
+  // Periodo escolhido pelo usuario (filtro de data "de/ate" na tela) - omitido cai no
+  // default de sempre (dia 1 do mes atual ate ontem). O periodo do ano anterior e
+  // sempre o MESMO intervalo, um ano antes, nunca escolhido separado.
+  dataInicio?: string;
+  dataFim?: string;
+}
+
+export interface AcompanhamentoDiarioLinha {
+  classificacao: string;
+  vendaValorAtual: number;
+  vendaValorAnoAnterior: number;
+  evolucaoValorPercent: number | null;
+  vendaPecasAtual: number;
+  vendaPecasAnoAnterior: number;
+  evolucaoPecasPercent: number | null;
+  participacaoPercent: number;
+  coberturaMesesAtual: number | null;
+  coberturaMesesAnoAnterior: number | null;
+  estoqueFisico: number;
+  pecasEmProducao: number;
+}
+
+export interface AcompanhamentoDiarioResponse {
+  periodoAtual: { inicio: string; fim: string };
+  periodoAnoAnterior: { inicio: string; fim: string };
+  tipoClassificacao: TipoClassificacaoDiario;
+  canal: Canal;
+  kpis: {
+    vendaValorTotal: number;
+    vendaValorAnoAnteriorTotal: number;
+    evolucaoValorPercent: number | null;
+    estoqueFisicoTotal: number;
+    pecasEmProducaoTotal: number;
+  };
+  linhas: AcompanhamentoDiarioLinha[];
+}
+
+const CAMPO_CLASSIFICACAO_DIARIO: Record<TipoClassificacaoDiario, string> = {
+  categoria: 'a.class_categoria',
+  linha: 'a.class_linha',
+  genero: 'a.class_genero',
+};
+
+// Canal define locais logicos: DPA representa os saldos fisico/segunda qualidade
+// da filial 02 e ATACADO representa somente o saldo atacadista dela.
+function getBranchesCanal(canal: Canal, branchesFiltro?: number[]): number[] {
+  const universo = canal === 'atacado'
+    ? [ATACADO_BRANCH_CODE]
+    : canal === 'todos'
+      ? [...LOJAS_VAREJO, DPA_BRANCH_CODE, ATACADO_BRANCH_CODE]
+      : [...LOJAS_VAREJO, DPA_BRANCH_CODE];
+  if (canal === 'atacado' || !branchesFiltro || branchesFiltro.length === 0) return universo;
+  const filtrado = universo.filter((b) => branchesFiltro.includes(b));
+  return filtrado.length > 0 ? filtrado : universo;
+}
+
+function buildAcompanhamentoVendaFilter(branches: number[]): Prisma.Sql {
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`t.branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
+function buildAcompanhamentoEstoqueFilter(branches: number[]): Prisma.Sql {
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`ps.branch_code IN (${Prisma.join(normais)}) AND ps.stock_code = 1`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${ATACADO_STOCK_CODE})`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
+interface ClassificacaoAggRow {
+  classificacao: string;
+  valor: Decimal;
+  pecas: Decimal;
+}
+
+// Venda (R$ liquido + pecas liquidas) agrupada por categoria/linha/genero, num
+// intervalo de datas explicito - reaproveitada tanto pro periodo atual quanto pro
+// mesmo intervalo do ano anterior (so troca as datas).
+async function getVendaPorClassificacaoDiario(
+  dataInicio: string,
+  dataFim: string,
+  tipo: TipoClassificacaoDiario,
+  branches: number[]
+): Promise<ClassificacaoAggRow[]> {
+  const campo = Prisma.raw(CAMPO_CLASSIFICACAO_DIARIO[tipo]);
+  const filtroLocal = buildAcompanhamentoVendaFilter(branches);
+  return prisma.$queryRaw<ClassificacaoAggRow[]>`
+    SELECT TRIM(${campo}) AS classificacao, SUM(${VALOR_COM_SINAL}) AS valor, SUM(${QUANTIDADE_COM_SINAL}) AS pecas
+    FROM transacoes t
+    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+    JOIN produto_analitico a ON a.product_code = ti.product_code
+    ${OPERACAO_JOIN}
+    WHERE t.transaction_date >= ${dataInicio}::date
+      AND t.transaction_date <= ${dataFim}::date
+      AND t.status = 4
+      AND ${SALE_OPERATION_FILTER}
+      ${filtroLocal}
+      AND ${campo} IS NOT NULL AND TRIM(${campo}) NOT IN ('', '.')
+    GROUP BY TRIM(${campo})
+  `;
+}
+
+interface EstoqueClassificacaoRow {
+  classificacao: string;
+  quantidade: Decimal;
+}
+
+// Estoque por categoria/linha/genero, no snapshot mais recente ate uma data de corte
+// (null = agora). Para a filial 02, DPA usa os saldos fisico + segunda qualidade e
+// ATACADO usa somente o saldo atacadista.
+async function getEstoqueFisicoPorClassificacaoDiario(
+  tipo: TipoClassificacaoDiario,
+  branches: number[],
+  dataCorte: string | null
+): Promise<EstoqueClassificacaoRow[]> {
+  const campo = CAMPO_CLASSIFICACAO_DIARIO[tipo];
+  const corteClause = dataCorte ? Prisma.sql`AND ps.captured_at <= ${dataCorte}::date + interval '1 day'` : Prisma.empty;
+  const filtroLocal = buildAcompanhamentoEstoqueFilter(branches);
+
+  return prisma.$queryRaw<EstoqueClassificacaoRow[]>`
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (ps.product_sku, ps.branch_code, ps.stock_code)
+        ps.product_sku, ps.branch_code, ps.stock_code, ps.stock
+      FROM prd_saldo ps
+      WHERE 1=1
+        ${filtroLocal}
+        ${corteClause}
+      ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
+    )
+    SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
+    FROM ultimo_saldo us
+    JOIN produto_analitico a ON a.product_sku = us.product_sku
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
+    GROUP BY TRIM(${Prisma.raw(campo)})
+  `;
+}
+
+// Pecas pendentes em Ordem de Producao aberta, por categoria/linha/genero -
+// sempre rede inteira (producao nao e por loja), mesmo dado de ops_em_producao ja
+// usado em relatorioBase.service.ts e sugestaoProducao.service.ts.
+async function getEmProducaoPorClassificacaoDiario(tipo: TipoClassificacaoDiario): Promise<EstoqueClassificacaoRow[]> {
+  const campo = CAMPO_CLASSIFICACAO_DIARIO[tipo];
+  return prisma.$queryRaw<EstoqueClassificacaoRow[]>`
+    SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, SUM(o.quantidade_pendente) AS quantidade
+    FROM ops_em_producao o
+    JOIN produto_analitico a ON a.product_code = o.product_code
+    WHERE ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
+    GROUP BY TRIM(${Prisma.raw(campo)})
+  `;
+}
+
+function diasEntre(inicio: string, fim: string): number {
+  const ms = new Date(fim).getTime() - new Date(inicio).getTime();
+  return Math.max(1, Math.round(ms / 86400000) + 1);
+}
+
+// Cobertura sempre em MESES (pedido do usuario, "cobertura sempre em mes primeiro de
+// tudo") - venda media mensal equivalente = pecas do periodo levadas pra uma base de
+// 30 dias, cobertura = estoque / essa media.
+function coberturaMeses(estoque: number, pecasPeriodo: number, dias: number): number | null {
+  const mediaMensal = (pecasPeriodo / dias) * 30;
+  if (mediaMensal <= 0) return null;
+  return round(estoque / mediaMensal, 1);
+}
+
+export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro): Promise<AcompanhamentoDiarioResponse> {
+  const canal = filtro.canal || 'varejo';
+  const branches = getBranchesCanal(canal, filtro.branches);
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+
+  // Periodo atual: o que o usuario escolheu no filtro de data, ou o default de sempre
+  // (dia 1 do mes atual ate ontem) quando ele nao mexeu no filtro.
+  let dataInicio: string;
+  let dataFim: string;
+  if (filtro.dataInicio && filtro.dataFim) {
+    dataInicio = filtro.dataInicio;
+    dataFim = filtro.dataFim;
+  } else {
+    const hoje = new Date();
+    const ontem = new Date(hoje);
+    ontem.setDate(ontem.getDate() - 1);
+    const inicioMes = new Date(ontem.getFullYear(), ontem.getMonth(), 1);
+    dataInicio = fmt(inicioMes);
+    dataFim = fmt(ontem);
+  }
+
+  // Ano anterior = MESMO intervalo de datas, um ano antes (nunca escolhido separado).
+  const inicioDate = new Date(`${dataInicio}T00:00:00`);
+  const fimDate = new Date(`${dataFim}T00:00:00`);
+  const anoAnteriorInicio = new Date(inicioDate);
+  anoAnteriorInicio.setFullYear(anoAnteriorInicio.getFullYear() - 1);
+  const anoAnteriorFim = new Date(fimDate);
+  anoAnteriorFim.setFullYear(anoAnteriorFim.getFullYear() - 1);
+  const dataInicioAA = fmt(anoAnteriorInicio);
+  const dataFimAA = fmt(anoAnteriorFim);
+
+  const diasAtual = diasEntre(dataInicio, dataFim);
+  const diasAnoAnterior = diasEntre(dataInicioAA, dataFimAA);
+
+  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, emProducaoRows] = await Promise.all([
+    getVendaPorClassificacaoDiario(dataInicio, dataFim, filtro.tipoClassificacao, branches),
+    getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branches),
+    getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, null),
+    getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, dataFimAA),
+    getEmProducaoPorClassificacaoDiario(filtro.tipoClassificacao),
+  ]);
+
+  const vendaAtualMap = new Map(vendaAtualRows.map((r) => [r.classificacao, { valor: decimalToNumber(r.valor), pecas: decimalToNumber(r.pecas) }]));
+  const vendaAAMap = new Map(vendaAARows.map((r) => [r.classificacao, { valor: decimalToNumber(r.valor), pecas: decimalToNumber(r.pecas) }]));
+  const estoqueMap = new Map(estoqueRows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
+  const estoqueAAMap = new Map(estoqueAARows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
+  const emProducaoMap = new Map(emProducaoRows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
+
+  const todasClassificacoes = new Set<string>([
+    ...vendaAtualMap.keys(),
+    ...vendaAAMap.keys(),
+    ...estoqueMap.keys(),
+    ...emProducaoMap.keys(),
+  ]);
+
+  const vendaValorTotalAtual = [...vendaAtualMap.values()].reduce((s, v) => s + v.valor, 0);
+
+  const linhas: AcompanhamentoDiarioLinha[] = [];
+  for (const classificacao of todasClassificacoes) {
+    const vAtual = vendaAtualMap.get(classificacao) || { valor: 0, pecas: 0 };
+    const vAA = vendaAAMap.get(classificacao) || { valor: 0, pecas: 0 };
+    const estoqueFisico = round(estoqueMap.get(classificacao) || 0, 0);
+    const estoqueFisicoAA = round(estoqueAAMap.get(classificacao) || 0, 0);
+    const pecasEmProducao = round(emProducaoMap.get(classificacao) || 0, 0);
+
+    const coberturaAtual = coberturaMeses(estoqueFisico, vAtual.pecas, diasAtual);
+    const coberturaAA = coberturaMeses(estoqueFisicoAA, vAA.pecas, diasAnoAnterior);
+
+    linhas.push({
+      classificacao,
+      vendaValorAtual: round(vAtual.valor, 0),
+      vendaValorAnoAnterior: round(vAA.valor, 0),
+      evolucaoValorPercent: vAA.valor > 0 ? round(((vAtual.valor - vAA.valor) / vAA.valor) * 100, 1) : null,
+      vendaPecasAtual: round(vAtual.pecas, 0),
+      vendaPecasAnoAnterior: round(vAA.pecas, 0),
+      evolucaoPecasPercent: vAA.pecas > 0 ? round(((vAtual.pecas - vAA.pecas) / vAA.pecas) * 100, 1) : null,
+      participacaoPercent: vendaValorTotalAtual > 0 ? round((vAtual.valor / vendaValorTotalAtual) * 100, 1) : 0,
+      coberturaMesesAtual: coberturaAtual,
+      coberturaMesesAnoAnterior: coberturaAA,
+      estoqueFisico,
+      pecasEmProducao,
+    });
+  }
+
+  linhas.sort((a, b) => b.vendaValorAtual - a.vendaValorAtual);
+
+  const vendaValorAnoAnteriorTotal = [...vendaAAMap.values()].reduce((s, v) => s + v.valor, 0);
+
+  return {
+    periodoAtual: { inicio: dataInicio, fim: dataFim },
+    periodoAnoAnterior: { inicio: dataInicioAA, fim: dataFimAA },
+    tipoClassificacao: filtro.tipoClassificacao,
+    canal,
+    kpis: {
+      vendaValorTotal: round(vendaValorTotalAtual, 0),
+      vendaValorAnoAnteriorTotal: round(vendaValorAnoAnteriorTotal, 0),
+      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotalAtual - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
+      estoqueFisicoTotal: round([...estoqueMap.values()].reduce((s, v) => s + v, 0), 0),
+      pecasEmProducaoTotal: round([...emProducaoMap.values()].reduce((s, v) => s + v, 0), 0),
+    },
+    linhas,
+  };
 }
