@@ -803,6 +803,7 @@ export interface RaioXGrade {
   vendasVarejo: number;
   vendasAtacado: number;
   estoqueFinal: number;
+  pecasEmProducao: number;
   cobertura: number;
 }
 
@@ -816,6 +817,7 @@ export interface RaioXLoja {
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }
@@ -835,6 +837,7 @@ export interface RaioXProduto {
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }

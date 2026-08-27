@@ -6,11 +6,18 @@ import { raioXApi, RaioXFiltro, RaioXResponse, RaioXProdutoSearch } from '@/lib/
 import { Card } from '@/components/ui/Card';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
+import RaioXCompacto from './RaioXCompacto';
 
 type Agrupamento = 'referencia' | 'loja';
 
+// Mantido como função para que o TypeScript continue validando o componente
+// legado durante a transição, sem inferir que o código abaixo é inalcançável.
+function usarLayoutCompacto() { return true; }
+
 export default function RaioXPage() {
   const { token } = useAuth();
+  if (usarLayoutCompacto()) return <RaioXCompacto token={token} />;
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<RaioXResponse | null>(null);
