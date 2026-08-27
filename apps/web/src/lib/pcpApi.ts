@@ -1338,9 +1338,10 @@ export interface VendaDescontoTotais {
 
 export interface VendaDescontoGerais {
   vendaTotalGeralQtd: number;
-  participacaoPromoQtd: number;
-  vendaTotalGeralValor: number;
-  participacaoPromoValor: number;
+  vendaBruta: number;
+  descontoConcedido: number;
+  vendaLiquida: number;
+  descontoPct: number;
 }
 
 export interface VendaDescontoResponse {

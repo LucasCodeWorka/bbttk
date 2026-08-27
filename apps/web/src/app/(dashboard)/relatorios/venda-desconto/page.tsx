@@ -343,24 +343,24 @@ export default function VendaDescontoPage() {
       {data && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <KPICard
-            title="Venda Total Qtd"
-            value={formatNumber(data.gerais.vendaTotalGeralQtd)}
-            subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoQtd)}`}
-          />
-          <KPICard
-            title="Venda Total R$"
-            value={formatCurrency(data.gerais.vendaTotalGeralValor)}
-            subtitle={`Promoção: ${formatPercent(data.gerais.participacaoPromoValor)}`}
-          />
-          <KPICard
-            title="Total Vendido"
-            value={formatCurrency(data.totais.ttVdaVda)}
-            subtitle={`${formatNumber(data.totais.vendas)} peças`}
+            title="Venda Bruta"
+            value={formatCurrency(data.gerais.vendaBruta)}
+            subtitle={`${formatNumber(data.gerais.vendaTotalGeralQtd)} peças`}
           />
           <KPICard
             title="Desconto Concedido"
-            value={formatCurrency(data.totais.ttDescontoVenda)}
-            subtitle={`Giro: ${formatPercent(data.totais.giro)}`}
+            value={formatCurrency(data.gerais.descontoConcedido)}
+            subtitle={`${formatPercent(data.gerais.descontoPct)} da venda bruta`}
+          />
+          <KPICard
+            title="Venda Líquida"
+            value={formatCurrency(data.gerais.vendaLiquida)}
+            subtitle="Venda bruta menos descontos"
+          />
+          <KPICard
+            title="Quantidade Vendida"
+            value={formatNumber(data.gerais.vendaTotalGeralQtd)}
+            subtitle="Peças no período"
           />
         </div>
       )}
@@ -474,24 +474,24 @@ export default function VendaDescontoPage() {
       {data && (
         <Card>
           <CardHeader>
-            <CardTitle>Participação no Período</CardTitle>
+            <CardTitle>Resumo do Período</CardTitle>
           </CardHeader>
           <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
             <div>
-              <p className="text-gray-500">Venda Total Geral (Qtd)</p>
+              <p className="text-gray-500">Venda Bruta</p>
+              <p className="text-xl font-semibold">{formatCurrency(data.gerais.vendaBruta)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Desconto Concedido</p>
+              <p className="text-xl font-semibold">{formatCurrency(data.gerais.descontoConcedido)} ({formatPercent(data.gerais.descontoPct)})</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Venda Líquida</p>
+              <p className="text-xl font-semibold">{formatCurrency(data.gerais.vendaLiquida)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Quantidade Vendida</p>
               <p className="text-xl font-semibold">{formatNumber(data.gerais.vendaTotalGeralQtd)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Participação Promoção (Qtd)</p>
-              <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoQtd)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Venda Total Geral (R$)</p>
-              <p className="text-xl font-semibold">{formatCurrency(data.gerais.vendaTotalGeralValor)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Participação Promoção (R$)</p>
-              <p className="text-xl font-semibold">{formatPercent(data.gerais.participacaoPromoValor)}</p>
             </div>
           </div>
         </Card>

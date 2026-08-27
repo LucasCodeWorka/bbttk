@@ -64,9 +64,10 @@ export interface VendaDescontoTotais {
 
 export interface VendaDescontoGerais {
   vendaTotalGeralQtd: number;
-  participacaoPromoQtd: number;
-  vendaTotalGeralValor: number;
-  participacaoPromoValor: number;
+  vendaBruta: number;
+  descontoConcedido: number;
+  vendaLiquida: number;
+  descontoPct: number;
 }
 
 export interface VendaDescontoResponse {
@@ -207,7 +208,15 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       FROM transacoes t
       JOIN transacao_itens ti ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
       JOIN produtos p ON p.product_code = ti.product_code
-      LEFT JOIN produto_analitico a ON a.product_sku = p.product_sku
+      -- Há SKUs com mais de um registro analítico. A seleção lateral garante
+      -- uma única classificação por item e impede duplicar venda/desconto.
+      LEFT JOIN LATERAL (
+        SELECT class_categoria, class_linha, class_status, class_colecao
+        FROM produto_analitico a
+        WHERE a.product_sku = p.product_sku
+        ORDER BY a.product_code
+        LIMIT 1
+      ) a ON TRUE
       ${OPERACAO_JOIN}
       WHERE t.transaction_date BETWEEN ${dataInicio}::date AND ${dataFim}::date
         AND t.status = 4
@@ -335,16 +344,20 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   // Busca totais gerais do período (todas as vendas, não apenas as filtradas)
   const geraisResult = await prisma.$queryRaw<Array<{
     total_qtd: Decimal;
-    total_valor: Decimal;
+    venda_bruta: Decimal;
+    desconto_concedido: Decimal;
+    venda_liquida: Decimal;
   }>>`
     SELECT
       COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS total_qtd,
+      COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0)) ELSE COALESCE(ti.value, 0) END), 0) AS venda_bruta,
+      COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0) END), 0) AS desconto_concedido,
       COALESCE(SUM(
         CASE
           WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0))
           ELSE COALESCE(ti.net_value, ti.value, 0)
         END
-      ), 0) AS total_valor
+      ), 0) AS venda_liquida
     FROM transacoes t
     JOIN transacao_itens ti ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
     ${OPERACAO_JOIN}
@@ -356,17 +369,16 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   `;
 
   const vendaTotalGeralQtd = decimalToNumber(geraisResult[0]?.total_qtd);
-  const vendaTotalGeralValor = decimalToNumber(geraisResult[0]?.total_valor);
+  const vendaBruta = decimalToNumber(geraisResult[0]?.venda_bruta);
+  const descontoConcedido = decimalToNumber(geraisResult[0]?.desconto_concedido);
+  const vendaLiquida = decimalToNumber(geraisResult[0]?.venda_liquida);
 
   const gerais: VendaDescontoGerais = {
     vendaTotalGeralQtd: round(vendaTotalGeralQtd, 0),
-    participacaoPromoQtd: vendaTotalGeralQtd > 0
-      ? round((totais.vendas / vendaTotalGeralQtd) * 100, 2)
-      : 0,
-    vendaTotalGeralValor: round(vendaTotalGeralValor, 2),
-    participacaoPromoValor: vendaTotalGeralValor > 0
-      ? round((totais.ttVdaVda / vendaTotalGeralValor) * 100, 2)
-      : 0,
+    vendaBruta: round(vendaBruta, 2),
+    descontoConcedido: round(descontoConcedido, 2),
+    vendaLiquida: round(vendaLiquida, 2),
+    descontoPct: vendaBruta > 0 ? round((descontoConcedido / vendaBruta) * 100, 2) : 0,
   };
 
   return {
