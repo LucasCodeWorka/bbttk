@@ -173,3 +173,12 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - `customer_code` não pode ser usado como destino: embora esteja presente nas saídas e entradas, cada um dos códigos de saída aparece associado a entradas de diversas filiais (até 16), portanto não identifica uma loja destinatária específica.
 - Conclusão: ainda não é possível distinguir, com segurança, uma transferência realmente em trânsito de uma entrada correspondente sem vínculo no conjunto sincronizado. Não foi criada a coluna com uma estimativa, para não contabilizar histórico como trânsito atual.
 - Fonte necessária para viabilizar: número da transferência/guia/NF compartilhado entre saída e entrada, tabela ou endpoint do TOTVS com esse relacionamento, ou a consulta usada pelo BI Industrial que já entregue as transferências pendentes.
+
+### Auditoria complementar — venda do ano anterior (01–23/08/2025)
+
+- Referência comparada: Relatório Virtual/COMFL007 R$ 797.691,13 e 12.934 peças, contra R$ 806.690,66 e 13.081 peças no Acompanhamento quando o canal é `Todos` (valor exibido arredondado como R$ 806.691). A diferença é R$ 8.999,53 e 147 peças.
+- Canal: com `Varejo` o sistema retorna R$ 705.990 e 11.060 peças; o valor de R$ 806.691 somente ocorre em `Todos`, que adiciona o Atacado. Portanto, a comparação do print está incluindo a filial 02 também como Atacado.
+- Conciliação por loja: Iguatemi confere exatamente, em R$ 63.134,47 e 953 peças. A diferença está inteiramente concentrada na filial 02, no local lógico `Atacado`.
+- Operação identificada: `904 — Venda 50% Varejo (Estoque Atacado)` soma 191 peças e R$ 9.259,54 no sistema. Se ela fosse totalmente retirada, o resultado ficaria R$ 260,01 e 44 peças abaixo do Virtual; logo, o Virtual considera parte dos itens dessa operação e exclui a parcela exata de 147 peças/R$ 8.999,53.
+- Critérios testados e descartados: vendedor, desconto, tabela de preço, produto acabado e o filtro de código técnico/embalagem. Nenhum desses campos separa os 147 itens; todos os itens 904 estão sem tabela de preço e sem desconto gravado.
+- Próxima evidência necessária: detalhamento do COMFL007/Virtual dessas quatro transações da operação 904 (12 e 14/08/2025) ou a regra desse relatório. Sem ela, excluir a operação inteira alteraria mais R$ 260,01/44 peças do que o Virtual exclui e não é uma correção segura.
