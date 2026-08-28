@@ -488,9 +488,12 @@ function getBranchesCanal(canal: Canal, branchesFiltro?: number[]): number[] {
     : canal === 'todos'
       ? [...LOJAS_VAREJO, DPA_BRANCH_CODE, ATACADO_BRANCH_CODE]
       : [...LOJAS_VAREJO, DPA_BRANCH_CODE];
-  if (canal === 'atacado' || !branchesFiltro || branchesFiltro.length === 0) return universo;
-  const filtrado = universo.filter((b) => branchesFiltro.includes(b));
-  return filtrado.length > 0 ? filtrado : universo;
+  if (!branchesFiltro || branchesFiltro.length === 0) return universo;
+
+  // Uma selecao explicita de filial nunca pode ser trocada silenciosamente por
+  // todas as lojas. Se ela for incompativel com o canal, o resultado fica vazio
+  // (e nao passa a trazer dados de filiais que o usuario nao selecionou).
+  return universo.filter((b) => branchesFiltro.includes(b));
 }
 
 function buildAcompanhamentoVendaFilter(branches: number[]): Prisma.Sql {
