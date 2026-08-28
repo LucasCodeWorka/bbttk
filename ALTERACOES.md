@@ -146,3 +146,9 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - Causa 2: as consultas de venda e estoque agrupavam pelo `CASE` de mapeamento de filiais. Como os valores interpolados pelo Prisma recebem parâmetros distintos no `SELECT` e no `GROUP BY`, o PostgreSQL não reconhecia as expressões como iguais e retornava o erro `42803` (coluna deve aparecer no `GROUP BY`).
 - Correção 2: os agrupamentos passaram a usar seus campos-base: `t.branch_code, co.description` para vendas e `us.branch_code, us.stock_code` para estoque. O `CASE` continua responsável apenas por devolver DPA e Atacado como filiais separadas.
 - Validação: build do `pcp-api` concluído e chamada direta de `getVendaDia` por Categoria executada com sucesso na base configurada, retornando 15 linhas sem exceção SQL.
+
+### Acompanhamento por Linha — cobertura histórica e rolagem
+
+- `COB MESES A.A.`: o cálculo usa o estoque físico disponível no fim do período equivalente do ano anterior, dividido pela venda média mensal em peças do mesmo intervalo histórico. A média é normalizada pelos dias reais de cada mês; por exemplo, em 01–26/08, utiliza `venda em peças de 01–26/08 do ano anterior ÷ (26/31)` e arredonda a cobertura para uma casa decimal. Sem venda no período, a cobertura fica em branco.
+- Rolagem horizontal: incluída uma barra de rolagem no topo da tabela, logo após o cabeçalho do relatório. Ela é sincronizada com a tabela e substitui a necessidade de descer até o final da lista para acessar as colunas à direita.
+- Validação: build de produção do painel web concluído com sucesso.

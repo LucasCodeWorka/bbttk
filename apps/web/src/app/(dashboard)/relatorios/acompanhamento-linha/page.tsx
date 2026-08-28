@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -125,6 +125,9 @@ export default function AcompanhamentoLinhaPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const [mostrarModalMetas, setMostrarModalMetas] = useState(false);
+  const tabelaScrollRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
 
   useEffect(() => {
     if (!token) return;
@@ -179,6 +182,45 @@ export default function AcompanhamentoLinhaPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [data, sortKey, sortDir]);
+
+  useEffect(() => {
+    const tabela = tabelaScrollRef.current;
+    const topo = topScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [sortedLinhas.length, isLoading]);
+
+  function sincronizarScrollPeloTopo() {
+    const topo = topScrollRef.current;
+    const tabela = tabelaScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
+  }
 
   function handleExportExcel() {
     if (!data || sortedLinhas.length === 0) return;
@@ -320,8 +362,11 @@ export default function AcompanhamentoLinhaPage() {
 
         {erro && <div className="text-red-600 text-sm mb-4">Erro: {erro}</div>}
 
-        <div className="overflow-x-auto">
-          <Table tableClassName="text-sm min-w-[1650px]">
+        <div ref={topScrollRef} onScroll={sincronizarScrollPeloTopo} className="mb-2 overflow-x-auto overflow-y-hidden">
+          <div style={{ width: scrollWidth || '100%', height: 1 }} />
+        </div>
+
+        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden" tableClassName="text-sm min-w-[1650px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
                 <ThSortPcp label={TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label.toUpperCase() || ''} sortKeyName="classificacao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="left" />
@@ -395,7 +440,6 @@ export default function AcompanhamentoLinhaPage() {
               ) : null}
             </TableBody>
           </Table>
-        </div>
       </Card>
 
       <ModalCadastrarMetas isOpen={mostrarModalMetas} onClose={() => setMostrarModalMetas(false)} />
