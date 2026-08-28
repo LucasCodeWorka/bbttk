@@ -193,3 +193,10 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - O Dashboard Comercial totaliza R$ 827.619,20 e 14.134 peças quando Terrazo (filial 18) está incluída. O COMFL007/Virtual informado totaliza R$ 818.619,67 no mesmo escopo: diferença de R$ 8.999,53 e 147 peças.
 - Sem Terrazo, o Dashboard Comercial totaliza R$ 806.690,66 e 13.081 peças, exatamente o mesmo total já exibido no Acompanhamento por Linha; o Virtual é R$ 797.691,13 e 12.934 peças. A diferença permanece R$ 8.999,53 e 147 peças.
 - Conclusão: o Dashboard Comercial está conciliado com o Acompanhamento por Linha. A divergência está entre a base sincronizada e o COMFL007/Virtual, não entre os dois relatórios do sistema.
+
+### Raio X do Produto — totais e agrupamentos de cor
+
+- Incluída a tabela `Totais por cor`, com estoque inicial e final, transferências, vendas de varejo e atacado, cobertura e peças em produção. Cada linha soma todas as lojas selecionadas para a referência e a cor apresentada.
+- O Raio X passou a consultar `agrupamento_grupos` e `agrupamento_membros`, que são as tabelas já preenchidas pelo menu `Configurações > Agrupamento de Cores`. Não foi criada uma configuração paralela: salvar, renomear ou alterar um grupo no menu passa a refletir diretamente no relatório.
+- Quando cores configuradas pertencem ao mesmo grupo, o relatório mostra o nome do grupo e soma suas variações. As grades iguais também são consolidadas antes da exibição, evitando que uma cor do grupo substitua outra no detalhamento.
+- Validação executada com a referência `003 BB CST413`: grupos como `amarelo claro`, `vermelho` e `Azul claro` retornaram totais consolidados. Builds de produção da API PCP e do painel web concluídos com sucesso.

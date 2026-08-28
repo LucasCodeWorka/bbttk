@@ -294,6 +294,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     reference_name: string;
     color_code: string | null;
     color_name: string | null;
+    cor_agrupada: string | null;
     size: string | null;
     class_motor_promocional: string | null;
   }
@@ -304,36 +305,52 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     // Filtra pelas referências selecionadas
     produtos = await prisma.$queryRaw<ProdutoRow[]>`
       SELECT DISTINCT
-        product_sku,
-        product_code,
-        reference_code,
-        reference_name,
-        color_code,
-        color_name,
-        size,
-        class_motor_promocional
+        a.product_sku,
+        a.product_code,
+        a.reference_code,
+        a.reference_name,
+        a.color_code,
+        a.color_name,
+        NULLIF(TRIM(ag.nome), '') AS cor_agrupada,
+        a.size,
+        a.class_motor_promocional
       FROM produto_analitico a
+      LEFT JOIN agrupamento_membros am
+        ON am.tipo = 'cor_produto'
+        AND am.reference_code = a.reference_code
+        AND am.color_match_key = COALESCE(NULLIF(TRIM(a.color_code), ''), NULLIF(TRIM(a.color_name), ''))
+      LEFT JOIN agrupamento_grupos ag
+        ON ag.id = am.grupo_id
+        AND ag.tipo = am.tipo
       WHERE a.reference_code IS NOT NULL
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         AND a.reference_code IN (${Prisma.join(filtro.referencias.map(ref => Prisma.sql`${ref}`))})
-      ORDER BY reference_code, color_code, size
+      ORDER BY a.reference_code, a.color_code, a.size
     `;
   } else if (filtro.categorias && filtro.categorias.length > 0) {
     produtos = await prisma.$queryRaw<ProdutoRow[]>`
       SELECT DISTINCT
-        product_sku,
-        product_code,
-        reference_code,
-        reference_name,
-        color_code,
-        color_name,
-        size,
-        class_motor_promocional
+        a.product_sku,
+        a.product_code,
+        a.reference_code,
+        a.reference_name,
+        a.color_code,
+        a.color_name,
+        NULLIF(TRIM(ag.nome), '') AS cor_agrupada,
+        a.size,
+        a.class_motor_promocional
       FROM produto_analitico a
+      LEFT JOIN agrupamento_membros am
+        ON am.tipo = 'cor_produto'
+        AND am.reference_code = a.reference_code
+        AND am.color_match_key = COALESCE(NULLIF(TRIM(a.color_code), ''), NULLIF(TRIM(a.color_name), ''))
+      LEFT JOIN agrupamento_grupos ag
+        ON ag.id = am.grupo_id
+        AND ag.tipo = am.tipo
       WHERE a.reference_code IS NOT NULL
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         AND a.class_categoria IN (${Prisma.join(filtro.categorias.map(cat => Prisma.sql`${cat}`))})
-      ORDER BY reference_code, color_code, size
+      ORDER BY a.reference_code, a.color_code, a.size
       LIMIT 10
     `;
   } else {
@@ -362,7 +379,9 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
   const produtosMap = new Map<string, ProdutoRow[]>();
 
   for (const produto of produtos) {
-    const key = `${produto.reference_code}|${produto.color_code || produto.color_name || ''}`;
+    const corOriginal = produto.color_name?.trim() || produto.color_code?.trim() || 'SEM COR';
+    const corExibicao = produto.cor_agrupada?.trim() || corOriginal;
+    const key = `${produto.reference_code}|${corExibicao}`;
 
     if (!produtosMap.has(key)) {
       produtosMap.set(key, []);
@@ -393,11 +412,12 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
 
   for (const [key, produtosGrupo] of produtosMap.entries()) {
     const primeiroProduto = produtosGrupo[0];
+    const corOriginal = primeiroProduto.color_name?.trim() || primeiroProduto.color_code?.trim() || 'SEM COR';
 
     const produtoResult: RaioXProduto = {
       referenceCode: primeiroProduto.reference_code,
       referenceName: primeiroProduto.reference_name,
-      cor: primeiroProduto.color_name || primeiroProduto.color_code || 'SEM COR',
+      cor: primeiroProduto.cor_agrupada?.trim() || corOriginal,
       productCode: primeiroProduto.product_code,
       emPromocao: primeiroProduto.class_motor_promocional ? true : false,
       lojas: [],
@@ -430,6 +450,8 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         },
       };
 
+      const gradesPorTamanho = new Map<string, RaioXGrade>();
+
       // Para cada tamanho do produto
       for (const produto of produtosGrupo) {
         const estoqueInicial = estoquesInicio.get(`${produto.product_sku}|${local.branchCode}`) || 0;
@@ -447,18 +469,25 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         }
 
         const estoqueFinal = estoquesFim.get(`${produto.product_sku}|${local.branchCode}`) || 0;
-        const cobertura = calcularCobertura(estoqueFinal, vendasVarejo, vendasAtacado, filtro.dataInicio, filtro.dataFim);
+        const tamanho = produto.size || '-';
+        const grade = gradesPorTamanho.get(tamanho) || {
+          tamanho,
+          estoqueInicial: 0,
+          transferencias: 0,
+          vendasVarejo: 0,
+          vendasAtacado: 0,
+          estoqueFinal: 0,
+          pecasEmProducao: 0,
+          cobertura: 0,
+        };
 
-        lojaResult.grades.push({
-          tamanho: produto.size || '-',
-          estoqueInicial,
-          transferencias,
-          vendasVarejo,
-          vendasAtacado,
-          estoqueFinal,
-          pecasEmProducao: local.branchCode === DPA_BRANCH_CODE ? producao.get(produto.product_code) || 0 : 0,
-          cobertura,
-        });
+        grade.estoqueInicial += estoqueInicial;
+        grade.transferencias += transferencias;
+        grade.vendasVarejo += vendasVarejo;
+        grade.vendasAtacado += vendasAtacado;
+        grade.estoqueFinal += estoqueFinal;
+        grade.pecasEmProducao += local.branchCode === DPA_BRANCH_CODE ? producao.get(produto.product_code) || 0 : 0;
+        gradesPorTamanho.set(tamanho, grade);
 
         lojaResult.totais.estoqueInicial += estoqueInicial;
         lojaResult.totais.transferencias += transferencias;
@@ -466,6 +495,17 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         lojaResult.totais.vendasAtacado += vendasAtacado;
         lojaResult.totais.estoqueFinal += estoqueFinal;
         lojaResult.totais.pecasEmProducao += local.branchCode === DPA_BRANCH_CODE ? producao.get(produto.product_code) || 0 : 0;
+      }
+
+      lojaResult.grades = [...gradesPorTamanho.values()];
+      for (const grade of lojaResult.grades) {
+        grade.cobertura = calcularCobertura(
+          grade.estoqueFinal,
+          grade.vendasVarejo,
+          grade.vendasAtacado,
+          filtro.dataInicio,
+          filtro.dataFim
+        );
       }
 
       // Calcula cobertura total da loja
