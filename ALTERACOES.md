@@ -137,3 +137,12 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - Correções adicionais: o estoque passou a usar somente snapshots até a data final do filtro, a filial 02 fica fora da visão padrão por loja (DPA/Atacado entram apenas quando escolhidos) e `stock_code` passou a ser retornado pela subconsulta que o utiliza, eliminando um possível erro SQL 500.
 - Pendência de conciliação: os 18 itens restantes precisam ser comparados com o filtro `Grupo` do Saldo Virtual mostrado no print; esse critério não é hoje exposto como classificação equivalente no relatório.
 - Todos os envios foram feitos para `origin/teste` por push normal. Houve uma solicitação posterior de force push com `--force-with-lease`, mas o remoto já estava sincronizado e nada foi sobrescrito.
+
+### Venda do Dia por Classificação — correção do erro 500
+
+- Sintoma: a tela `Venda do Dia por Classificação`, ao consultar por Categoria (e potencialmente pelas demais classificações), apresentava HTTP 500 e a mensagem de erro no quadro de vendas por loja.
+- Causa 1: a CTE que identifica o último saldo por produto, loja e depósito usava `stock_code` no filtro externo, mas não o retornava na sua lista de colunas. Isso provocava uma referência de coluna inexistente na consulta de estoque.
+- Correção 1: `stock_code` passou a ser retornado pela CTE de último saldo, mantendo o filtro que separa os depósitos de DPA e Atacado.
+- Causa 2: as consultas de venda e estoque agrupavam pelo `CASE` de mapeamento de filiais. Como os valores interpolados pelo Prisma recebem parâmetros distintos no `SELECT` e no `GROUP BY`, o PostgreSQL não reconhecia as expressões como iguais e retornava o erro `42803` (coluna deve aparecer no `GROUP BY`).
+- Correção 2: os agrupamentos passaram a usar seus campos-base: `t.branch_code, co.description` para vendas e `us.branch_code, us.stock_code` para estoque. O `CASE` continua responsável apenas por devolver DPA e Atacado como filiais separadas.
+- Validação: build do `pcp-api` concluído e chamada direta de `getVendaDia` por Categoria executada com sucesso na base configurada, retornando 15 linhas sem exceção SQL.

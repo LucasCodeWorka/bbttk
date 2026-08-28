@@ -154,11 +154,10 @@ async function getVendasPorPeriodo(
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
-    GROUP BY CASE
-      WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
-      WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
-      ELSE t.branch_code
-    END
+    -- Agrupa pelos campos-base. Os parâmetros interpolados no CASE do SELECT
+    -- e do GROUP BY recebem posições distintas no PostgreSQL, impedindo que o
+    -- banco reconheça as duas expressões como equivalentes.
+    GROUP BY t.branch_code, co.description
   `;
 }
 
@@ -172,7 +171,7 @@ async function getEstoquePorFilial(
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (ps.product_sku, ps.branch_code, ps.stock_code)
-        ps.product_sku, ps.product_code, ps.branch_code, ps.stock, ps.captured_at
+        ps.product_sku, ps.product_code, ps.branch_code, ps.stock_code, ps.stock, ps.captured_at
       FROM prd_saldo ps
       ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
     )
@@ -191,11 +190,7 @@ async function getEstoquePorFilial(
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
-    GROUP BY CASE
-      WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-      WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-      ELSE us.branch_code
-    END
+    GROUP BY us.branch_code, us.stock_code
   `;
 }
 
