@@ -186,3 +186,10 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - Busca por operação em 12/08: a divergência diária está integralmente em uma transação da filial 02, operação `800 — Venda Atacado (Fábrica)`, com 23 peças e R$ 1.237,77. Ela possui guia e condição de pagamento `1`; não tem origem/destino preenchido. A filial 01/Iguatemi continua conciliada nesse dia (29 peças e R$ 1.644,23).
 - A operação `904 — Venda 50% Varejo (Estoque Atacado)` não é a causa: em 14/08 o total completo, incluindo essa operação, confere exatamente com o COMFL007.
 - No acumulado de 01–23/08, não há uma operação inteira cujo valor seja o resíduo de R$ 8.999,53. A operação 800 totaliza R$ 101.754,59 (2.006 peças) e contém vendas válidas; portanto, não foi aplicada exclusão genérica. A confirmação final exige o detalhamento do COMFL007 de 12/08 por transação/guia, para saber por que essa venda específica não é exibida no Virtual.
+
+### Auditoria complementar — Dashboard Comercial x Virtual
+
+- Período conferido: 01–23/08/2025, com a mesma regra de venda líquida (vendas menos devoluções) e as filiais do Dashboard Comercial.
+- O Dashboard Comercial totaliza R$ 827.619,20 e 14.134 peças quando Terrazo (filial 18) está incluída. O COMFL007/Virtual informado totaliza R$ 818.619,67 no mesmo escopo: diferença de R$ 8.999,53 e 147 peças.
+- Sem Terrazo, o Dashboard Comercial totaliza R$ 806.690,66 e 13.081 peças, exatamente o mesmo total já exibido no Acompanhamento por Linha; o Virtual é R$ 797.691,13 e 12.934 peças. A diferença permanece R$ 8.999,53 e 147 peças.
+- Conclusão: o Dashboard Comercial está conciliado com o Acompanhamento por Linha. A divergência está entre a base sincronizada e o COMFL007/Virtual, não entre os dois relatórios do sistema.
