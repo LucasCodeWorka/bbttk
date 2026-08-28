@@ -200,3 +200,11 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - O Raio X passou a consultar `agrupamento_grupos` e `agrupamento_membros`, que são as tabelas já preenchidas pelo menu `Configurações > Agrupamento de Cores`. Não foi criada uma configuração paralela: salvar, renomear ou alterar um grupo no menu passa a refletir diretamente no relatório.
 - Quando cores configuradas pertencem ao mesmo grupo, o relatório mostra o nome do grupo e soma suas variações. As grades iguais também são consolidadas antes da exibição, evitando que uma cor do grupo substitua outra no detalhamento.
 - Validação executada com a referência `003 BB CST413`: grupos como `amarelo claro`, `vermelho` e `Azul claro` retornaram totais consolidados. Builds de produção da API PCP e do painel web concluídos com sucesso.
+
+### Raio X do Produto - layout por cor agrupada
+
+- A tabela separada de totais por cor foi removida porque repetia a referencia e deixava os cabecalhos de `REFERENCIA` e `EM PRODUCAO` com codificacao incorreta na tela.
+- Cada referencia agora aparece uma unica vez no cabecalho do seu bloco. Abaixo dela, cada linha corresponde a uma cor ou grupo de cores configurado e apresenta os totais de estoque inicial, transferencias, vendas de varejo e atacado, estoque final e pecas em producao.
+- A cor e clicavel. Ao expandi-la, o relatorio mostra somente as lojas que possuem estoque, transferencia, venda ou pecas em producao naquela cor, detalhadas por grade na ordem fixa `UN, P, M, G, GG, 2, 4, 6, 8, 10`.
+- Os novos rotulos foram escritos sem caracteres sujeitos a conversao de codificacao para eliminar o texto corrompido visto em `REFERENCIA` e `EM PRODUCAO`.
+- Validacao: o build de producao do painel web foi executado com sucesso apos a mudanca.
