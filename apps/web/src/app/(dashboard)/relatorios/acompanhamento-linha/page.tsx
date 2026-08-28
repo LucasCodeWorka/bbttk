@@ -366,7 +366,7 @@ export default function AcompanhamentoLinhaPage() {
           <div style={{ width: scrollWidth || '100%', height: 1 }} />
         </div>
 
-        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden" tableClassName="text-sm min-w-[1650px]">
+        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[520px] overflow-auto" tableClassName="text-sm min-w-[1650px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
                 <ThSortPcp label={TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label.toUpperCase() || ''} sortKeyName="classificacao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="left" />
@@ -420,7 +420,7 @@ export default function AcompanhamentoLinhaPage() {
                     <TableCell align="right">{formatNumber(linha.pecasEmProducao)}</TableCell>
                   </TableRow>
                   ))}
-                  <TableRow className="bg-gray-100 font-bold border-t-2 border-gray-300">
+                  <TableRow className="sticky bottom-0 z-20 bg-gray-100 font-bold border-t-2 border-gray-300 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
                     <TableCell>TOTAL ({sortedLinhas.length})</TableCell>
                     <TableCell align="right">{formatMoney(data.totais.vendaValorAtual)}</TableCell>
                     <TableCell align="right">{data.totais.metaPeriodo !== null ? formatMoney(data.totais.metaPeriodo) : '-'}</TableCell>

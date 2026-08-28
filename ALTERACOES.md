@@ -159,3 +159,9 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - Cobertura A.A.: com o recorte de Varejo, Categorias e 01–26/08/2026, o relatório retorna cobertura total histórica de 0,7 mês para 11.892 peças vendidas no período A.A. As categorias verificadas também têm valores diferentes de zero: Vestidos 0,4; Conjunto 0,1; Moda Praia 0,8; Camisa 0,3; Blusa 0,4; Bermuda 0,5; Regata 0,2. Portanto, não há ausência de saldo histórico na base para esse corte.
 - Filtro de filial: corrigido o fallback que, quando a seleção de filial não pertencia ao canal escolhido, substituía silenciosamente a seleção por todas as filiais. Agora a seleção explícita sempre é respeitada. Filial e canal devem ser compatíveis: por exemplo, Atacado deve ser consultado com o canal Atacado.
 - Validação do filtro: no mesmo período, Varejo sem filial retorna 80.217 peças de estoque atual; Iguatemi retorna 5.014, DPA retorna 16.339 e Atacado retorna 5.495. Build do `pcp-api` concluído com sucesso.
+
+### Acompanhamento por Linha — tabela compacta
+
+- A tabela passou a ter altura máxima de 520 px. As classificações rolam dentro da própria tabela, sem alongar a página.
+- A linha `TOTAL` ficou fixa no rodapé da área de dados, assim como o cabeçalho permanece fixo no topo. A barra de rolagem horizontal no topo continua disponível.
+- Validação: build de produção do painel web concluído com sucesso.
