@@ -165,3 +165,11 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - A tabela passou a ter altura máxima de 520 px. As classificações rolam dentro da própria tabela, sem alongar a página.
 - A linha `TOTAL` ficou fixa no rodapé da área de dados, assim como o cabeçalho permanece fixo no topo. A barra de rolagem horizontal no topo continua disponível.
 - Validação: build de produção do painel web concluído com sucesso.
+
+### Auditoria complementar — peças em trânsito
+
+- Escopo conferido: saídas do DPA na operação `1510 — Saída de Transferência (CE) Custo2` e entradas de lojas na operação `1003 — Entrada de Transferência (CE) CUS`.
+- Evidência encontrada: há 2.485 saídas consolidadas do DPA, totalizando 215.757 peças. Porém, não existe tabela de transferências na base e as colunas que poderiam formar o vínculo estão vazias nas saídas: `guide_code`, `origin_destination` e `additional_information`.
+- `customer_code` não pode ser usado como destino: embora esteja presente nas saídas e entradas, cada um dos códigos de saída aparece associado a entradas de diversas filiais (até 16), portanto não identifica uma loja destinatária específica.
+- Conclusão: ainda não é possível distinguir, com segurança, uma transferência realmente em trânsito de uma entrada correspondente sem vínculo no conjunto sincronizado. Não foi criada a coluna com uma estimativa, para não contabilizar histórico como trânsito atual.
+- Fonte necessária para viabilizar: número da transferência/guia/NF compartilhado entre saída e entrada, tabela ou endpoint do TOTVS com esse relacionamento, ou a consulta usada pelo BI Industrial que já entregue as transferências pendentes.
