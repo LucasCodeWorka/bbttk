@@ -803,6 +803,7 @@ export interface RaioXGrade {
   vendasVarejo: number;
   vendasAtacado: number;
   estoqueFinal: number;
+  pecasEmProducao: number;
   cobertura: number;
 }
 
@@ -816,6 +817,7 @@ export interface RaioXLoja {
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }
@@ -835,6 +837,7 @@ export interface RaioXProduto {
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }
@@ -954,18 +957,14 @@ export const vendaDiaApi = {
     const params = new URLSearchParams();
     params.set('tipoClassificacao', filtro.tipoClassificacao);
     params.set('canal', filtro.canal);
-    if (filtro.branches && filtro.branches.length > 0) {
-      params.set('branches', filtro.branches.join(','));
-    }
+    appendList(params, 'branches', filtro.branches);
     if (filtro.dataInicio) params.set('dataInicio', filtro.dataInicio);
     if (filtro.dataFim) params.set('dataFim', filtro.dataFim);
     return fetchPcpApi<AcompanhamentoDiarioResponse>(`/api/pcp/venda-dia/acompanhamento?${params.toString()}`, { token });
   },
 };
 
-// ---- Acompanhamento Diario por Categoria/Linha/Genero (aba de Venda do Dia) ----
-
-export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero';
+export type TipoClassificacaoDiario = 'categoria' | 'linha' | 'genero' | 'colecao' | 'status';
 export type Canal = 'varejo' | 'atacado' | 'todos';
 
 export interface AcompanhamentoDiarioFiltro {
@@ -984,12 +983,16 @@ export interface AcompanhamentoDiarioLinha {
   vendaPecasAtual: number;
   vendaPecasAnoAnterior: number;
   evolucaoPecasPercent: number | null;
+  metaPeriodo: number | null;
+  atingimentoMetaPercent: number | null;
   participacaoPercent: number;
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
   pecasEmProducao: number;
 }
+
+export type AcompanhamentoDiarioTotais = Omit<AcompanhamentoDiarioLinha, 'classificacao'>;
 
 export interface AcompanhamentoDiarioResponse {
   periodoAtual: { inicio: string; fim: string };
@@ -1004,7 +1007,84 @@ export interface AcompanhamentoDiarioResponse {
     pecasEmProducaoTotal: number;
   };
   linhas: AcompanhamentoDiarioLinha[];
+  totais: AcompanhamentoDiarioTotais;
 }
+
+export type TipoAnalisePesosGrades = 'item' | 'categoria';
+
+export interface PesosGradesFiltro {
+  tipoAnalise: TipoAnalisePesosGrades;
+  referencias?: string[];
+  categorias?: string[];
+  linhas?: string[];
+  generos?: string[];
+  dataInicio: string;
+  dataFim: string;
+  fatorDivisor: number;
+}
+
+export interface PesosGradesTamanho {
+  tamanho: string;
+  quantidadeVendida: number;
+  frequencia: number;
+}
+
+export interface PesosGradesReferencia {
+  referenceCode: string;
+  descricao: string;
+  tamanhos: PesosGradesTamanho[];
+  totalVendido: number;
+}
+
+export interface PesosGradesResponse {
+  fatorDivisor: number;
+  periodo: { inicio: string; fim: string };
+  referencias: PesosGradesReferencia[];
+}
+
+export interface PesosGradesReferenciaOpcao {
+  referenceCode: string;
+  referenceName: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+}
+
+export interface BuscarReferenciasPesosGradesFiltro {
+  search?: string;
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  status?: string[];
+  limit?: number;
+}
+
+export const pesosGradesApi = {
+  getPesosGrades: (token: string, filtro: PesosGradesFiltro) => {
+    const params = new URLSearchParams();
+    params.set('tipoAnalise', filtro.tipoAnalise);
+    params.set('dataInicio', filtro.dataInicio);
+    params.set('dataFim', filtro.dataFim);
+    params.set('fatorDivisor', String(filtro.fatorDivisor));
+    appendList(params, 'referencias', filtro.referencias);
+    appendList(params, 'categorias', filtro.categorias);
+    appendList(params, 'linhas', filtro.linhas);
+    appendList(params, 'generos', filtro.generos);
+    return fetchPcpApi<PesosGradesResponse>(`/api/pcp/pesos-grades?${params.toString()}`, { token });
+  },
+
+  buscarReferencias: (token: string, filtro: BuscarReferenciasPesosGradesFiltro = {}) => {
+    const params = new URLSearchParams();
+    if (filtro.search) params.set('search', filtro.search);
+    if (filtro.limit) params.set('limit', String(filtro.limit));
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'status', filtro.status);
+    const query = params.toString();
+    return fetchPcpApi<{ referencias: PesosGradesReferenciaOpcao[] }>(`/api/pcp/pesos-grades/referencias${query ? `?${query}` : ''}`, { token });
+  },
+};
 
 // ---- Redistribuicao ----
 
@@ -1123,7 +1203,6 @@ export const redistribuicaoApi = {
       }>
     >(`/api/pcp/redistribuicao/jobs?limit=${limit}`, { token }),
 };
-
 // ---- Sugestao de Producao ----
 
 export interface SugestaoProducaoFiltro {
@@ -1210,79 +1289,6 @@ export const sugestaoProducaoApi = {
     fetchPcpApi<SugestaoProducaoOpDetalhe[]>(`/api/pcp/sugestao-producao/ops/${productCode}`, { token }),
 };
 
-// ---- Pesos e Grades para Producao ----
-
-export type TipoAnalisePesosGrades = 'item' | 'categoria';
-
-export interface PesosGradesFiltro {
-  tipoAnalise: TipoAnalisePesosGrades;
-  referencias?: string[];
-  categorias?: string[];
-  dataInicio: string;
-  dataFim: string;
-  fatorDivisor: number;
-}
-
-export interface PesosGradesTamanho {
-  tamanho: string;
-  quantidadeVendida: number;
-  frequencia: number;
-}
-
-export interface PesosGradesReferencia {
-  referenceCode: string;
-  descricao: string;
-  tamanhos: PesosGradesTamanho[];
-}
-
-export interface PesosGradesResponse {
-  fatorDivisor: number;
-  periodo: { inicio: string; fim: string };
-  referencias: PesosGradesReferencia[];
-}
-
-export interface PesosGradesReferenciaOpcao {
-  referenceCode: string;
-  referenceName: string;
-  categoria: string | null;
-  linha: string | null;
-  genero: string | null;
-}
-
-export interface BuscarReferenciasPesosGradesFiltro {
-  search?: string;
-  categoria?: string[];
-  linha?: string[];
-  genero?: string[];
-  status?: string[];
-  limit?: number;
-}
-
-export const pesosGradesApi = {
-  getPesosGrades: (token: string, filtro: PesosGradesFiltro) => {
-    const params = new URLSearchParams();
-    params.set('tipoAnalise', filtro.tipoAnalise);
-    params.set('dataInicio', filtro.dataInicio);
-    params.set('dataFim', filtro.dataFim);
-    params.set('fatorDivisor', String(filtro.fatorDivisor));
-    appendList(params, 'referencias', filtro.referencias);
-    appendList(params, 'categorias', filtro.categorias);
-    return fetchPcpApi<PesosGradesResponse>(`/api/pcp/pesos-grades?${params.toString()}`, { token });
-  },
-
-  buscarReferencias: (token: string, filtro: BuscarReferenciasPesosGradesFiltro = {}) => {
-    const params = new URLSearchParams();
-    if (filtro.search) params.set('search', filtro.search);
-    if (filtro.limit) params.set('limit', String(filtro.limit));
-    appendList(params, 'categoria', filtro.categoria);
-    appendList(params, 'linha', filtro.linha);
-    appendList(params, 'genero', filtro.genero);
-    appendList(params, 'status', filtro.status);
-    const query = params.toString();
-    return fetchPcpApi<{ referencias: PesosGradesReferenciaOpcao[] }>(`/api/pcp/pesos-grades/referencias${query ? `?${query}` : ''}`, { token });
-  },
-};
-
 // ---- Venda e Desconto por Classificação (Relatório 5) ----
 
 export type VendaDescontoClassificacao = 'categoria' | 'linha' | 'colecao' | 'status';
@@ -1332,9 +1338,10 @@ export interface VendaDescontoTotais {
 
 export interface VendaDescontoGerais {
   vendaTotalGeralQtd: number;
-  participacaoPromoQtd: number;
-  vendaTotalGeralValor: number;
-  participacaoPromoValor: number;
+  vendaBruta: number;
+  descontoConcedido: number;
+  vendaLiquida: number;
+  descontoPct: number;
 }
 
 export interface VendaDescontoResponse {
@@ -1381,8 +1388,11 @@ export interface ResumoPromocaoLojaRow {
   branchCode: number;
   branchName: string;
   vendaTotalPromo: number;
+  vendaPromoPecas: number;
   vendaTotalGeralPeriodo: number;
+  vendaBrutaGeralPeriodo: number;
   participacaoPromoPct: number;
+  giroPromoPct: number;
   estoqueFinalPromo: number;
   estoqueFinalGeralPecas: number;
   participacaoEstoquePromoPct: number;

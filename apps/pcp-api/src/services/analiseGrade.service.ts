@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { FILIAIS } from '../config/constants.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS } from '../config/constants.js';
+import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
 const RELATORIO_BASE_CONFIG_KEY = 'relatorio_base';
@@ -95,18 +95,38 @@ function filtroProductSkuAG(skus: string[] | null): Prisma.Sql {
   return Prisma.sql`AND product_sku IN (${Prisma.join(skus)})`;
 }
 
+function buildEstoqueLocalFilter(branches?: number[]): Prisma.Sql {
+  if (!branches?.length) return Prisma.empty;
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE})`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
+function buildVendaLocalFilter(branches?: number[]): Prisma.Sql {
+  if (!branches?.length) return Prisma.empty;
+  const normais = branches.filter((code) => code > 0);
+  const condicoes: Prisma.Sql[] = [];
+  if (normais.length) condicoes.push(Prisma.sql`t.branch_code IN (${Prisma.join(normais)})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
+  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
 async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[] | null): Promise<GradeRawRow[]> {
   const filtroSql = buildFiltroSql(filtro);
-  const filtroBranch = filtro.branches?.length
-    ? Prisma.sql`AND branch_code IN (${Prisma.join(filtro.branches)})`
-    : Prisma.empty;
+  const filtroBranch = buildEstoqueLocalFilter(filtro.branches);
 
   return prisma.$queryRaw<GradeRawRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, branch_code, stock
       FROM prd_saldo
-      WHERE 1=1 ${filtroBranch} ${filtroProductSkuAG(productSkus)}
+      WHERE 1=1
+        AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+        ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     estoque_sku AS (
@@ -144,22 +164,33 @@ interface SaldoFilialRow {
 // caminho. Usado pra secao "Saldo por Filial" do drill-down de cada referencia.
 async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string[] | null): Promise<Map<string, Map<number, number>>> {
   const filtroSql = buildFiltroSql(filtro);
-  const filtroBranch = filtro.branches?.length
-    ? Prisma.sql`AND branch_code IN (${Prisma.join(filtro.branches)})`
-    : Prisma.empty;
+  const filtroBranch = buildEstoqueLocalFilter(filtro.branches);
 
   const rows = await prisma.$queryRaw<SaldoFilialRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, branch_code, stock
       FROM prd_saldo
-      WHERE 1=1 ${filtroBranch} ${filtroProductSkuAG(productSkus)}
+      WHERE 1=1
+        AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+        ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     saldo_sku_filial AS (
-      SELECT product_sku, branch_code, SUM(COALESCE(stock, 0)) AS estoque
+      SELECT product_sku,
+        CASE
+          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+          ELSE branch_code
+        END AS branch_code,
+        SUM(COALESCE(stock, 0)) AS estoque
       FROM ultimo_saldo
-      GROUP BY product_sku, branch_code
+      GROUP BY product_sku,
+        CASE
+          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+          ELSE branch_code
+        END
     )
     SELECT a.reference_code, s.branch_code, SUM(COALESCE(s.estoque, 0)) AS estoque
     FROM produto_analitico a
@@ -187,9 +218,7 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
 // pra TODOS os product_code vendidos nos ultimos 3 meses, entao filtro de
 // classificacao nao acelerava nada (o piso de tempo dessa query era sempre o mesmo).
 async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}, productCodes: number[] | null = null): Promise<Map<number, VendaMensalRow>> {
-  const filtroBranch = filtro.branches?.length
-    ? Prisma.sql`AND t.branch_code IN (${Prisma.join(filtro.branches)})`
-    : Prisma.empty;
+  const filtroBranch = buildVendaLocalFilter(filtro.branches);
   const filtroProductCode =
     productCodes === null
       ? Prisma.empty
