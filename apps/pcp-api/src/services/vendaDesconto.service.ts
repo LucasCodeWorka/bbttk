@@ -259,7 +259,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       ORDER BY pc.product_code, pc.synced_at DESC
     ),
     custos AS (
-      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, AVG(c.valor) AS custo
+      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, AVG(c.custo) AS custo
       FROM custos_sku c
       JOIN produtos p ON p.product_code = c.product_code
       LEFT JOIN LATERAL (
