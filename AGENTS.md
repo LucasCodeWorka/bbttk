@@ -685,3 +685,105 @@ validar o Dashboard Comercial contra FISFL024/PRDFL074) — se bater com o núme
 que o app mostra, é real (hipótese 1); se o TOTVS mostrar bem mais estoque pra aquela
 data, é lacuna de histórico (hipótese 2). Não assumir nenhuma das duas sem essa
 confirmação externa.
+
+**Atualização 28-30/08/2026 — achada uma 3ª hipótese real e concreta, corrigida**: numa
+devolutiva do cliente (`.docx` "Projeto BI Estoque - Devolutiva 25 08"), a pergunta
+"consideramos a loja Terrazo Shopping (fechada) na venda do ano anterior?" levou a
+achar que `LOJAS_VAREJO` em `apps/pcp-api/src/services/vendaDia.service.ts` — a lista
+hardcoded das 12 lojas de varejo ativas hoje — era reusada **tanto pro período atual
+quanto pro "ano anterior"** em `getAcompanhamentoDiario`. Ou seja: qualquer loja que
+fechou entre um ano atrás e hoje (Terrazo Shopping, Mossoró, Via Sul, Mart Moda — ver
+`LOJAS_VAREJO_FECHADAS` em `apps/pcp-api/src/config/constants.ts`) tinha sua venda E
+estoque do ano anterior **silenciosamente excluídos** da comparação de rede inteira,
+mesmo tendo vendido/tido estoque de verdade naquela época. Isso sozinho já explica uma
+parte real do "ano anterior parece baixo demais" (loja fechada = zero contado, não é
+lacuna de captura de dado, é exclusão by design do filtro de filial). **Corrigido**:
+`getAcompanhamentoDiario` agora usa um universo de filiais mais amplo
+(`branchesAnoAnterior`) só pro lado "ano anterior", incluindo as lojas fechadas — e só
+quando a comparação é de rede inteira sem filtro de loja específico (uma seleção
+explícita de loja continua estrita). Isso **não** resolve sozinho as duas hipóteses
+antigas (real vs. lacuna de captura no `prd_saldo`) — ainda não foi re-testado com o
+banco (Neon fora do ar no momento do fix) pra saber quanto da magnitude de 8-25x esse
+achado explica. Próximo passo: comparar a magnitude do gap antes/depois desse fix pra
+categorias como VESTIDOS/CAMISA assim que o banco voltar, e só então decidir se ainda
+vale a pena perseguir a comparação com relatório nativo do TOTVS.
+
+## Sessão 28-30/08/2026 — merge grande com `limes/teste`, DPA/Atacado virou padrão do PCP
+
+`limes/teste` é o branch de trabalho do Marcelo (ver seção "Git" acima). Entre o último
+merge com `main` e 28/08/2026, ele acumulou 25 commits sem nunca avisar em qual branch
+publicou — isso gerou confusão real (usuário viu no WhatsApp o Marcelo comentando ajuste
+de cor no Raio X sem saber se aquilo já estava em produção). Investigação: comparar
+`git log -1 --format=%ai` do topo de `limes/main` vs `limes/teste` mostrou a `teste`
+6 dias na frente — confirma que o trabalho mais recente dele vai pra lá, não pra `main`,
+até ser mergeado explicitamente. **Path de investigação pra repetir se acontecer de
+novo**: `git fetch` os dois, comparar timestamp do commit mais recente de cada branch
+(não só existência de commits novos — quem está "mais atualizado de verdade" é quem tem
+a data mais recente, não a branch com mais commits).
+
+A pedido do usuário ("traz a teste do git, deixa ela como versão principal"), a `teste`
+inteira foi mergeada em `main` (`git merge limes/teste`), com uma regra clara: **em
+qualquer conflito real de conteúdo, prevalece a versão da `teste`** (não tentar
+reconciliar linha a linha) — só quando o merge automático do Git já resolvia sozinho
+(edições em partes diferentes do arquivo) é que as duas contribuições ficaram lado a
+lado. 13 arquivos em conflito, praticamente todos resolvidos pegando o arquivo inteiro
+da `teste` (`git show limes/teste:caminho > caminho`), porque cada um era parte de uma
+reescrita ampla e coerente (não dava pra misturar metade de cada lado sem quebrar). Uma
+correção pontual foi necessária depois do merge: `apps/pcp-api/src/index.ts` ganhou um
+import/registro duplicado de `pesosGradesRoutes` (efeito colateral de um merge anterior
+já ter "resolvido" isso e o merge novo reintroduzir via 3-way sem base comum
+reconhecida) — sempre conferir duplicatas de import depois de um merge grande assim.
+
+### DPA e Atacado agora são filiais sintéticas em todo o módulo PCP
+
+Atendendo ao pedido do cliente ("considerar sempre dois locais distintos: FÁBRICA (DPA)
+e ATACADO"), o Marcelo introduziu em `apps/pcp-api/src/config/constants.ts`:
+
+```ts
+export const DPA_BRANCH_CODE = -1;      // filial 02 (Fabrica), stock_code 1 e 5 (fisico + segunda qualidade)
+export const ATACADO_BRANCH_CODE = -2;  // filial 02 (Fabrica), stock_code 8 (atacado) OU operacao com "ATACADO" na descricao
+export const DPA_STOCK_CODES = [1, 5];
+export const ATACADO_STOCK_CODE = 8;
+```
+
+Códigos negativos de propósito, pra nunca colidir com um `branch_code` real do TOTVS —
+mesmo padrão que `ATACADO_BRANCH_CODE` já usava sozinho em `relatorioBase.service.ts`
+antes disso (ver seção "stock_code" acima), agora generalizado e com um par (DPA
+também). **Isso substitui o uso solto de `FABRICA_BRANCH_CODE` (branch_code=2) como uma
+coisa só** em `relatorioBase.service.ts`, `vendaDia.service.ts`, `vendaDesconto.service.ts`
+e `raioX.service.ts` — qualquer relatório novo que tocar a Fábrica deveria seguir esse
+mesmo padrão (DPA vs Atacado como duas linhas/opções de filtro separadas), não voltar a
+tratar branch_code=2 como uma coisa só. Distinção: **estoque** usa `stock_code` (1/5 =
+DPA, 8 = Atacado, direto na tabela `prd_saldo`); **venda/transação** não tem stock_code,
+então usa `classificacao_operacoes.description ILIKE '%ATACADO%'` pra decidir o canal
+(`COALESCE(co.description, '') NOT ILIKE '%ATACADO%'` = DPA, senão Atacado).
+
+### Outras entregas trazidas da `teste` nesse merge (correções da devolutiva do cliente)
+
+- **Raio X**: reconstruído do zero pra agrupar por cor (arquivo novo
+  `RaioXCompacto.tsx`) — clicar no produto abre por cor, com grade por tamanho.
+- **Venda e Desconto**: agrupamento por referência (não mais por SKU/código de barras),
+  conciliação venda bruta/líquida/desconto batendo com o relatório 61 do DICFM, e uma
+  tela nova companheira "Resumo de Promoção por Loja" (`/relatorios/resumo-promocao`).
+- **Acompanhamento por Linha**: cobertura recalculada por mês-calendário de verdade (via
+  `getPeriodosCalendario`) em vez da aproximação fixa de 30 dias antiga; colunas Meta
+  R$/Ating. Meta % (proporcional aos dias selecionados) cruzando com
+  `PcpMetaClassificacao`; linha de TOTAL; classificações Coleção e Status adicionadas;
+  vendas sem classificação somam num bucket "SEM CLASSIFICAÇÃO" (pra bater com o
+  dashboard comercial em vez de sumir silenciosamente).
+- **Pesos e Grades para Produção**: ordem de grade corrigida (UN P M G GG 2 4 6 8 10 —
+  ver `ORDEM_GRADES`/`ordemGrade()`), "Por Categoria" agora agrupa a categoria inteira
+  em vez de vir por item, filtros de Linha/Gênero adicionados quando filtra por
+  Categoria, coluna de total vendido.
+- `metaClassificacao.service.ts` ganhou `status` como `tipoClassificacao` válido (antes
+  só tinha categoria/linha/genero/colecao).
+
+### Pendente, ainda não verificado (banco fora do ar no fim dessa sessão)
+
+O Neon ficou inacessível (`P1001`, testado com `prisma db pull` e com o Prisma Client
+direto, TCP puro conecta mas o handshake do Postgres falha) bem no momento de validar
+esse merge com dado real — `npx prisma db pull`/`generate` não rodou, e o fix do
+`LOJAS_VAREJO_FECHADAS` não foi testado contra o banco ainda. `tsc` limpo nos 3 apps
+(prova que o código compila e os tipos batem), mas isso **não** substitui testar as
+telas reescritas (Raio X, Venda e Desconto, Acompanhamento por Linha) com dado real —
+fazer isso assim que o banco voltar, antes de considerar essa entrega fechada.

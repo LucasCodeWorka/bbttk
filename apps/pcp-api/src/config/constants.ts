@@ -42,6 +42,17 @@ export const RELATORIO_BASE_BRANCH_ORDER: { branchCode: number; label: string }[
   { branchCode: 5, label: 'PÁTIO DOM LUÍS' },
 ];
 
+// Lojas de varejo fechadas/inativas hoje, mas que existiram no passado (mesmos codigos
+// documentados em apps/web/src/lib/utils.ts FILIAIS, do lado Comercial). Nunca aparecem
+// como opcao de filtro aqui (getBranches() em vendaDia.service.ts so busca dentro de
+// LOJAS_VAREJO), mas PRECISAM entrar na comparacao "ano anterior" do Acompanhamento por
+// Linha quando a rede toda e comparada sem filtro de loja - senao a rede perde
+// justamente quem fechou nesse meio tempo, fazendo o ano anterior parecer
+// artificialmente mais baixo do que foi de verdade. Achado real: devolutiva do cliente
+// em 25/08/2026 perguntou explicitamente se a Terrazo Shopping (18) tinha sido
+// considerada na venda do ano anterior - a resposta era nao, por causa desse hardcode.
+export const LOJAS_VAREJO_FECHADAS = [10, 16, 18, 19]; // Mossoro, Via Sul, Terrazo Shopping, Mart Moda
+
 export const EXCLUDED_OPERATIONS = new Set([
   140, 76, 25, 26, 27, 273, 44, 240, 241, 242, 243, 244, 245, 239, 238, 237, 236,
 ]);
