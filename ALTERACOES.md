@@ -208,3 +208,12 @@ Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é 
 - A cor e clicavel. Ao expandi-la, o relatorio mostra somente as lojas que possuem estoque, transferencia, venda ou pecas em producao naquela cor, detalhadas por grade na ordem fixa `UN, P, M, G, GG, 2, 4, 6, 8, 10`.
 - Os novos rotulos foram escritos sem caracteres sujeitos a conversao de codificacao para eliminar o texto corrompido visto em `REFERENCIA` e `EM PRODUCAO`.
 - Validacao: o build de producao do painel web foi executado com sucesso apos a mudanca.
+
+### Venda e Desconto por Classificacao - calculo dos cards
+
+- Historico do problema: a versao inicial misturava dois universos nos cards. `Venda Total R$` vinha do total direto das transacoes do periodo, enquanto `Total Vendido` vinha da soma das linhas detalhadas do relatorio. Como a tabela detalhada descartava grupos com quantidade zero ou negativa (`HAVING SUM(qtd) > 0`), devolucoes podiam fazer o total da tabela ficar maior que o total geral e gerar percentuais acima de 100%.
+- Regra atual no codigo: os cards principais foram separados em `Venda Bruta`, `Desconto Concedido`, `Venda Liquida` e `Quantidade Vendida`, todos vindos da consulta geral (`data.gerais`), para evitar comparar total geral com subtotal filtrado da tabela.
+- Formulas atuais: `Venda Bruta` soma `ti.value` com devolucoes negativas; `Desconto Concedido` soma `ti.value - ti.net_value`, tambem com devolucoes negativas; `Venda Liquida` soma `ti.net_value` com devolucoes negativas; `Quantidade Vendida` soma as pecas com devolucoes negativas.
+- O antigo `Total Vendido` correspondia a `data.totais.ttVdaVda`, ou seja, soma da venda liquida das linhas processadas da tabela, nao ao total geral bruto do periodo.
+- Correcao tecnica encontrada durante a auditoria: a CTE `custos_sku` renomeava `pc.valor` para `custo`, mas a CTE seguinte tentava calcular `AVG(c.valor)`. Isso gerava erro SQL ao rodar o relatorio. Foi corrigido para `AVG(c.custo)`.
+- Validacao com a base configurada, periodo 01/08/2026 a 30/08/2026, classificacao por status e todas as lojas: a consulta geral retornou 19.558 pecas, venda bruta de R$ 1.132.480,51, desconto de R$ 366,83 e venda liquida de R$ 1.130.560,94. A soma das linhas detalhadas retornou R$ 1.130.351,74, diferenca de R$ 209,20 em relacao ao total geral liquido, explicada pelo recorte/agregacao da tabela.
