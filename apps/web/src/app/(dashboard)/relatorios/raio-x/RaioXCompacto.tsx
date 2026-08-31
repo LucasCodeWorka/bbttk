@@ -9,6 +9,10 @@ const GRADES = ['UN', 'P', 'M', 'G', 'GG', '2', '4', '6', '8', '10'];
 const numero = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
 
 type Props = { token: string | null };
+type RaioXTotais = RaioXProduto['totalGeral'];
+type CampoSoma = 'estoqueInicial' | 'transferencias' | 'vendasVarejo' | 'vendasAtacado' | 'estoqueFinal' | 'pecasEmProducao';
+
+const CAMPOS_SOMA: CampoSoma[] = ['estoqueInicial', 'transferencias', 'vendasVarejo', 'vendasAtacado', 'estoqueFinal', 'pecasEmProducao'];
 
 function tamanhoNormalizado(tamanho: string) {
   const valor = tamanho.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
@@ -20,6 +24,40 @@ function Cobertura({ value, config }: { value: number; config: RaioXResponse['co
   if (value >= 999) return <>INF</>;
   const cor = value <= config.coberturaLimiteVerde ? 'text-green-700' : value >= config.coberturaLimiteVermelho ? 'text-red-700' : '';
   return <span className={cor}>{value.toFixed(1)}</span>;
+}
+
+function criarTotais(): RaioXTotais {
+  return {
+    estoqueInicial: 0,
+    transferencias: 0,
+    vendasVarejo: 0,
+    vendasAtacado: 0,
+    estoqueFinal: 0,
+    pecasEmProducao: 0,
+    cobertura: 999,
+  };
+}
+
+function calcularCobertura(totais: RaioXTotais, dataInicio: string, dataFim: string) {
+  const venda = totais.vendasVarejo + totais.vendasAtacado;
+  if (!venda) return 999;
+  const dias = Math.max(1, Math.floor((Date.parse(`${dataFim}T00:00:00Z`) - Date.parse(`${dataInicio}T00:00:00Z`)) / 86400000) + 1);
+  return totais.estoqueFinal / ((venda / dias) * 30);
+}
+
+function somarTotais(destino: RaioXTotais, origem: RaioXTotais) {
+  for (const campo of CAMPOS_SOMA) destino[campo] += origem[campo];
+}
+
+function MetricasLinha({ totais }: { totais: RaioXTotais }) {
+  return <>
+    <span><b>EST. INICIAL</b><br />{numero.format(totais.estoqueInicial)}</span>
+    <span><b>TRANSF.</b><br />{numero.format(totais.transferencias)}</span>
+    <span><b>V. VAREJO</b><br />{numero.format(totais.vendasVarejo)}</span>
+    <span><b>V. ATACADO</b><br />{numero.format(totais.vendasAtacado)}</span>
+    <span><b>EST. FINAL</b><br />{numero.format(totais.estoqueFinal)}</span>
+    <span><b>EM PRODUCAO</b><br />{numero.format(totais.pecasEmProducao)}</span>
+  </>;
 }
 
 export default function RaioXCompacto({ token }: Props) {
@@ -35,6 +73,7 @@ export default function RaioXCompacto({ token }: Props) {
   const [dados, setDados] = useState<RaioXResponse | null>(null);
   const [referenciasAbertas, setReferenciasAbertas] = useState<Set<string>>(new Set());
   const [coresAbertas, setCoresAbertas] = useState<Set<string>>(new Set());
+  const [lojasAbertas, setLojasAbertas] = useState<Set<string>>(new Set());
   const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => { if (timeout.current) clearTimeout(timeout.current); }, []);
@@ -60,7 +99,7 @@ export default function RaioXCompacto({ token }: Props) {
     setCarregando(true); setErro(null);
     try {
       setDados(await raioXApi.getRaioX(token, { ...filtro, referencias: selecionados.map(item => item.reference_code) }));
-      setReferenciasAbertas(new Set()); setCoresAbertas(new Set());
+      setReferenciasAbertas(new Set()); setCoresAbertas(new Set()); setLojasAbertas(new Set());
     } catch (e) { setErro(e instanceof Error ? e.message : 'Não foi possível carregar o relatório.'); }
     finally { setCarregando(false); }
   };
@@ -114,11 +153,21 @@ export default function RaioXCompacto({ token }: Props) {
   }, [dados, filtro.dataInicio, filtro.dataFim]);
 
   const toggle = (set: Dispatch<SetStateAction<Set<string>>>, chave: string) => set(anterior => {
-    const proximo = new Set(anterior); proximo.has(chave) ? proximo.delete(chave) : proximo.add(chave); return proximo;
+    const proximo = new Set(anterior);
+    if (proximo.has(chave)) proximo.delete(chave);
+    else proximo.add(chave);
+    return proximo;
   });
 
+  const totalizarReferencia = (cores: RaioXProduto[]) => {
+    const totais = criarTotais();
+    for (const cor of cores) somarTotais(totais, cor.totalGeral);
+    totais.cobertura = calcularCobertura(totais, filtro.dataInicio, filtro.dataFim);
+    return totais;
+  };
+
   return <div className="p-6 space-y-5">
-    <div><h1 className="text-2xl font-bold text-gray-900">Raio X do Produto</h1><p className="text-sm text-gray-600 mt-1">Selecione as referencias e abra apenas o nivel que deseja conferir: referencia, cor e grade.</p></div>
+    <div><h1 className="text-2xl font-bold text-gray-900">Raio X do Produto</h1><p className="text-sm text-gray-600 mt-1">Selecione as referencias e abra apenas o nivel que deseja conferir: referencia, cor, empresa e grade.</p></div>
     <Card>
       <div className="grid gap-4 md:grid-cols-4">
         <label className="text-sm font-medium text-gray-700">Data inicio<input type="date" value={filtro.dataInicio} onChange={e => setFiltro({ ...filtro, dataInicio: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" /></label>
@@ -133,12 +182,22 @@ export default function RaioXCompacto({ token }: Props) {
     {erro && <Card className="border-red-200 bg-red-50 text-sm text-red-800">{erro}</Card>}
     {referenciasExibidas.map(([referencia, cores]) => {
       const primeira = cores[0];
+      const referenciaAberta = referenciasAbertas.has(referencia);
+      const totaisReferencia = totalizarReferencia(cores);
       return <Card key={referencia} className="p-0 overflow-hidden">
-        <div className="border-b bg-gray-50 px-5 py-4">
-          <strong>{referencia}</strong><span className="mx-2">-</span>{primeira.referenceName}
-          {primeira.emPromocao && <small className="ml-3 rounded bg-red-100 px-2 py-1 text-red-800">PROMOCAO</small>}
-        </div>
-        <div className="space-y-2 p-3">
+        <button
+          type="button"
+          onClick={() => toggle(setReferenciasAbertas, referencia)}
+          className="grid w-full grid-cols-[minmax(16rem,1fr)_repeat(6,minmax(4rem,auto))_1.5rem] items-center gap-x-3 border-b bg-gray-50 px-5 py-4 text-left text-xs hover:bg-gray-100"
+        >
+          <span className="text-base">
+            <strong>{referencia}</strong><span className="mx-2">-</span>{primeira.referenceName}
+            {primeira.emPromocao && <small className="ml-3 rounded bg-red-100 px-2 py-1 text-red-800">PROMOCAO</small>}
+          </span>
+          <MetricasLinha totais={totaisReferencia} />
+          <span className="text-base">{referenciaAberta ? '-' : '+'}</span>
+        </button>
+        {referenciaAberta && <div className="space-y-2 p-3">
           {cores.map(cor => {
             const chave = `${referencia}|${cor.cor}`;
             const corAberta = coresAbertas.has(chave);
@@ -150,17 +209,14 @@ export default function RaioXCompacto({ token }: Props) {
                 className="grid w-full grid-cols-[minmax(11rem,1fr)_repeat(6,minmax(4rem,auto))_1.5rem] items-center gap-x-3 px-4 py-3 text-left text-xs hover:bg-gray-50"
               >
                 <span className="text-sm font-semibold">COR: {cor.cor}</span>
-                <span><b>EST. INICIAL</b><br />{numero.format(cor.totalGeral.estoqueInicial)}</span>
-                <span><b>TRANSF.</b><br />{numero.format(cor.totalGeral.transferencias)}</span>
-                <span><b>V. VAREJO</b><br />{numero.format(cor.totalGeral.vendasVarejo)}</span>
-                <span><b>V. ATACADO</b><br />{numero.format(cor.totalGeral.vendasAtacado)}</span>
-                <span><b>EST. FINAL</b><br />{numero.format(cor.totalGeral.estoqueFinal)}</span>
-                <span><b>EM PRODUCAO</b><br />{numero.format(cor.totalGeral.pecasEmProducao)}</span>
+                <MetricasLinha totais={cor.totalGeral} />
                 <span className="text-base">{corAberta ? '-' : '+'}</span>
               </button>
-              {corAberta && <div className="border-t bg-gray-50 p-3 space-y-4">
+              {corAberta && <div className="border-t bg-gray-50 p-3 space-y-2">
                 {lojas.length === 0 && <p className="text-sm text-gray-500">Nenhuma loja possui dados para esta cor.</p>}
                 {lojas.map(loja => {
+                  const chaveLoja = `${referencia}|${cor.cor}|${loja.branchCode}`;
+                  const lojaAberta = lojasAbertas.has(chaveLoja);
                   const grades = new Map(loja.grades.map(grade => [tamanhoNormalizado(grade.tamanho), grade]));
                   const linhas = [
                     ['ESTOQUE INICIAL', 'estoqueInicial'],
@@ -170,21 +226,31 @@ export default function RaioXCompacto({ token }: Props) {
                     ['ESTOQUE FINAL', 'estoqueFinal'],
                     ['EM PRODUCAO', 'pecasEmProducao'],
                   ] as const;
-                  return <div key={loja.branchCode} className="overflow-x-auto">
-                    <h3 className="mb-2 text-sm font-bold">{loja.branchName}</h3>
-                    <Table>
-                      <TableHead><TableRow><TableCell isHeader>METRICA</TableCell>{GRADES.map(grade => <TableCell isHeader align="right" key={grade}>{grade}</TableCell>)}<TableCell isHeader align="right">TOTAL</TableCell></TableRow></TableHead>
-                      <TableBody>
-                        {linhas.map(([rotulo, campo]) => <TableRow key={campo}><TableCell>{rotulo}</TableCell>{GRADES.map(grade => <TableCell align="right" key={grade}>{numero.format(grades.get(grade)?.[campo] || 0)}</TableCell>)}<TableCell align="right" className="font-semibold">{numero.format(loja.totais[campo])}</TableCell></TableRow>)}
-                        <TableRow><TableCell className="font-semibold">COBERTURA</TableCell>{GRADES.map(grade => <TableCell align="right" key={grade}><Cobertura value={grades.get(grade)?.cobertura || 999} config={configCobertura} /></TableCell>)}<TableCell align="right" className="font-semibold"><Cobertura value={loja.totais.cobertura} config={configCobertura} /></TableCell></TableRow>
-                      </TableBody>
-                    </Table>
+                  return <div key={loja.branchCode} className="rounded border bg-white">
+                    <button
+                      type="button"
+                      onClick={() => toggle(setLojasAbertas, chaveLoja)}
+                      className="grid w-full grid-cols-[minmax(11rem,1fr)_repeat(6,minmax(4rem,auto))_1.5rem] items-center gap-x-3 px-4 py-3 text-left text-xs hover:bg-gray-50"
+                    >
+                      <span className="text-sm font-semibold">{loja.branchName}</span>
+                      <MetricasLinha totais={loja.totais} />
+                      <span className="text-base">{lojaAberta ? '-' : '+'}</span>
+                    </button>
+                    {lojaAberta && <div className="overflow-x-auto border-t p-3">
+                      <Table>
+                        <TableHead><TableRow><TableCell isHeader>METRICA</TableCell>{GRADES.map(grade => <TableCell isHeader align="right" key={grade}>{grade}</TableCell>)}<TableCell isHeader align="right">TOTAL</TableCell></TableRow></TableHead>
+                        <TableBody>
+                          {linhas.map(([rotulo, campo]) => <TableRow key={campo}><TableCell>{rotulo}</TableCell>{GRADES.map(grade => <TableCell align="right" key={grade}>{numero.format(grades.get(grade)?.[campo] || 0)}</TableCell>)}<TableCell align="right" className="font-semibold">{numero.format(loja.totais[campo])}</TableCell></TableRow>)}
+                          <TableRow><TableCell className="font-semibold">COBERTURA</TableCell>{GRADES.map(grade => <TableCell align="right" key={grade}><Cobertura value={grades.get(grade)?.cobertura || 999} config={configCobertura} /></TableCell>)}<TableCell align="right" className="font-semibold"><Cobertura value={loja.totais.cobertura} config={configCobertura} /></TableCell></TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>}
                   </div>;
                 })}
               </div>}
             </div>;
           })}
-        </div>
+        </div>}
       </Card>;
     })}
     {dados && totaisPorCor.length > 0 && <Card><h2 className="mb-1 text-base font-bold">Totais por cor</h2><p className="mb-3 text-xs text-gray-500">Soma de todas as lojas selecionadas. Quando houver agrupamento cadastrado, o nome do grupo substitui as cores originais.</p><div className="overflow-x-auto"><Table><TableHead><TableRow><TableCell isHeader>REFERÃŠNCIA</TableCell><TableCell isHeader>COR / GRUPO</TableCell><TableCell isHeader align="right">EST. INICIAL</TableCell><TableCell isHeader align="right">TRANSF.</TableCell><TableCell isHeader align="right">V. VAREJO</TableCell><TableCell isHeader align="right">V. ATACADO</TableCell><TableCell isHeader align="right">EST. FINAL</TableCell><TableCell isHeader align="right">COB.</TableCell><TableCell isHeader align="right">EM PRODUÃ‡ÃƒO</TableCell></TableRow></TableHead><TableBody>{totaisPorCor.map((cor) => <TableRow key={`${cor.referenceCode}|${cor.cor}`}><TableCell><strong>{cor.referenceCode}</strong><br /><span className="text-xs text-gray-500">{cor.referenceName}</span></TableCell><TableCell className="font-medium">{cor.cor}</TableCell><TableCell align="right">{numero.format(cor.estoqueInicial)}</TableCell><TableCell align="right">{numero.format(cor.transferencias)}</TableCell><TableCell align="right">{numero.format(cor.vendasVarejo)}</TableCell><TableCell align="right">{numero.format(cor.vendasAtacado)}</TableCell><TableCell align="right">{numero.format(cor.estoqueFinal)}</TableCell><TableCell align="right"><Cobertura value={cor.cobertura} config={configCobertura} /></TableCell><TableCell align="right">{numero.format(cor.pecasEmProducao)}</TableCell></TableRow>)}</TableBody></Table></div></Card>}
