@@ -18,6 +18,10 @@ export default function RaioXPage() {
   const { token } = useAuth();
   if (usarLayoutCompacto()) return <RaioXCompacto token={token} />;
 
+  return <RaioXLegado token={token} />;
+}
+
+function RaioXLegado({ token }: { token: string | null }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<RaioXResponse | null>(null);
@@ -268,7 +272,7 @@ export default function RaioXPage() {
     const colunasResumo: ExcelColumn[] = [
       { key: 'branchName', header: 'LOJA', width: 20, type: 'text' },
       { key: 'estoqueInicial', header: 'EST. INICIAL', width: 12, type: 'number' },
-      { key: 'transferencias', header: 'TRANSF.', width: 12, type: 'number' },
+      { key: 'transferencias', header: 'MOV. ESTOQUE', width: 14, type: 'number' },
       { key: 'vendasVarejo', header: 'V. VAREJO', width: 12, type: 'number' },
       { key: 'vendasAtacado', header: 'V. ATACADO', width: 12, type: 'number' },
       { key: 'estoqueFinal', header: 'EST. FINAL', width: 12, type: 'number' },
@@ -299,7 +303,7 @@ export default function RaioXPage() {
       { key: 'cor', header: 'COR', width: 15, type: 'text' },
       { key: 'loja', header: 'LOJA', width: 20, type: 'text' },
       { key: 'estoqueInicial', header: 'EST. INICIAL', width: 12, type: 'number' },
-      { key: 'transferencias', header: 'TRANSF.', width: 12, type: 'number' },
+      { key: 'transferencias', header: 'MOV. ESTOQUE', width: 14, type: 'number' },
       { key: 'vendasVarejo', header: 'V. VAREJO', width: 12, type: 'number' },
       { key: 'vendasAtacado', header: 'V. ATACADO', width: 12, type: 'number' },
       { key: 'estoqueFinal', header: 'EST. FINAL', width: 12, type: 'number' },
@@ -358,7 +362,7 @@ export default function RaioXPage() {
           <div className="flex-1">
             <p className="text-sm font-medium text-blue-900">Informação</p>
             <p className="text-sm text-blue-800 mt-1">
-              Os dados de <strong>Peças em Produção</strong> ainda não estão disponíveis. O relatório exibe apenas Estoque, Transferências, Vendas e Cobertura.
+              Os dados de <strong>Peças em Produção</strong> ainda não estão disponíveis. O relatório exibe apenas Estoque, Movimento de Estoque, Vendas e Cobertura.
             </p>
           </div>
         </div>
@@ -549,7 +553,7 @@ export default function RaioXPage() {
               <TableRow>
                 <TableCell isHeader>LOJA</TableCell>
                 <TableCell isHeader align="right">EST. INICIAL</TableCell>
-                <TableCell isHeader align="right">TRANSF.</TableCell>
+                <TableCell isHeader align="right">MOV. ESTOQUE</TableCell>
                 <TableCell isHeader align="right">V. VAREJO</TableCell>
                 <TableCell isHeader align="right">V. ATACADO</TableCell>
                 <TableCell isHeader align="right">EST. FINAL</TableCell>
@@ -654,9 +658,9 @@ export default function RaioXPage() {
                             </TableCell>
                           </TableRow>
 
-                          {/* Linha: Transferências */}
+                          {/* Linha: Movimento de Estoque */}
                           <TableRow>
-                            <TableCell className="font-medium">TRANSFERÊNCIAS</TableCell>
+                            <TableCell className="font-medium">MOV. ESTOQUE</TableCell>
                             {tamanhos.map((tamanho) => {
                               const grade = gradesPorTamanho.get(tamanho);
                               return (
@@ -757,7 +761,7 @@ export default function RaioXPage() {
                             <TableCell align="right">{formatarNumero(loja.totais.estoqueInicial)}</TableCell>
                           </TableRow>
                           <TableRow>
-                            <TableCell className="font-medium">TRANSFERÊNCIAS</TableCell>
+                            <TableCell className="font-medium">MOV. ESTOQUE</TableCell>
                             <TableCell align="right">{formatarNumero(loja.totais.transferencias)}</TableCell>
                           </TableRow>
                           <TableRow>
@@ -793,7 +797,7 @@ export default function RaioXPage() {
                     <TableRow>
                       <TableCell isHeader>Métrica</TableCell>
                       <TableCell isHeader align="right">Estoque Inicial</TableCell>
-                      <TableCell isHeader align="right">Transferências</TableCell>
+                      <TableCell isHeader align="right">Mov. Estoque</TableCell>
                       <TableCell isHeader align="right">V. Varejo</TableCell>
                       <TableCell isHeader align="right">V. Atacado</TableCell>
                       <TableCell isHeader align="right">Estoque Final</TableCell>
@@ -838,7 +842,7 @@ export default function RaioXPage() {
                   <TableRow>
                     <TableCell isHeader>REFERÊNCIA</TableCell>
                     <TableCell isHeader align="right">EST. INICIAL</TableCell>
-                    <TableCell isHeader align="right">TRANSF.</TableCell>
+                    <TableCell isHeader align="right">MOV. ESTOQUE</TableCell>
                     <TableCell isHeader align="right">V. VAREJO</TableCell>
                     <TableCell isHeader align="right">V. ATACADO</TableCell>
                     <TableCell isHeader align="right">EST. FINAL</TableCell>

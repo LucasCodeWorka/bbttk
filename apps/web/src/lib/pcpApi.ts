@@ -799,7 +799,7 @@ export interface RaioXFiltro {
 export interface RaioXGrade {
   tamanho: string;
   estoqueInicial: number;
-  transferencias: number;
+  transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
   vendasVarejo: number;
   vendasAtacado: number;
   estoqueFinal: number;
@@ -813,7 +813,7 @@ export interface RaioXLoja {
   grades: RaioXGrade[];
   totais: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
@@ -833,7 +833,7 @@ export interface RaioXProduto {
   lojas: RaioXLoja[];
   totalGeral: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
