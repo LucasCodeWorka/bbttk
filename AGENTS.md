@@ -128,7 +128,7 @@ consultando `stock_description` direto no banco:
 
 | stock_code | stock_description observada | uso |
 |---|---|---|
-| 1 | `FISICO` (às vezes `CSV Virtual`, aparenta ser fallback quando a descrição não veio do TOTVS) | estoque físico disponível na loja — **é o único filtrado explicitamente hoje**, em `transferencia.service.ts` (`AND ps.stock_code = 1`) e no relatório novo "Acompanhamento por Linha" |
+| 1 | `FISICO` (às vezes `CSV Virtual`, aparenta ser fallback quando a descrição não veio do TOTVS) | estoque físico disponível na loja — filtrado explicitamente no "Acompanhamento por Linha" (`vendaDia.service.ts`); o módulo Gestão de Transferência, que também isolava esse código, foi removido (ver seção "Sessão 28-30/08/2026") |
 | 5 | `SEGUNDA QUALIDADE` | estoque de segunda linha/avariado |
 | 8 | `ATACADO` | estoque reservado pro canal atacado |
 
@@ -136,6 +136,58 @@ consultando `stock_description` direto no banco:
 lugar nenhum do dado sincronizado — se um relatório pedir "estoque físico + trânsito",
 hoje só dá pra entregar o físico, e é preciso avisar explicitamente que trânsito não
 está disponível (não inventar um número).
+
+### Investigação 31/08/2026 — dá pra calcular "em trânsito" a partir de `transacoes`, mas o número não presta pra previsão de curto prazo
+
+O usuário pediu pra construir "estoque em trânsito" (peças que saíram da Fábrica mas
+ainda não chegaram na loja) achando que precisaria de uma API nova do TOTVS
+(`transaction-receiving`) + um script Python separado. Investigação mostrou as duas
+premissas erradas, mas achou um caminho real:
+
+- **`transaction-receiving`** (`POST /api/totvsmoda/general/v2/transaction-receiving`)
+  é sobre **conciliação de pagamento** (cardOperator, NSU, authorizationCode,
+  paymentStatus, digitalWalletType) — recebimento de dinheiro, não de mercadoria. Não
+  serve pra isso, nunca foi integrada no projeto.
+- **Transferência entre filiais JÁ está nas tabelas sincronizadas** (`transacoes`/
+  `transacao_itens`), só nunca tinha sido decodificada antes:
+  - Saída de transferência: `operation_code` **510**/**1510** (Ceará) ou **512**
+    (RN/MA) — sempre com `operations_type='S', operation_mode='2'` em
+    `classificacao_operacoes`.
+  - Entrada de transferência (do lado da loja que recebe): `operation_code` **3**/
+    **1003** (Ceará) ou **5** (RN/MA).
+  - **A filial contraparte vem codificada no `customer_code`**: `customer_code -
+    110000000 = branch_code` da outra ponta (destino, na saída; origem, na entrada) —
+    o mesmo offset "conta interna do TOTVS" já usado pra excluir cliente falso do
+    faturamento (`customer_code >= 110000000`), só que aqui tem função estrutural real.
+    Confirmado com 100% de correspondência real pra todas as 18 filiais (inclusive as
+    fechadas). Vale pra transferência loja-a-loja também, não só Fábrica→loja.
+  - **Não existe vínculo documento-a-documento** (`guide_code` e `origin_destination`
+    em `transacoes` estão `NULL` em 100% das 853 mil linhas da tabela — colunas mortas,
+    nunca preenchidas pelo ETL; a tabela `operacoes`, que tem uma coluna `invoice_data`
+    JSON que poderia ajudar, está **vazia, 0 linhas**, diferente de
+    `classificacao_operacoes` que é a que realmente é sincronizada e usada). Só dá pra
+    calcular um **saldo agregado**: `SUM(saída pro destino) − SUM(entrada vinda de lá)`
+    por `product_code`, não rastrear uma remessa específica.
+  - Já existia uma tentativa anterior disso: `raioX.service.ts` tem uma função
+    `getTransferencias()` que **nunca foi implementada** (retorna sempre `0`, comentário
+    `// TODO: Implementar lógica de transferências quando soubermos onde isso está no
+    banco`) — agora sabemos onde está, se algum dia for retomada.
+
+**Por que não foi construído mesmo assim**: medindo o saldo pendente (saída − entrada)
+por SKU/destino, **86% do total (7.129 de 8.266 peças) vem de lojas JÁ FECHADAS**
+(Terrazo Shopping sozinha = 5.586, Mossoró = 1.380, Mart Moda = 93, Via Sul = 70) —
+mercadoria que saiu antes de a loja fechar e cujo documento de entrada nunca foi
+baixado no TOTVS, não é trânsito de verdade, é resíduo contábil que vai ficar "pendente"
+pra sempre. E mesmo olhando só lojas abertas, **nenhum saldo pendente tem menos de 61
+dias de idade** (nenhum caso de "saiu há alguns dias, ainda não chegou") — sugere que
+transferência entre lojas ativas costuma ser baixada rápido no TOTVS na prática, e o
+que sobra depois de 60+ dias é muito mais provável ser atraso de lançamento/reconciliação
+do que caminhão parado na estrada. Ou seja: o dado sustenta um relatório de "peças com
+baixa de transferência atrasada" (auditoria/limpeza de cadastro), mas **não** sustenta
+"estoque futuro previsto" como foi pedido — usar pra previsão de curto prazo daria
+número enganoso. Decisão do usuário: não construir por enquanto, revisitar só se
+aparecer uma fonte de dado melhor (ex: TOTVS expor status de romaneio/guia de
+transferência em aberto de verdade).
 
 A maioria dos relatórios do PCP (Relatório Base, Curva ABC, Análise de Grade, Venda do
 Dia, Sugestão de Produção) **não filtra por `stock_code`** — soma todos os códigos
