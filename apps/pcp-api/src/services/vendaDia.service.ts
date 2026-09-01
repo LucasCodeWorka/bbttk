@@ -190,7 +190,12 @@ async function getEstoquePorFilial(
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
-    GROUP BY us.branch_code, us.stock_code
+    GROUP BY
+      CASE
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+        ELSE us.branch_code
+      END
   `;
 }
 
