@@ -41,3 +41,6 @@ prisma/*.db
 
 # Testing
 coverage/
+
+# Histórico local de alterações (não versionado)
+ALTERACOES.md

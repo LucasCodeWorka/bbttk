@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
 import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 // Tipos de filtros
@@ -19,10 +20,11 @@ export interface RaioXFiltro {
 export interface RaioXGrade {
   tamanho: string;
   estoqueInicial: number;
-  transferencias: number;
+  transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
   vendasVarejo: number;
   vendasAtacado: number;
   estoqueFinal: number;
+  pecasEmProducao: number;
   cobertura: number;
 }
 
@@ -32,10 +34,11 @@ export interface RaioXLoja {
   grades: RaioXGrade[];
   totais: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }
@@ -51,10 +54,11 @@ export interface RaioXProduto {
   lojas: RaioXLoja[];
   totalGeral: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
+    pecasEmProducao: number;
     cobertura: number;
   };
 }
@@ -73,6 +77,29 @@ function decimalToNumber(value: unknown): number {
   return Number(value);
 }
 
+interface LocalRaioX {
+  branchCode: number;
+  branchName: string;
+  branchFisica: number;
+}
+
+function totaisVazios() {
+  return { estoqueInicial: 0, transferencias: 0, vendasVarejo: 0, vendasAtacado: 0, estoqueFinal: 0, pecasEmProducao: 0, cobertura: 0 };
+}
+
+// A filial física 02 nunca é apresentada diretamente: ela é desmembrada em
+// DPA (físico + segunda qualidade) e ATACADO, como nos demais relatórios PCP.
+function locaisDoRelatorio(selecao?: number[]): LocalRaioX[] {
+  const selecionados = selecao?.length ? new Set(selecao) : null;
+  return RELATORIO_BASE_BRANCH_ORDER
+    .filter(({ branchCode }) => !selecionados || selecionados.has(branchCode) || (branchCode < 0 && selecionados.has(FABRICA_BRANCH_CODE)))
+    .map(({ branchCode, label }) => ({
+      branchCode,
+      branchName: branchCode === DPA_BRANCH_CODE ? 'FÁBRICA (DPA)' : label,
+      branchFisica: branchCode < 0 ? FABRICA_BRANCH_CODE : branchCode,
+    }));
+}
+
 // Helper para converter canal string em verificação SQL
 function getCanalFilter(canal: 'varejo' | 'atacado' | 'todos'): string {
   if (canal === 'varejo') return `AND t.branch_code != ${FABRICA_BRANCH_CODE}`;
@@ -86,16 +113,17 @@ function getCanalFilter(canal: 'varejo' | 'atacado' | 'todos'): string {
  */
 async function getEstoquesEmLote(
   productSkus: string[],
-  branchCodes: number[],
+  locais: LocalRaioX[],
   data: string
 ): Promise<Map<string, number>> {
-  if (productSkus.length === 0 || branchCodes.length === 0) {
+  if (productSkus.length === 0 || locais.length === 0) {
     return new Map();
   }
+  const branchCodes = [...new Set(locais.map(local => local.branchFisica))];
 
   interface EstoqueRow {
     product_sku: string;
-    branch_code: number;
+    local_code: number;
     stock: Decimal | null;
   }
 
@@ -104,6 +132,7 @@ async function getEstoquesEmLote(
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku,
         branch_code,
+        stock_code,
         stock
       FROM prd_saldo
       WHERE product_sku IN (${Prisma.join(productSkus.map(sku => Prisma.sql`${sku}`))})
@@ -111,33 +140,26 @@ async function getEstoquesEmLote(
         AND captured_at <= ${data}::date + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
-    SELECT product_sku, branch_code, COALESCE(SUM(COALESCE(stock, 0)), 0) AS stock
+    SELECT product_sku,
+      CASE
+        WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES.map(code => Prisma.sql`${code}`))}) THEN ${DPA_BRANCH_CODE}
+        WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+        ELSE branch_code
+      END AS local_code,
+      COALESCE(SUM(COALESCE(stock, 0)), 0) AS stock
     FROM ultimo_saldo
-    GROUP BY product_sku, branch_code
+    WHERE (branch_code <> ${FABRICA_BRANCH_CODE} AND stock_code = 1)
+       OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE].map(code => Prisma.sql`${code}`))}))
+    GROUP BY product_sku, local_code
   `;
 
   const result = new Map<string, number>();
   for (const row of rows) {
-    const key = `${row.product_sku}|${row.branch_code}`;
+    const key = `${row.product_sku}|${row.local_code}`;
     result.set(key, decimalToNumber(row.stock));
   }
 
   return result;
-}
-
-/**
- * Busca as transferências de um produto em um período.
- * Transferências são movimentações de entrada/saída entre lojas.
- */
-async function getTransferencias(
-  productCode: number,
-  branchCode: number,
-  dataInicio: string,
-  dataFim: string
-): Promise<number> {
-  // TODO: Implementar lógica de transferências quando soubermos onde isso está no banco
-  // Por enquanto retorna 0
-  return 0;
 }
 
 /**
@@ -146,17 +168,18 @@ async function getTransferencias(
  */
 async function getVendasEmLote(
   productCodes: number[],
-  branchCodes: number[],
+  locais: LocalRaioX[],
   dataInicio: string,
   dataFim: string
 ): Promise<Map<string, number>> {
-  if (productCodes.length === 0 || branchCodes.length === 0) {
+  if (productCodes.length === 0 || locais.length === 0) {
     return new Map();
   }
+  const branchCodes = [...new Set(locais.map(local => local.branchFisica))];
 
   interface VendaRow {
     product_code: number;
-    branch_code: number;
+    local_code: number;
     quantidade: Decimal | null;
     is_atacado: boolean;
   }
@@ -164,7 +187,11 @@ async function getVendasEmLote(
   const rows = await prisma.$queryRaw<VendaRow[]>`
     SELECT
       ti.product_code,
-      t.branch_code,
+      CASE
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+        ELSE t.branch_code
+      END AS local_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
       CASE WHEN co.description ILIKE '%ATACADO%' THEN true ELSE false END AS is_atacado
     FROM transacoes t
@@ -176,17 +203,33 @@ async function getVendasEmLote(
       AND t.transaction_date <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
-    GROUP BY ti.product_code, t.branch_code, is_atacado
+    GROUP BY ti.product_code, local_code, is_atacado
   `;
 
   const result = new Map<string, number>();
   for (const row of rows) {
     const canal = row.is_atacado ? 'atacado' : 'varejo';
-    const key = `${row.product_code}|${row.branch_code}|${canal}`;
+    const key = `${row.product_code}|${row.local_code}|${canal}`;
     result.set(key, decimalToNumber(row.quantidade));
   }
 
   return result;
+}
+
+// Produção é da Fábrica/DPA; não deve ser repetida nas lojas ou no Atacado.
+async function getProducaoEmLote(productCodes: number[]): Promise<Map<number, number>> {
+  if (!productCodes.length) return new Map();
+
+  interface ProducaoRow { product_code: number; quantidade: Decimal | null }
+  const rows = await prisma.$queryRaw<ProducaoRow[]>`
+    SELECT o.product_code, COALESCE(SUM(o.quantidade_pendente), 0) AS quantidade
+    FROM ops_em_producao o
+    JOIN produto_analitico a ON a.product_code = o.product_code
+    WHERE o.product_code IN (${Prisma.join(productCodes.map(code => Prisma.sql`${code}`))})
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    GROUP BY o.product_code
+  `;
+  return new Map(rows.map(row => [row.product_code, decimalToNumber(row.quantidade)]));
 }
 
 /**
@@ -216,26 +259,6 @@ function calcularCobertura(
   return estoqueFinal / mediaMensal;
 }
 
-function gradeTemDado(grade: Omit<RaioXGrade, 'cobertura'>): boolean {
-  return (
-    grade.estoqueInicial !== 0 ||
-    grade.transferencias !== 0 ||
-    grade.vendasVarejo !== 0 ||
-    grade.vendasAtacado !== 0 ||
-    grade.estoqueFinal !== 0
-  );
-}
-
-function totaisTemDado(totais: RaioXLoja['totais'] | RaioXProduto['totalGeral']): boolean {
-  return (
-    totais.estoqueInicial !== 0 ||
-    totais.transferencias !== 0 ||
-    totais.vendasVarejo !== 0 ||
-    totais.vendasAtacado !== 0 ||
-    totais.estoqueFinal !== 0
-  );
-}
-
 /**
  * Função principal para buscar os dados do Raio X
  */
@@ -256,6 +279,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     reference_name: string;
     color_code: string | null;
     color_name: string | null;
+    cor_agrupada: string | null;
     size: string | null;
     class_motor_promocional: string | null;
   }
@@ -266,56 +290,56 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     // Filtra pelas referências selecionadas
     produtos = await prisma.$queryRaw<ProdutoRow[]>`
       SELECT DISTINCT
-        product_sku,
-        product_code,
-        reference_code,
-        reference_name,
-        color_code,
-        color_name,
-        size,
-        class_motor_promocional
+        a.product_sku,
+        a.product_code,
+        a.reference_code,
+        a.reference_name,
+        a.color_code,
+        a.color_name,
+        NULLIF(TRIM(ag.nome), '') AS cor_agrupada,
+        a.size,
+        a.class_motor_promocional
       FROM produto_analitico a
+      LEFT JOIN agrupamento_membros am
+        ON am.tipo = 'cor_produto'
+        AND am.reference_code = a.reference_code
+        AND am.color_match_key = COALESCE(NULLIF(TRIM(a.color_code), ''), NULLIF(TRIM(a.color_name), ''))
+      LEFT JOIN agrupamento_grupos ag
+        ON ag.id = am.grupo_id
+        AND ag.tipo = am.tipo
       WHERE a.reference_code IS NOT NULL
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         AND a.reference_code IN (${Prisma.join(filtro.referencias.map(ref => Prisma.sql`${ref}`))})
-      ORDER BY reference_code, color_code, size
+      ORDER BY a.reference_code, a.color_code, a.size
     `;
   } else if (filtro.categorias && filtro.categorias.length > 0) {
     produtos = await prisma.$queryRaw<ProdutoRow[]>`
       SELECT DISTINCT
-        product_sku,
-        product_code,
-        reference_code,
-        reference_name,
-        color_code,
-        color_name,
-        size,
-        class_motor_promocional
+        a.product_sku,
+        a.product_code,
+        a.reference_code,
+        a.reference_name,
+        a.color_code,
+        a.color_name,
+        NULLIF(TRIM(ag.nome), '') AS cor_agrupada,
+        a.size,
+        a.class_motor_promocional
       FROM produto_analitico a
+      LEFT JOIN agrupamento_membros am
+        ON am.tipo = 'cor_produto'
+        AND am.reference_code = a.reference_code
+        AND am.color_match_key = COALESCE(NULLIF(TRIM(a.color_code), ''), NULLIF(TRIM(a.color_name), ''))
+      LEFT JOIN agrupamento_grupos ag
+        ON ag.id = am.grupo_id
+        AND ag.tipo = am.tipo
       WHERE a.reference_code IS NOT NULL
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         AND a.class_categoria IN (${Prisma.join(filtro.categorias.map(cat => Prisma.sql`${cat}`))})
-      ORDER BY reference_code, color_code, size
+      ORDER BY a.reference_code, a.color_code, a.size
       LIMIT 10
     `;
   } else {
-    // Sem filtros, retorna os primeiros 10
-    produtos = await prisma.$queryRaw<ProdutoRow[]>`
-      SELECT DISTINCT
-        product_sku,
-        product_code,
-        reference_code,
-        reference_name,
-        color_code,
-        color_name,
-        size,
-        class_motor_promocional
-      FROM produto_analitico a
-      WHERE a.reference_code IS NOT NULL
-        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
-      ORDER BY reference_code, color_code, size
-      LIMIT 10
-    `;
+    return { produtos: [], config: { coberturaLimiteVerde, coberturaLimiteVermelho } };
   }
 
   console.log(`[Raio X] Encontrados ${produtos.length} SKUs`);
@@ -328,23 +352,11 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     };
   }
 
-  // Busca as lojas a serem analisadas (inclui Fabrica para capturar vendas atacado)
-  let lojasQuery: number[];
+  const locais = locaisDoRelatorio(filtro.lojas);
 
-  if (filtro.lojas && filtro.lojas.length > 0) {
-    // Usa as lojas especificadas no filtro
-    lojasQuery = filtro.lojas;
-  } else {
-    // Busca todas as lojas (INCLUI Fabrica para capturar vendas atacado)
-    const todasLojas = await prisma.branches.findMany({
-      orderBy: { branch_code: 'asc' },
-    });
-    lojasQuery = todasLojas.map(l => l.branch_code);
-  }
+  console.log(`[Raio X] Lojas selecionadas: ${locais.map(local => local.branchName).join(', ')}`);
 
-  console.log(`[Raio X] Lojas selecionadas: ${lojasQuery.join(', ')}`);
-
-  console.log(`[Raio X] Processando ${produtos.length} produtos em ${lojasQuery.length} lojas`);
+  console.log(`[Raio X] Processando ${produtos.length} produtos em ${locais.length} lojas`);
 
   // Agrupa produtos:
   // - Se agruparPorCor = false: separa por referência+cor (cada cor é um grupo)
@@ -352,9 +364,9 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
   const produtosMap = new Map<string, ProdutoRow[]>();
 
   for (const produto of produtos) {
-    const key = filtro.agruparPorCor
-      ? produto.reference_code
-      : `${produto.reference_code}|${produto.color_code || produto.color_name || ''}`;
+    const corOriginal = produto.color_name?.trim() || produto.color_code?.trim() || 'SEM COR';
+    const corExibicao = produto.cor_agrupada?.trim() || corOriginal;
+    const key = `${produto.reference_code}|${corExibicao}`;
 
     if (!produtosMap.has(key)) {
       produtosMap.set(key, []);
@@ -369,17 +381,14 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
   const todosCodes = produtos.map(p => p.product_code);
 
   console.log(`[Raio X] Buscando estoques em lote...`);
-  const estoquesInicio = await getEstoquesEmLote(todosSKUs, lojasQuery, filtro.dataInicio);
-  const estoquesFim = await getEstoquesEmLote(todosSKUs, lojasQuery, filtro.dataFim);
+  const estoquesInicio = await getEstoquesEmLote(todosSKUs, locais, filtro.dataInicio);
+  const estoquesFim = await getEstoquesEmLote(todosSKUs, locais, filtro.dataFim);
 
   console.log(`[Raio X] Buscando vendas em lote...`);
-  const vendas = await getVendasEmLote(todosCodes, lojasQuery, filtro.dataInicio, filtro.dataFim);
-
-  console.log(`[Raio X] Buscando informações das lojas...`);
-  const lojas = await prisma.branches.findMany({
-    where: { branch_code: { in: lojasQuery } },
-  });
-  const lojasMap = new Map(lojas.map(l => [l.branch_code, l]));
+  const [vendas, producao] = await Promise.all([
+    getVendasEmLote(todosCodes, locais, filtro.dataInicio, filtro.dataFim),
+    getProducaoEmLote(todosCodes),
+  ]);
 
   console.log(`[Raio X] Montando resposta...`);
 
@@ -388,11 +397,12 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
 
   for (const [key, produtosGrupo] of produtosMap.entries()) {
     const primeiroProduto = produtosGrupo[0];
+    const corOriginal = primeiroProduto.color_name?.trim() || primeiroProduto.color_code?.trim() || 'SEM COR';
 
     const produtoResult: RaioXProduto = {
       referenceCode: primeiroProduto.reference_code,
       referenceName: primeiroProduto.reference_name,
-      cor: !filtro.agruparPorCor ? (primeiroProduto.color_name || primeiroProduto.color_code || undefined) : undefined,
+      cor: primeiroProduto.cor_agrupada?.trim() || corOriginal,
       productCode: primeiroProduto.product_code,
       emPromocao: primeiroProduto.class_motor_promocional ? true : false,
       lojas: [],
@@ -402,18 +412,17 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         vendasVarejo: 0,
         vendasAtacado: 0,
         estoqueFinal: 0,
+        pecasEmProducao: 0,
         cobertura: 0,
       },
     };
 
     // Para cada loja
-    for (const branchCode of lojasQuery) {
-      const loja = lojasMap.get(branchCode);
-      if (!loja) continue;
+    for (const local of locais) {
 
       const lojaResult: RaioXLoja = {
-        branchCode,
-        branchName: loja.branch_name,
+        branchCode: local.branchCode,
+        branchName: local.branchName,
         grades: [],
         totais: {
           estoqueInicial: 0,
@@ -421,18 +430,20 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
           vendasVarejo: 0,
           vendasAtacado: 0,
           estoqueFinal: 0,
+          pecasEmProducao: 0,
           cobertura: 0,
         },
       };
 
+      const gradesPorTamanho = new Map<string, RaioXGrade>();
+
       // Para cada tamanho do produto
       for (const produto of produtosGrupo) {
-        const estoqueInicial = estoquesInicio.get(`${produto.product_sku}|${branchCode}`) || 0;
-        const transferencias = 0; // TODO: implementar quando soubermos onde está
+        const estoqueInicial = estoquesInicio.get(`${produto.product_sku}|${local.branchCode}`) || 0;
 
         // Busca vendas no Map
-        let vendasVarejo = vendas.get(`${produto.product_code}|${branchCode}|varejo`) || 0;
-        let vendasAtacado = vendas.get(`${produto.product_code}|${branchCode}|atacado`) || 0;
+        let vendasVarejo = vendas.get(`${produto.product_code}|${local.branchCode}|varejo`) || 0;
+        let vendasAtacado = vendas.get(`${produto.product_code}|${local.branchCode}|atacado`) || 0;
 
         // Aplica filtro de canal
         if (filtro.canal === 'varejo') {
@@ -441,30 +452,47 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
           vendasVarejo = 0;
         }
 
-        const estoqueFinal = estoquesFim.get(`${produto.product_sku}|${branchCode}`) || 0;
-        const cobertura = calcularCobertura(estoqueFinal, vendasVarejo, vendasAtacado, filtro.dataInicio, filtro.dataFim);
-
-        const grade = {
-          tamanho: produto.size || '-',
-          estoqueInicial,
-          transferencias,
-          vendasVarejo,
-          vendasAtacado,
-          estoqueFinal,
+        const estoqueFinal = estoquesFim.get(`${produto.product_sku}|${local.branchCode}`) || 0;
+        // Mantém o nome do campo por compatibilidade com o contrato atual da API,
+        // mas o valor representa o movimento necessário para reconciliar o saldo.
+        const transferencias = estoqueFinal - estoqueInicial + vendasVarejo + vendasAtacado;
+        const tamanho = produto.size || '-';
+        const grade = gradesPorTamanho.get(tamanho) || {
+          tamanho,
+          estoqueInicial: 0,
+          transferencias: 0,
+          vendasVarejo: 0,
+          vendasAtacado: 0,
+          estoqueFinal: 0,
+          pecasEmProducao: 0,
+          cobertura: 0,
         };
 
-        if (gradeTemDado(grade)) {
-          lojaResult.grades.push({
-            ...grade,
-            cobertura,
-          });
-        }
+        grade.estoqueInicial += estoqueInicial;
+        grade.transferencias += transferencias;
+        grade.vendasVarejo += vendasVarejo;
+        grade.vendasAtacado += vendasAtacado;
+        grade.estoqueFinal += estoqueFinal;
+        grade.pecasEmProducao += local.branchCode === DPA_BRANCH_CODE ? producao.get(produto.product_code) || 0 : 0;
+        gradesPorTamanho.set(tamanho, grade);
 
         lojaResult.totais.estoqueInicial += estoqueInicial;
         lojaResult.totais.transferencias += transferencias;
         lojaResult.totais.vendasVarejo += vendasVarejo;
         lojaResult.totais.vendasAtacado += vendasAtacado;
         lojaResult.totais.estoqueFinal += estoqueFinal;
+        lojaResult.totais.pecasEmProducao += local.branchCode === DPA_BRANCH_CODE ? producao.get(produto.product_code) || 0 : 0;
+      }
+
+      lojaResult.grades = [...gradesPorTamanho.values()];
+      for (const grade of lojaResult.grades) {
+        grade.cobertura = calcularCobertura(
+          grade.estoqueFinal,
+          grade.vendasVarejo,
+          grade.vendasAtacado,
+          filtro.dataInicio,
+          filtro.dataFim
+        );
       }
 
       // Calcula cobertura total da loja
@@ -476,10 +504,6 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         filtro.dataFim
       );
 
-      if (!totaisTemDado(lojaResult.totais)) {
-        continue;
-      }
-
       produtoResult.lojas.push(lojaResult);
 
       // Acumula no total geral
@@ -488,6 +512,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
       produtoResult.totalGeral.vendasVarejo += lojaResult.totais.vendasVarejo;
       produtoResult.totalGeral.vendasAtacado += lojaResult.totais.vendasAtacado;
       produtoResult.totalGeral.estoqueFinal += lojaResult.totais.estoqueFinal;
+      produtoResult.totalGeral.pecasEmProducao += lojaResult.totais.pecasEmProducao;
     }
 
     // Calcula cobertura total geral
@@ -499,9 +524,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
       filtro.dataFim
     );
 
-    if (totaisTemDado(produtoResult.totalGeral)) {
-      resultado.push(produtoResult);
-    }
+    resultado.push(produtoResult);
   }
 
   return {

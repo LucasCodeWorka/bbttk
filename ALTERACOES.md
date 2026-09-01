@@ -1,0 +1,219 @@
+# Histórico local de alterações
+
+Arquivo de apoio para registrar alterações feitas no projeto. Este arquivo é local e não é enviado ao Git.
+
+## 2026-08-26
+
+### Relatório Acompanhamento por Linha
+
+#### Totais
+
+- Antes: os indicadores no topo exibiam alguns totais, mas a tabela e a exportação para Excel não apresentavam uma linha consolidada com todos os campos.
+- Alteração: incluída a linha `TOTAL` ao final da tabela e do Excel.
+- Critério: valores, peças, estoque e produção são somados; evolução, participação, cobertura e atingimento da meta são recalculados sobre o total, sem somar percentuais ou meses de cobertura.
+
+#### Meta e atingimento
+
+- Antes: não havia colunas para comparar a venda com a meta cadastrada.
+- Alteração: incluídas as colunas `META R$` e `ATING. META` na tela e no Excel.
+- Regra de cálculo: `meta mensal ÷ quantidade de dias do mês × dias selecionados no filtro`.
+- Para períodos que atravessam meses, a meta proporcional de cada mês é calculada e somada.
+- Sem meta cadastrada para uma classificação em qualquer mês do filtro, a meta e o percentual permanecem em branco.
+
+#### Cobertura em meses
+
+- Antes: a venda era convertida para média mensal usando uma base fixa de 30 dias, o que distorcia o cálculo, especialmente na comparação com o ano anterior e em meses com 28, 29 ou 31 dias.
+- Alteração: a cobertura passou a usar os dias reais de cada mês contemplado pelo período selecionado.
+- Regra: `estoque físico ÷ venda média mensal equivalente`. A cobertura do ano anterior usa o estoque e as vendas do respectivo período histórico.
+
+#### Classificações e metas
+
+- Antes: o relatório e o cadastro de metas ofereciam apenas Categoria, Linha e Gênero; Coleção já existia somente no cadastro de metas.
+- Alteração: adicionadas as opções `Coleção` e `Status` tanto no filtro `Classificar por` quanto no cadastro de metas.
+- As duas novas classificações funcionam para consulta, ordenação, totais, exportação e cadastro de meta.
+
+#### Peças em Produção
+
+- Antes: o relatório somava todas as ordens pendentes, inclusive componentes técnicos. Na auditoria da base atual, isso resultava em 40.179 peças, valor incompatível com a visão do BI Industrial.
+- Alteração: aplicada a mesma regra de universo de produtos do PCP/BI Industrial: produtos acabados e embalagens; componentes técnicos foram excluídos.
+- Resultado da auditoria: a soma da base atual passou para 9.651 peças. A imagem do BI registra 10.386 em 23/08; caso a diferença persista ao comparar o mesmo instante de atualização, será necessário validar o snapshot e regras adicionais do BI.
+
+#### Validação e entrega
+
+- Build do `pcp-api` concluído com sucesso.
+- Build de produção do painel web concluído com sucesso.
+- Alterações enviadas à branch `teste` no commit `9e5d771` (`fix(pcp): ajusta acompanhamento por linha`), por push normal, sem `--force`.
+
+### Correção posterior: erro 500 no ambiente de teste
+
+- Sintoma: o endpoint `venda-dia/acompanhamento` retornava HTTP 500 para Linha, Coleção e Status.
+- Causa provável: a consulta de metas é comum a todas as classificações e o `render.yaml` gera o Prisma no deploy, mas não executa migrações. Se a tabela `pcp_meta_classificacao` ainda não existir no banco do Render, a consulta falha antes de o relatório ser montado.
+- Correção: a ausência específica dessa tabela passa a ser tratada como ausência de metas. O relatório continua disponível e exibe as colunas de meta em branco, conforme a regra funcional; outros erros de banco continuam sendo retornados normalmente.
+
+### Correção posterior: sintaxe SQL de Peças em Produção
+
+- Sintoma: o endpoint retornava erro PostgreSQL `42601`, com `syntax error at or near "AND"`.
+- Causa: o filtro reutilizado de produtos já inicia com `AND`. Na consulta de Peças em Produção ele foi inserido logo após `WHERE`, produzindo a expressão inválida `WHERE AND (...)`.
+- Correção: a consulta passou a iniciar com `WHERE TRUE`, preservando o filtro reutilizado como `WHERE TRUE AND (...)`.
+
+### Correção posterior: conciliação de venda por filial
+
+- Sintoma: o Acompanhamento por Linha apresentava um total menor que o dashboard comercial e diferenças em algumas filiais.
+- Causa: a consulta do Acompanhamento removia vendas de produtos sem o valor da classificação selecionada, enquanto o dashboard comercial inclui essas vendas.
+- Correção: criada a linha `SEM CLASSIFICAÇÃO`. Ela recebe produtos sem cadastro analítico ou sem valor para a dimensão selecionada, preservando a conciliação dos totais sem atribuir uma classificação incorreta.
+- Validação em 01–23/08/2026: o total passou a R$ 868.033 e a linha `SEM CLASSIFICAÇÃO` absorveu R$ 358,95 (exibida arredondada como R$ 359), conciliando com o dashboard comercial.
+
+### Auditoria: peças em trânsito (pendente de fonte de dados)
+
+- Pedido: incluir `PEÇAS EM TRÂNSITO`, `ESTOQUE + TRÂNSITO` e uma nova cobertura calculada sobre essa soma.
+- Operações candidatas identificadas: saída do DPA na operação `1510 — SAÍDA DE TRANSFERÊNCIA (CE) CUSTO2` e entrada das lojas na operação `1003 — ENTRADA DE TRANSFERÊNCIA (CE) CUS`.
+- Limitação encontrada: não existe no banco uma tabela de trânsito nem uma chave que relacione uma saída `1510` a sua respectiva entrada `1003`. Os códigos de transação não são compartilhados entre origem e destino.
+- Decisão: nenhuma coluna foi criada com valores estimados, para não transformar diferenças históricas de transferência em falso trânsito.
+- Próxima informação necessária: número da transferência/guia/NF que faça o vínculo, consulta já utilizada pelo BI Industrial, ou confirmação formal de uma regra agregada a ser adotada.
+
+### Auditoria: venda do ano anterior e Terrazo
+
+- Período conferido: 01–23/08/2025.
+- Terrazo (filial 18) não está no universo atual do Acompanhamento por Linha. Portanto, não é considerado no valor do ano anterior.
+- Total do Acompanhamento sem Terrazo: R$ 806.690,66 (exibido arredondado como R$ 806.691). A linha `SEM CLASSIFICAÇÃO` desse período representa R$ 300,66.
+- Se Terrazo fosse incluída, o total seria R$ 827.619,20.
+- Referências recebidas do COMFL007: R$ 797.691,13 sem Terrazo e R$ 818.619,67 com Terrazo. A diferença permanece R$ 8.999,53 nos dois cenários; logo, Terrazo não explica a divergência.
+- Iguatemi foi validada e coincide exatamente com o COMFL007: R$ 63.134,47.
+- Pendência: é necessário o detalhamento/exportação do COMFL007 por empresa para identificar com segurança a(s) filial(is) que compõem os R$ 8.999,53. A imagem recebida mostra apenas o detalhamento de Iguatemi e o total geral.
+
+### Histórico de commits enviados para `teste`
+
+- `879242b` — separação de DPA e Atacado nos relatórios.
+- `2f40381` — relatórios PCP, incluindo Acompanhamento por Linha, Pesos e Grades e ajustes de Sugestão de Produção.
+- `9e5d771` — totais, metas, cobertura, classificações e ajuste de produção no Acompanhamento.
+- `36ce26e` — tratamento da ausência da tabela de metas no ambiente de teste.
+- `a6447a6` — correção da sintaxe SQL no filtro de peças em produção.
+- `ee5c1f5` — inclusão de `SEM CLASSIFICAÇÃO` para conciliação de vendas.
+- `4d89528` — reestruturação do Raio X por referência, cor e grade; separação DPA/Atacado, cobertura e peças em produção.
+- `bb0f9b9` — ajustes de Pesos e Grades: ordem de grade, total vendido e consolidação por categoria com filtros de linha/gênero.
+- `1c73a09` — conciliação de venda bruta, desconto e venda líquida no relatório de Venda e Desconto.
+- `952829e` — agrupamento do relatório Venda e Desconto por referência e rolagem horizontal visível.
+- `90cb420` — correção do Resumo da Promoção: Status explícito, estoque sem duplicação, venda em peças, giro e venda bruta.
+- `61dabea` — estoque do Resumo da Promoção respeita a data final e exclui DPA/Atacado por padrão.
+
+### Raio X do Produto — reestruturação
+
+- Problema: a tela anterior era extensa, misturava Fábrica e Atacado e não permitia abrir o produto por cor e grade.
+- Correção: a consulta agora exige referência selecionada e a tela mostra primeiro o resumo por loja. Cada referência abre suas cores e cada cor abre os blocos por loja e grade.
+- Grade fixa: `UN, P, M, G, GG, 2, 4, 6, 8, 10`, sempre na mesma ordem e com zero para grade ausente.
+- Fábrica e Atacado: a filial 02 foi separada em `FÁBRICA (DPA)` (estoques físico e segunda qualidade) e `ATACADO` (estoque atacado), tanto em estoque quanto em venda.
+- Cobertura: incluída no resumo e no detalhe por grade.
+- Peças em produção: incluídas na API e exibidas somente na linha `FÁBRICA (DPA)`, sem duplicar o total nas lojas/Atacado.
+- Transferências: o campo continua visível, com zero, pois a fonte/vínculo de transferência ainda não foi identificado (ver auditoria de trânsito acima).
+- Validação: builds de `pcp-api` e web concluídos com sucesso.
+
+### Pesos e Grades para Produção
+
+- Grade: a ordenação foi corrigida para `UN, P, M, G, GG, 2, 4, 6, 8, 10`.
+- Total vendido: incluída uma coluna após as grades no relatório e na exportação Excel, somando a venda de todos os tamanhos exibidos.
+- Por categoria: deixou de listar cada referência individualmente. Cada linha/cartão agora consolida todos os itens da categoria selecionada, com vendas e frequência somadas por grade.
+- Filtros adicionais: no modo `Por Categoria`, `Linha` e `Gênero` estão disponíveis como filtros opcionais; ambos são aplicados também na consulta de vendas, evitando somar itens fora do recorte selecionado.
+- Validação: builds de `pcp-api` e web concluídos com sucesso.
+
+### Venda e Desconto por Classificação
+
+- Problema: os cartões misturavam conceitos diferentes: o total líquido geral aparecia como `Venda Total`, o `Total Vendido` usava outro recorte do detalhamento e o cartão de desconto mostrava `Giro` no lugar do percentual de desconto. Por isso valor, quantidade e percentual não conciliavam com o relatório 0061.
+- Correção: os indicadores do período passaram a ser calculados na mesma base de vendas do relatório virtual e exibidos separadamente como `Venda Bruta`, `Desconto Concedido`, `Venda Líquida` e `Quantidade Vendida`.
+- Percentual: abaixo do desconto agora é mostrado `desconto / venda bruta`, em vez de giro. Para o exemplo informado, a leitura esperada é venda bruta R$ 897.742,17, desconto R$ 74.740,31 (8,33%) e venda líquida R$ 756.412,17.
+- Detalhamento: a classificação analítica do SKU passou a ser escolhida uma única vez por produto; isso evita repetir uma mesma venda quando houver mais de um registro analítico para o SKU.
+- Validação: builds de `pcp-api` e web concluídos com sucesso.
+- Agrupamento posterior: o detalhamento deixou de usar SKU/código de barras como nível final. Ele agora agrupa vendas, estoque e custo por referência do produto; o cabeçalho e a exportação foram renomeados para `Referência`.
+- Navegação posterior: a área da tabela passou a forçar a rolagem horizontal e reservar espaço para sua barra, permitindo acessar as colunas finais (`Vendas` até `TT Desc Venda`) sem depender do fim da página.
+
+### Resumo da Promoção por Loja
+
+- Critério corrigido: promoção deixou de ser inferida por `Status diferente de ATIVO`. Agora, somente os Status selecionados no filtro são considerados promoção; sem Status selecionado, nenhum item é contado como promoção.
+- Estoque: a junção da classificação analítica foi limitada a um registro por SKU, evitando repetir saldos quando houver cadastro analítico duplicado. Esta era uma fonte de divergência no estoque total e no estoque em promoção.
+- Novas colunas: `Venda Promo (Peças)` e `Giro Promo`. O giro é calculado para o período selecionado como `venda promo em peças ÷ (venda promo em peças + estoque em promoção)`, sem congelar uma janela de 30 dias.
+- Venda bruta: incluída por loja e no primeiro cartão de promoção. O percentual da promoção é calculado sobre a venda bruta; a venda líquida permanece disponível em coluna separada.
+- Status no detalhamento por produto: a coluna já está presente no relatório Venda e Desconto, permitindo verificar se um item que recebeu desconto pertence ou não aos Status de promoção selecionados.
+- Validação: builds de `pcp-api` e web concluídos com sucesso.
+- Auditoria de estoque com banco configurado: em 23/08/2026, o cálculo corrigido das 12 lojas retorna 63.084 peças, contra 62.605 na versão anterior e 63.066 no Saldo Virtual. A diferença foi reduzida de 461 para 18 peças.
+- Correções adicionais: o estoque passou a usar somente snapshots até a data final do filtro, a filial 02 fica fora da visão padrão por loja (DPA/Atacado entram apenas quando escolhidos) e `stock_code` passou a ser retornado pela subconsulta que o utiliza, eliminando um possível erro SQL 500.
+- Pendência de conciliação: os 18 itens restantes precisam ser comparados com o filtro `Grupo` do Saldo Virtual mostrado no print; esse critério não é hoje exposto como classificação equivalente no relatório.
+- Todos os envios foram feitos para `origin/teste` por push normal. Houve uma solicitação posterior de force push com `--force-with-lease`, mas o remoto já estava sincronizado e nada foi sobrescrito.
+
+### Venda do Dia por Classificação — correção do erro 500
+
+- Sintoma: a tela `Venda do Dia por Classificação`, ao consultar por Categoria (e potencialmente pelas demais classificações), apresentava HTTP 500 e a mensagem de erro no quadro de vendas por loja.
+- Causa 1: a CTE que identifica o último saldo por produto, loja e depósito usava `stock_code` no filtro externo, mas não o retornava na sua lista de colunas. Isso provocava uma referência de coluna inexistente na consulta de estoque.
+- Correção 1: `stock_code` passou a ser retornado pela CTE de último saldo, mantendo o filtro que separa os depósitos de DPA e Atacado.
+- Causa 2: as consultas de venda e estoque agrupavam pelo `CASE` de mapeamento de filiais. Como os valores interpolados pelo Prisma recebem parâmetros distintos no `SELECT` e no `GROUP BY`, o PostgreSQL não reconhecia as expressões como iguais e retornava o erro `42803` (coluna deve aparecer no `GROUP BY`).
+- Correção 2: os agrupamentos passaram a usar seus campos-base: `t.branch_code, co.description` para vendas e `us.branch_code, us.stock_code` para estoque. O `CASE` continua responsável apenas por devolver DPA e Atacado como filiais separadas.
+- Validação: build do `pcp-api` concluído e chamada direta de `getVendaDia` por Categoria executada com sucesso na base configurada, retornando 15 linhas sem exceção SQL.
+
+### Acompanhamento por Linha — cobertura histórica e rolagem
+
+- `COB MESES A.A.`: o cálculo usa o estoque físico disponível no fim do período equivalente do ano anterior, dividido pela venda média mensal em peças do mesmo intervalo histórico. A média é normalizada pelos dias reais de cada mês; por exemplo, em 01–26/08, utiliza `venda em peças de 01–26/08 do ano anterior ÷ (26/31)` e arredonda a cobertura para uma casa decimal. Sem venda no período, a cobertura fica em branco.
+- Rolagem horizontal: incluída uma barra de rolagem no topo da tabela, logo após o cabeçalho do relatório. Ela é sincronizada com a tabela e substitui a necessidade de descer até o final da lista para acessar as colunas à direita.
+- Validação: build de produção do painel web concluído com sucesso.
+
+### Acompanhamento por Linha — saldo histórico e filtro de filial
+
+- Auditoria direta da tabela `prd_saldo`: para o corte de 26/08/2025 há 279.054 combinações de produto, filial e depósito no último snapshot disponível, somando 6.819 peças antes do recorte funcional do relatório. A última captura encontrada é de 26/08/2025.
+- Cobertura A.A.: com o recorte de Varejo, Categorias e 01–26/08/2026, o relatório retorna cobertura total histórica de 0,7 mês para 11.892 peças vendidas no período A.A. As categorias verificadas também têm valores diferentes de zero: Vestidos 0,4; Conjunto 0,1; Moda Praia 0,8; Camisa 0,3; Blusa 0,4; Bermuda 0,5; Regata 0,2. Portanto, não há ausência de saldo histórico na base para esse corte.
+- Filtro de filial: corrigido o fallback que, quando a seleção de filial não pertencia ao canal escolhido, substituía silenciosamente a seleção por todas as filiais. Agora a seleção explícita sempre é respeitada. Filial e canal devem ser compatíveis: por exemplo, Atacado deve ser consultado com o canal Atacado.
+- Validação do filtro: no mesmo período, Varejo sem filial retorna 80.217 peças de estoque atual; Iguatemi retorna 5.014, DPA retorna 16.339 e Atacado retorna 5.495. Build do `pcp-api` concluído com sucesso.
+
+### Acompanhamento por Linha — tabela compacta
+
+- A tabela passou a ter altura máxima de 520 px. As classificações rolam dentro da própria tabela, sem alongar a página.
+- A linha `TOTAL` ficou fixa no rodapé da área de dados, assim como o cabeçalho permanece fixo no topo. A barra de rolagem horizontal no topo continua disponível.
+- Validação: build de produção do painel web concluído com sucesso.
+
+### Auditoria complementar — peças em trânsito
+
+- Escopo conferido: saídas do DPA na operação `1510 — Saída de Transferência (CE) Custo2` e entradas de lojas na operação `1003 — Entrada de Transferência (CE) CUS`.
+- Evidência encontrada: há 2.485 saídas consolidadas do DPA, totalizando 215.757 peças. Porém, não existe tabela de transferências na base e as colunas que poderiam formar o vínculo estão vazias nas saídas: `guide_code`, `origin_destination` e `additional_information`.
+- `customer_code` não pode ser usado como destino: embora esteja presente nas saídas e entradas, cada um dos códigos de saída aparece associado a entradas de diversas filiais (até 16), portanto não identifica uma loja destinatária específica.
+- Conclusão: ainda não é possível distinguir, com segurança, uma transferência realmente em trânsito de uma entrada correspondente sem vínculo no conjunto sincronizado. Não foi criada a coluna com uma estimativa, para não contabilizar histórico como trânsito atual.
+- Fonte necessária para viabilizar: número da transferência/guia/NF compartilhado entre saída e entrada, tabela ou endpoint do TOTVS com esse relacionamento, ou a consulta usada pelo BI Industrial que já entregue as transferências pendentes.
+
+### Auditoria complementar — venda do ano anterior (01–23/08/2025)
+
+- Referência comparada: Relatório Virtual/COMFL007 R$ 797.691,13 e 12.934 peças, contra R$ 806.690,66 e 13.081 peças no Acompanhamento quando o canal é `Todos` (valor exibido arredondado como R$ 806.691). A diferença é R$ 8.999,53 e 147 peças.
+- Canal: com `Varejo` o sistema retorna R$ 705.990 e 11.060 peças; o valor de R$ 806.691 somente ocorre em `Todos`, que adiciona o Atacado. Portanto, a comparação do print está incluindo a filial 02 também como Atacado.
+- Conciliação por loja: Iguatemi confere exatamente, em R$ 63.134,47 e 953 peças. A localização inicial na filial 02/Atacado foi somente uma hipótese aritmética e não deve ser usada como regra de exclusão.
+- Validação diária com os prints recebidos: em 14/08 o sistema confere exatamente com o COMFL007, em 690 peças e R$ 41.116,92, inclusive com a operação `904 — Venda 50% Varejo (Estoque Atacado)`. Logo, essa operação não pode ser retirada do cálculo.
+- Divergência diária confirmada: em 12/08, o sistema retorna 649 peças/R$ 37.182,53 e o COMFL007 retorna 626 peças/R$ 35.944,76; diferença de 23 peças/R$ 1.237,77. Os critérios de vendedor, desconto, tabela de preço, produto acabado e código técnico/embalagem não reproduzem essa diferença.
+- Próxima evidência necessária: detalhamento/exportação do COMFL007 por empresa para 12/08/2025. Ele permitirá comparar a filial e a transação que o Virtual excluiu; sem isso, qualquer exclusão no sistema seria especulativa.
+- Revalidação após a importação do arquivo `transacoes` de 12/08: a base continua retornando 162 transações, 649 peças e R$ 37.182,53 para o sistema, enquanto o COMFL007 informado retorna 626 peças e R$ 35.944,76. A carga está disponível, mas a divergência de 23 peças/R$ 1.237,77 permanece.
+- Busca por operação em 12/08: a divergência diária está integralmente em uma transação da filial 02, operação `800 — Venda Atacado (Fábrica)`, com 23 peças e R$ 1.237,77. Ela possui guia e condição de pagamento `1`; não tem origem/destino preenchido. A filial 01/Iguatemi continua conciliada nesse dia (29 peças e R$ 1.644,23).
+- A operação `904 — Venda 50% Varejo (Estoque Atacado)` não é a causa: em 14/08 o total completo, incluindo essa operação, confere exatamente com o COMFL007.
+- No acumulado de 01–23/08, não há uma operação inteira cujo valor seja o resíduo de R$ 8.999,53. A operação 800 totaliza R$ 101.754,59 (2.006 peças) e contém vendas válidas; portanto, não foi aplicada exclusão genérica. A confirmação final exige o detalhamento do COMFL007 de 12/08 por transação/guia, para saber por que essa venda específica não é exibida no Virtual.
+
+### Auditoria complementar — Dashboard Comercial x Virtual
+
+- Período conferido: 01–23/08/2025, com a mesma regra de venda líquida (vendas menos devoluções) e as filiais do Dashboard Comercial.
+- O Dashboard Comercial totaliza R$ 827.619,20 e 14.134 peças quando Terrazo (filial 18) está incluída. O COMFL007/Virtual informado totaliza R$ 818.619,67 no mesmo escopo: diferença de R$ 8.999,53 e 147 peças.
+- Sem Terrazo, o Dashboard Comercial totaliza R$ 806.690,66 e 13.081 peças, exatamente o mesmo total já exibido no Acompanhamento por Linha; o Virtual é R$ 797.691,13 e 12.934 peças. A diferença permanece R$ 8.999,53 e 147 peças.
+- Conclusão: o Dashboard Comercial está conciliado com o Acompanhamento por Linha. A divergência está entre a base sincronizada e o COMFL007/Virtual, não entre os dois relatórios do sistema.
+
+### Raio X do Produto — totais e agrupamentos de cor
+
+- Incluída a tabela `Totais por cor`, com estoque inicial e final, transferências, vendas de varejo e atacado, cobertura e peças em produção. Cada linha soma todas as lojas selecionadas para a referência e a cor apresentada.
+- O Raio X passou a consultar `agrupamento_grupos` e `agrupamento_membros`, que são as tabelas já preenchidas pelo menu `Configurações > Agrupamento de Cores`. Não foi criada uma configuração paralela: salvar, renomear ou alterar um grupo no menu passa a refletir diretamente no relatório.
+- Quando cores configuradas pertencem ao mesmo grupo, o relatório mostra o nome do grupo e soma suas variações. As grades iguais também são consolidadas antes da exibição, evitando que uma cor do grupo substitua outra no detalhamento.
+- Validação executada com a referência `003 BB CST413`: grupos como `amarelo claro`, `vermelho` e `Azul claro` retornaram totais consolidados. Builds de produção da API PCP e do painel web concluídos com sucesso.
+
+### Raio X do Produto - layout por cor agrupada
+
+- A tabela separada de totais por cor foi removida porque repetia a referencia e deixava os cabecalhos de `REFERENCIA` e `EM PRODUCAO` com codificacao incorreta na tela.
+- Cada referencia agora aparece uma unica vez no cabecalho do seu bloco. Abaixo dela, cada linha corresponde a uma cor ou grupo de cores configurado e apresenta os totais de estoque inicial, transferencias, vendas de varejo e atacado, estoque final e pecas em producao.
+- A cor e clicavel. Ao expandi-la, o relatorio mostra somente as lojas que possuem estoque, transferencia, venda ou pecas em producao naquela cor, detalhadas por grade na ordem fixa `UN, P, M, G, GG, 2, 4, 6, 8, 10`.
+- Os novos rotulos foram escritos sem caracteres sujeitos a conversao de codificacao para eliminar o texto corrompido visto em `REFERENCIA` e `EM PRODUCAO`.
+- Validacao: o build de producao do painel web foi executado com sucesso apos a mudanca.
+
+### Venda e Desconto por Classificacao - calculo dos cards
+
+- Historico do problema: a versao inicial misturava dois universos nos cards. `Venda Total R$` vinha do total direto das transacoes do periodo, enquanto `Total Vendido` vinha da soma das linhas detalhadas do relatorio. Como a tabela detalhada descartava grupos com quantidade zero ou negativa (`HAVING SUM(qtd) > 0`), devolucoes podiam fazer o total da tabela ficar maior que o total geral e gerar percentuais acima de 100%.
+- Regra atual no codigo: os cards principais foram separados em `Venda Bruta`, `Desconto Concedido`, `Venda Liquida` e `Quantidade Vendida`, todos vindos da consulta geral (`data.gerais`), para evitar comparar total geral com subtotal filtrado da tabela.
+- Formulas atuais: `Venda Bruta` soma `ti.value` com devolucoes negativas; `Desconto Concedido` soma `ti.value - ti.net_value`, tambem com devolucoes negativas; `Venda Liquida` soma `ti.net_value` com devolucoes negativas; `Quantidade Vendida` soma as pecas com devolucoes negativas.
+- O antigo `Total Vendido` correspondia a `data.totais.ttVdaVda`, ou seja, soma da venda liquida das linhas processadas da tabela, nao ao total geral bruto do periodo.
+- Correcao tecnica encontrada durante a auditoria: a CTE `custos_sku` renomeava `pc.valor` para `custo`, mas a CTE seguinte tentava calcular `AVG(c.valor)`. Isso gerava erro SQL ao rodar o relatorio. Foi corrigido para `AVG(c.custo)`.
+- Validacao com a base configurada, periodo 01/08/2026 a 30/08/2026, classificacao por status e todas as lojas: a consulta geral retornou 19.558 pecas, venda bruta de R$ 1.132.480,51, desconto de R$ 366,83 e venda liquida de R$ 1.130.560,94. A soma das linhas detalhadas retornou R$ 1.130.351,74, diferenca de R$ 209,20 em relacao ao total geral liquido, explicada pelo recorte/agregacao da tabela.

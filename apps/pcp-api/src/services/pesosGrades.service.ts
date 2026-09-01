@@ -14,6 +14,8 @@ export interface PesosGradesFiltro {
   tipoAnalise: TipoAnalisePesosGrades;
   referencias?: string[];
   categorias?: string[];
+  linhas?: string[];
+  generos?: string[];
   dataInicio: string;
   dataFim: string;
   fatorDivisor: number;
@@ -29,6 +31,7 @@ export interface PesosGradesReferencia {
   referenceCode: string;
   descricao: string;
   tamanhos: PesosGradesTamanho[];
+  totalVendido: number;
 }
 
 export interface PesosGradesResponse {
@@ -46,6 +49,14 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 interface IdentidadeRow {
   reference_code: string;
   reference_name: string | null;
+}
+
+const ORDEM_GRADES = ['UN', 'P', 'M', 'G', 'GG', '2', '4', '6', '8', '10'];
+
+function ordemGrade(tamanho: string): number {
+  const normalizado = tamanho.trim().toUpperCase().replace('ÚNICO', 'UN').replace('UNICO', 'UN');
+  const indice = ORDEM_GRADES.indexOf(normalizado);
+  return indice < 0 ? ORDEM_GRADES.length : indice;
 }
 
 // Universo de referencias selecionado - por item (lista explicita) ou por categoria
@@ -68,13 +79,15 @@ async function getReferenciasSelecionadas(filtro: PesosGradesFiltro): Promise<Id
   const categorias = filtro.categorias || [];
   if (categorias.length === 0) return [];
   return prisma.$queryRaw<IdentidadeRow[]>`
-    SELECT a.reference_code, MIN(a.reference_name) AS reference_name
+    SELECT TRIM(a.class_categoria) AS reference_code, CONCAT('Categoria: ', TRIM(a.class_categoria)) AS reference_name
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE a.reference_code IS NOT NULL
       AND TRIM(a.class_categoria) IN (${Prisma.join(categorias)})
+      ${filtro.linhas?.length ? Prisma.sql`AND TRIM(a.class_linha) IN (${Prisma.join(filtro.linhas)})` : Prisma.empty}
+      ${filtro.generos?.length ? Prisma.sql`AND TRIM(a.class_genero) IN (${Prisma.join(filtro.generos)})` : Prisma.empty}
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
-    GROUP BY a.reference_code
+    GROUP BY TRIM(a.class_categoria)
   `;
 }
 
@@ -86,8 +99,25 @@ interface VendaRow {
 
 // Venda GERAL (atacado + varejo somados - sem filtro de canal/loja de proposito,
 // pedido explicito do spec) por referencia + tamanho, liquida de devolucao.
-async function getVendaPorReferenciaTamanho(referenceCodes: string[], dataInicio: string, dataFim: string): Promise<VendaRow[]> {
-  if (referenceCodes.length === 0) return [];
+async function getVendaPorReferenciaTamanho(filtro: PesosGradesFiltro, grupos: string[]): Promise<VendaRow[]> {
+  const { dataInicio, dataFim } = filtro;
+  if (grupos.length === 0) return [];
+  if (filtro.tipoAnalise === 'categoria') {
+    return prisma.$queryRaw<VendaRow[]>`
+      SELECT TRIM(a.class_categoria) AS reference_code, TRIM(a.size) AS size, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
+      FROM transacoes t
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      JOIN produto_analitico a ON a.product_code = ti.product_code
+      ${OPERACAO_JOIN}
+      WHERE t.transaction_date >= ${dataInicio}::date AND t.transaction_date <= ${dataFim}::date
+        AND t.status = 4 AND ${SALE_OPERATION_FILTER}
+        AND TRIM(a.class_categoria) IN (${Prisma.join(grupos)})
+        ${filtro.linhas?.length ? Prisma.sql`AND TRIM(a.class_linha) IN (${Prisma.join(filtro.linhas)})` : Prisma.empty}
+        ${filtro.generos?.length ? Prisma.sql`AND TRIM(a.class_genero) IN (${Prisma.join(filtro.generos)})` : Prisma.empty}
+        AND a.size IS NOT NULL AND TRIM(a.size) NOT IN ('', '.')
+      GROUP BY TRIM(a.class_categoria), TRIM(a.size)
+    `;
+  }
   return prisma.$queryRaw<VendaRow[]>`
     SELECT a.reference_code, TRIM(a.size) AS size, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
@@ -98,7 +128,7 @@ async function getVendaPorReferenciaTamanho(referenceCodes: string[], dataInicio
       AND t.transaction_date <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
-      AND a.reference_code IN (${Prisma.join(referenceCodes)})
+      AND a.reference_code IN (${Prisma.join(grupos)})
       AND a.size IS NOT NULL AND TRIM(a.size) NOT IN ('', '.')
     GROUP BY a.reference_code, TRIM(a.size)
   `;
@@ -111,7 +141,7 @@ export async function getPesosGrades(filtro: PesosGradesFiltro): Promise<PesosGr
 
   const identidade = await getReferenciasSelecionadas(filtro);
   const referenceCodes = identidade.map((r) => r.reference_code);
-  const vendaRows = await getVendaPorReferenciaTamanho(referenceCodes, filtro.dataInicio, filtro.dataFim);
+  const vendaRows = await getVendaPorReferenciaTamanho(filtro, referenceCodes);
 
   const vendaPorRef = new Map<string, { tamanho: string; quantidade: number }[]>();
   for (const row of vendaRows) {
@@ -130,11 +160,12 @@ export async function getPesosGrades(filtro: PesosGradesFiltro): Promise<PesosGr
           quantidadeVendida: v.quantidade,
           frequencia: Math.ceil(v.quantidade / filtro.fatorDivisor),
         }))
-        .sort((a, b) => a.tamanho.localeCompare(b.tamanho, undefined, { numeric: true }));
+        .sort((a, b) => ordemGrade(a.tamanho) - ordemGrade(b.tamanho) || a.tamanho.localeCompare(b.tamanho, undefined, { numeric: true }));
       return {
         referenceCode: r.reference_code,
         descricao: r.reference_name || r.reference_code,
         tamanhos,
+        totalVendido: tamanhos.reduce((total, tamanho) => total + tamanho.quantidadeVendida, 0),
       };
     })
     .sort((a, b) => a.referenceCode.localeCompare(b.referenceCode));

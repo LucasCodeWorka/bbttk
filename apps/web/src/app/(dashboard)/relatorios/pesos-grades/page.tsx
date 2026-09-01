@@ -44,6 +44,8 @@ export default function PesosGradesPage() {
 
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [categoriasSelecionadas, setCategoriasSelecionadas] = useState<string[]>([]);
+  const [linhasSelecionadas, setLinhasSelecionadas] = useState<string[]>([]);
+  const [generosSelecionados, setGenerosSelecionados] = useState<string[]>([]);
 
   const [referenciasSelecionadas, setReferenciasSelecionadas] = useState<PesosGradesReferenciaOpcao[]>([]);
   const [mostrarModalReferencias, setMostrarModalReferencias] = useState(false);
@@ -57,6 +59,8 @@ export default function PesosGradesPage() {
   }, [token]);
 
   const categoriasDisponiveis = useMemo(() => classificacoes.find((d) => d.chave === 'categoria')?.opcoes || [], [classificacoes]);
+  const linhasDisponiveis = useMemo(() => classificacoes.find((d) => d.chave === 'linha')?.opcoes || [], [classificacoes]);
+  const generosDisponiveis = useMemo(() => classificacoes.find((d) => d.chave === 'genero')?.opcoes || [], [classificacoes]);
 
   function removerReferencia(referenceCode: string) {
     setReferenciasSelecionadas((prev) => prev.filter((r) => r.referenceCode !== referenceCode));
@@ -93,6 +97,8 @@ export default function PesosGradesPage() {
         tipoAnalise,
         referencias: tipoAnalise === 'item' ? referenciasSelecionadas.map((r) => r.referenceCode) : undefined,
         categorias: tipoAnalise === 'categoria' ? categoriasSelecionadas : undefined,
+        linhas: tipoAnalise === 'categoria' ? linhasSelecionadas : undefined,
+        generos: tipoAnalise === 'categoria' ? generosSelecionados : undefined,
         dataInicio,
         dataFim,
         fatorDivisor,
@@ -105,7 +111,7 @@ export default function PesosGradesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, tipoAnalise, referenciasSelecionadas, categoriasSelecionadas, dataInicio, dataFim, fatorDivisorStr, showToast]);
+  }, [token, tipoAnalise, referenciasSelecionadas, categoriasSelecionadas, linhasSelecionadas, generosSelecionados, dataInicio, dataFim, fatorDivisorStr, showToast]);
 
   function handleExportExcel() {
     if (!data || data.referencias.length === 0) return;
@@ -115,6 +121,7 @@ export default function PesosGradesPage() {
         const columns: ExcelColumn[] = [
           { key: 'linha', header: '', width: 18, type: 'text' },
           ...ref.tamanhos.map((t) => ({ key: t.tamanho, header: t.tamanho, width: 8, type: 'number' as const })),
+          { key: 'totalVendido', header: 'TOTAL VENDIDO', width: 14, type: 'number' as const },
         ];
         const linhaQtd: Record<string, unknown> = { linha: 'Qtde Vendida' };
         const linhaFreq: Record<string, unknown> = { linha: 'Frequência/Grade' };
@@ -122,6 +129,7 @@ export default function PesosGradesPage() {
           linhaQtd[t.tamanho] = t.quantidadeVendida;
           linhaFreq[t.tamanho] = t.frequencia;
         }
+        linhaQtd.totalVendido = ref.totalVendido;
         return {
           sheetName: ref.referenceCode.slice(0, 28),
           title: `${ref.referenceCode} - ${ref.descricao}`,
@@ -147,7 +155,7 @@ export default function PesosGradesPage() {
         <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">PCP</p>
         <h1 className="text-2xl font-bold text-gray-900">Pesos e Grades para Produção</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Calcula a frequência de corte por tamanho de cada referência a partir da venda real (atacado + varejo) do período
+          Calcula a frequência de corte por tamanho, por referência ou pelo conjunto dos itens de uma categoria, a partir da venda real (atacado + varejo) do período
         </p>
       </div>
 
@@ -205,13 +213,27 @@ export default function PesosGradesPage() {
             )}
           </div>
         ) : (
-          <div className="mb-4">
+          <div className="mb-4 flex flex-wrap gap-3">
             <ClassificacaoMultiSelect
               label="Categorias"
               options={categoriasDisponiveis.map((c) => ({ value: c.valor, label: c.valor, meta: formatNumber(c.qtd_skus) }))}
               selected={categoriasSelecionadas}
               onChange={setCategoriasSelecionadas}
               className="w-72"
+            />
+            <ClassificacaoMultiSelect
+              label="Linha (opcional)"
+              options={linhasDisponiveis.map((c) => ({ value: c.valor, label: c.valor, meta: formatNumber(c.qtd_skus) }))}
+              selected={linhasSelecionadas}
+              onChange={setLinhasSelecionadas}
+              className="w-60"
+            />
+            <ClassificacaoMultiSelect
+              label="Gênero (opcional)"
+              options={generosDisponiveis.map((c) => ({ value: c.valor, label: c.valor, meta: formatNumber(c.qtd_skus) }))}
+              selected={generosSelecionados}
+              onChange={setGenerosSelecionados}
+              className="w-60"
             />
           </div>
         )}
@@ -250,7 +272,7 @@ export default function PesosGradesPage() {
           <Card key={ref.referenceCode}>
             <CardHeader>
               <CardTitle>
-                REF. <span className="text-[var(--bbtk-purple)]">{ref.referenceCode}</span> — {ref.descricao}
+                {tipoAnalise === 'categoria' ? 'CATEGORIA' : 'REF.'} <span className="text-[var(--bbtk-purple)]">{ref.referenceCode}</span> — {ref.descricao}
               </CardTitle>
             </CardHeader>
 
@@ -264,6 +286,7 @@ export default function PesosGradesPage() {
                           {t.tamanho}
                         </th>
                       ))}
+                      <th className="text-center px-3 py-1.5 text-gray-500 font-medium min-w-[90px]">Total Vendido</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -274,6 +297,7 @@ export default function PesosGradesPage() {
                           {formatNumber(t.quantidadeVendida)}
                         </td>
                       ))}
+                      <td className="text-center px-3 py-1.5 font-semibold text-gray-700">{formatNumber(ref.totalVendido)}</td>
                     </tr>
                     <tr className="bg-purple-50">
                       <td className="px-3 py-1.5 font-semibold whitespace-nowrap">Frequência / Grade</td>
@@ -282,6 +306,7 @@ export default function PesosGradesPage() {
                           {t.frequencia}
                         </td>
                       ))}
+                      <td className="text-center px-3 py-1.5 text-gray-400">—</td>
                     </tr>
                   </tbody>
                 </table>

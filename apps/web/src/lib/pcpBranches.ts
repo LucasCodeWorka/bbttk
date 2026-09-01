@@ -1,9 +1,11 @@
 // Espelha apps/pcp-api/src/config/constants.ts (RELATORIO_BASE_BRANCH_ORDER) - mesma
-// ordem das 13 colunas do Relatorio Base, usada tanto no configurador (cobertura ideal
+// ordem das 14 colunas do Relatorio Base, usada tanto no configurador (cobertura ideal
 // por loja) quanto na tela do relatorio.
+export const DPA_BRANCH_CODE = -1;
 export const ATACADO_BRANCH_CODE = -2;
 
 export const RELATORIO_BASE_BRANCH_ORDER: { branchCode: number; label: string }[] = [
+  { branchCode: DPA_BRANCH_CODE, label: 'DPA' },
   { branchCode: ATACADO_BRANCH_CODE, label: 'ATACADO' },
   { branchCode: 1, label: 'IGUATEMI' },
   { branchCode: 13, label: 'EUSÉBIO' },

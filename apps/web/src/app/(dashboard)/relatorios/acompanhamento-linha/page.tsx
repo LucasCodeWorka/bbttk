@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -26,6 +26,8 @@ import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 const TIPO_CLASSIFICACAO_DIARIO_OPTIONS: { value: TipoClassificacaoDiario; label: string }[] = [
   { value: 'categoria', label: 'Categoria' },
   { value: 'linha', label: 'Linha' },
+  { value: 'colecao', label: 'Coleção' },
+  { value: 'status', label: 'Status' },
   { value: 'genero', label: 'Gênero' },
 ];
 
@@ -123,6 +125,9 @@ export default function AcompanhamentoLinhaPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const [mostrarModalMetas, setMostrarModalMetas] = useState(false);
+  const tabelaScrollRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
 
   useEffect(() => {
     if (!token) return;
@@ -178,6 +183,45 @@ export default function AcompanhamentoLinhaPage() {
     });
   }, [data, sortKey, sortDir]);
 
+  useEffect(() => {
+    const tabela = tabelaScrollRef.current;
+    const topo = topScrollRef.current;
+    if (!tabela || !topo) return;
+
+    let frame = 0;
+    const atualizarLargura = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        setScrollWidth(tabela.scrollWidth);
+        topo.scrollLeft = tabela.scrollLeft;
+      });
+    };
+    const sincronizarTopo = () => {
+      topo.scrollLeft = tabela.scrollLeft;
+    };
+
+    tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
+    atualizarLargura();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(atualizarLargura) : null;
+    resizeObserver?.observe(tabela);
+    window.addEventListener('resize', atualizarLargura);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      tabela.removeEventListener('scroll', sincronizarTopo);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', atualizarLargura);
+    };
+  }, [sortedLinhas.length, isLoading]);
+
+  function sincronizarScrollPeloTopo() {
+    const topo = topScrollRef.current;
+    const tabela = tabelaScrollRef.current;
+    if (!topo || !tabela) return;
+    tabela.scrollLeft = topo.scrollLeft;
+  }
+
   function handleExportExcel() {
     if (!data || sortedLinhas.length === 0) return;
     setExportando(true);
@@ -185,6 +229,8 @@ export default function AcompanhamentoLinhaPage() {
       const columns: ExcelColumn[] = [
         { key: 'classificacao', header: TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label.toUpperCase() || 'CLASSIFICACAO', width: 22, type: 'text' },
         { key: 'vendaValorAtual', header: 'VENDA R$ ATUAL', width: 14, type: 'currency' },
+        { key: 'metaPeriodo', header: 'META R$ PERÍODO', width: 15, type: 'currency' },
+        { key: 'atingimentoMetaPercent', header: 'ATING. META %', width: 14, type: 'number' },
         { key: 'vendaValorAnoAnterior', header: 'VENDA R$ A.A.', width: 14, type: 'currency' },
         { key: 'evolucaoValorPercent', header: 'EVOL R$ %', width: 12, type: 'number' },
         { key: 'vendaPecasAtual', header: 'VENDA PÇ ATUAL', width: 13, type: 'number' },
@@ -207,8 +253,17 @@ export default function AcompanhamentoLinhaPage() {
           classificacao: `TOTAL (${sortedLinhas.length})`,
           vendaValorAtual: data.kpis.vendaValorTotal,
           vendaValorAnoAnterior: data.kpis.vendaValorAnoAnteriorTotal,
-          estoqueFisico: data.kpis.estoqueFisicoTotal,
-          pecasEmProducao: data.kpis.pecasEmProducaoTotal,
+          evolucaoValorPercent: data.totais.evolucaoValorPercent ?? '',
+          vendaPecasAtual: data.totais.vendaPecasAtual,
+          vendaPecasAnoAnterior: data.totais.vendaPecasAnoAnterior,
+          evolucaoPecasPercent: data.totais.evolucaoPecasPercent ?? '',
+          participacaoPercent: data.totais.participacaoPercent,
+          metaPeriodo: data.totais.metaPeriodo ?? '',
+          atingimentoMetaPercent: data.totais.atingimentoMetaPercent ?? '',
+          coberturaMesesAtual: data.totais.coberturaMesesAtual ?? '',
+          coberturaMesesAnoAnterior: data.totais.coberturaMesesAnoAnterior ?? '',
+          estoqueFisico: data.totais.estoqueFisico,
+          pecasEmProducao: data.totais.pecasEmProducao,
         },
       });
       showToast('Excel exportado com sucesso', 'success');
@@ -226,7 +281,7 @@ export default function AcompanhamentoLinhaPage() {
           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">PCP</p>
           <h1 className="text-2xl font-bold text-gray-900">Acompanhamento por Linha</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Venda por categoria/linha/gênero comparada com o ano anterior, cobertura, estoque e peças em produção
+            Venda por classificação comparada com o ano anterior, meta, cobertura, estoque e peças em produção
           </p>
         </div>
         <Button variant="secondary" onClick={() => setMostrarModalMetas(true)}>
@@ -237,10 +292,12 @@ export default function AcompanhamentoLinhaPage() {
       <Card className="border-l-4 border-l-[var(--bbtk-yellow)] bg-yellow-50/60">
         <p className="text-sm text-gray-700">
           <strong>Como funciona:</strong> Venda em R$ e em peças do período selecionado comparada com o mesmo
-          intervalo de dias do ano anterior, por categoria/linha/gênero. Cobertura é sempre em meses (estoque ÷
-          venda média mensal do período) - a do ano anterior usa o estoque e a venda de então, não o de hoje.
-          Estoque é o físico disponível na loja (código 1) - <strong>estoque em trânsito não é sincronizado
-          hoje</strong>, então não entra na conta.
+          intervalo de dias do ano anterior. A meta é proporcional aos dias selecionados: meta mensal ÷ dias do
+          mês × dias do período; sem meta cadastrada, fica em branco. Cobertura é sempre em meses, normalizada pelos
+          dias reais de cada mês; a do ano anterior usa o estoque e a venda de então, não o de hoje. Estoque considera
+          o saldo físico da loja; para DPA, inclui físico e segunda qualidade, e para Atacado, somente o estoque atacado.
+          Vendas de produtos sem o valor da classificação escolhida aparecem em <strong>SEM CLASSIFICAÇÃO</strong>, para
+          que os totais conciliem com o dashboard comercial.
         </p>
       </Card>
 
@@ -305,12 +362,17 @@ export default function AcompanhamentoLinhaPage() {
 
         {erro && <div className="text-red-600 text-sm mb-4">Erro: {erro}</div>}
 
-        <div className="overflow-x-auto">
-          <Table tableClassName="text-sm min-w-[1400px]">
+        <div ref={topScrollRef} onScroll={sincronizarScrollPeloTopo} className="mb-2 overflow-x-auto overflow-y-hidden">
+          <div style={{ width: scrollWidth || '100%', height: 1 }} />
+        </div>
+
+        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[520px] overflow-auto" tableClassName="text-sm min-w-[1650px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
                 <ThSortPcp label={TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label.toUpperCase() || ''} sortKeyName="classificacao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="left" />
                 <ThSortPcp label="VENDA R$" sortKeyName="vendaValorAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Venda em R$, mês atual até ontem" />
+                <ThSortPcp label="META R$" sortKeyName="metaPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Meta mensal proporcional aos dias selecionados" />
+                <ThSortPcp label="ATING. META" sortKeyName="atingimentoMetaPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Percentual realizado da meta proporcional do período" />
                 <ThSortPcp label="VENDA R$ A.A." sortKeyName="vendaValorAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Venda em R$, mesmo período do ano anterior" />
                 <ThSortPcp label="EVOL R$" sortKeyName="evolucaoValorPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Crescimento em R$ vs ano anterior" />
                 <ThSortPcp label="VENDA PÇ" sortKeyName="vendaPecasAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Venda em peças, mês atual até ontem" />
@@ -326,17 +388,22 @@ export default function AcompanhamentoLinhaPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={12} align="center" className="py-8"><div className="animate-pulse text-gray-400">Carregando...</div></TableCell>
+                  <TableCell colSpan={14} align="center" className="py-8"><div className="animate-pulse text-gray-400">Carregando...</div></TableCell>
                 </TableRow>
               ) : sortedLinhas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} align="center" className="py-8 text-gray-500">Nenhum dado encontrado para os filtros selecionados</TableCell>
+                  <TableCell colSpan={14} align="center" className="py-8 text-gray-500">Nenhum dado encontrado para os filtros selecionados</TableCell>
                 </TableRow>
-              ) : (
-                sortedLinhas.map((linha) => (
+              ) : data ? (
+                <>
+                  {sortedLinhas.map((linha) => (
                   <TableRow key={linha.classificacao} className="hover:bg-gray-50 transition-colors">
                     <TableCell className="font-medium">{linha.classificacao}</TableCell>
                     <TableCell align="right">{formatMoney(linha.vendaValorAtual)}</TableCell>
+                    <TableCell align="right">{linha.metaPeriodo !== null ? formatMoney(linha.metaPeriodo) : '-'}</TableCell>
+                    <TableCell align="right" className={linha.atingimentoMetaPercent !== null && linha.atingimentoMetaPercent < 100 ? 'text-red-600' : 'text-green-600'}>
+                      {linha.atingimentoMetaPercent !== null ? `${linha.atingimentoMetaPercent.toFixed(1)}%` : '-'}
+                    </TableCell>
                     <TableCell align="right">{formatMoney(linha.vendaValorAnoAnterior)}</TableCell>
                     <TableCell align="right" className={linha.evolucaoValorPercent !== null && linha.evolucaoValorPercent < 0 ? 'text-red-600' : 'text-green-600'}>
                       {formatPercentDelta(linha.evolucaoValorPercent)}
@@ -352,11 +419,27 @@ export default function AcompanhamentoLinhaPage() {
                     <TableCell align="right">{formatNumber(linha.estoqueFisico)}</TableCell>
                     <TableCell align="right">{formatNumber(linha.pecasEmProducao)}</TableCell>
                   </TableRow>
-                ))
-              )}
+                  ))}
+                  <TableRow className="sticky bottom-0 z-20 bg-gray-100 font-bold border-t-2 border-gray-300 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
+                    <TableCell>TOTAL ({sortedLinhas.length})</TableCell>
+                    <TableCell align="right">{formatMoney(data.totais.vendaValorAtual)}</TableCell>
+                    <TableCell align="right">{data.totais.metaPeriodo !== null ? formatMoney(data.totais.metaPeriodo) : '-'}</TableCell>
+                    <TableCell align="right">{data.totais.atingimentoMetaPercent !== null ? `${data.totais.atingimentoMetaPercent.toFixed(1)}%` : '-'}</TableCell>
+                    <TableCell align="right">{formatMoney(data.totais.vendaValorAnoAnterior)}</TableCell>
+                    <TableCell align="right">{formatPercentDelta(data.totais.evolucaoValorPercent)}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.vendaPecasAtual)}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.vendaPecasAnoAnterior)}</TableCell>
+                    <TableCell align="right">{formatPercentDelta(data.totais.evolucaoPecasPercent)}</TableCell>
+                    <TableCell align="right">{data.totais.participacaoPercent.toFixed(1)}%</TableCell>
+                    <TableCell align="right">{data.totais.coberturaMesesAtual !== null ? data.totais.coberturaMesesAtual.toFixed(1) : '-'}</TableCell>
+                    <TableCell align="right">{data.totais.coberturaMesesAnoAnterior !== null ? data.totais.coberturaMesesAnoAnterior.toFixed(1) : '-'}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.estoqueFisico)}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.pecasEmProducao)}</TableCell>
+                  </TableRow>
+                </>
+              ) : null}
             </TableBody>
           </Table>
-        </div>
       </Card>
 
       <ModalCadastrarMetas isOpen={mostrarModalMetas} onClose={() => setMostrarModalMetas(false)} />
@@ -369,6 +452,7 @@ const TIPO_META_OPTIONS: { value: string; label: string }[] = [
   { value: 'linha', label: 'Linha' },
   { value: 'genero', label: 'Gênero' },
   { value: 'colecao', label: 'Coleção' },
+  { value: 'status', label: 'Status' },
 ];
 
 function ModalCadastrarMetas({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
