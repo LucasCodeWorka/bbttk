@@ -20,7 +20,7 @@ export interface RaioXFiltro {
 export interface RaioXGrade {
   tamanho: string;
   estoqueInicial: number;
-  transferencias: number;
+  transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
   vendasVarejo: number;
   vendasAtacado: number;
   estoqueFinal: number;
@@ -34,7 +34,7 @@ export interface RaioXLoja {
   grades: RaioXGrade[];
   totais: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
@@ -54,7 +54,7 @@ export interface RaioXProduto {
   lojas: RaioXLoja[];
   totalGeral: {
     estoqueInicial: number;
-    transferencias: number;
+    transferencias: number; // Movimento de estoque reconciliado: estoqueFinal - estoqueInicial + vendas
     vendasVarejo: number;
     vendasAtacado: number;
     estoqueFinal: number;
@@ -160,21 +160,6 @@ async function getEstoquesEmLote(
   }
 
   return result;
-}
-
-/**
- * Busca as transferências de um produto em um período.
- * Transferências são movimentações de entrada/saída entre lojas.
- */
-async function getTransferencias(
-  productCode: number,
-  branchCode: number,
-  dataInicio: string,
-  dataFim: string
-): Promise<number> {
-  // TODO: Implementar lógica de transferências quando soubermos onde isso está no banco
-  // Por enquanto retorna 0
-  return 0;
 }
 
 /**
@@ -455,7 +440,6 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
       // Para cada tamanho do produto
       for (const produto of produtosGrupo) {
         const estoqueInicial = estoquesInicio.get(`${produto.product_sku}|${local.branchCode}`) || 0;
-        const transferencias = 0; // TODO: implementar quando soubermos onde está
 
         // Busca vendas no Map
         let vendasVarejo = vendas.get(`${produto.product_code}|${local.branchCode}|varejo`) || 0;
@@ -469,6 +453,9 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         }
 
         const estoqueFinal = estoquesFim.get(`${produto.product_sku}|${local.branchCode}`) || 0;
+        // Mantém o nome do campo por compatibilidade com o contrato atual da API,
+        // mas o valor representa o movimento necessário para reconciliar o saldo.
+        const transferencias = estoqueFinal - estoqueInicial + vendasVarejo + vendasAtacado;
         const tamanho = produto.size || '-';
         const grade = gradesPorTamanho.get(tamanho) || {
           tamanho,
