@@ -168,8 +168,10 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
 
   const rows = await prisma.$queryRaw<SaldoFilialRow[]>`
     WITH ultimo_saldo AS (
+      -- stock_code precisa entrar na lista de saida: a CTE seguinte classifica
+      -- DPA vs Atacado por ele (sem isso: column "stock_code" does not exist).
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-        product_sku, branch_code, stock
+        product_sku, branch_code, stock_code, stock
       FROM prd_saldo
       WHERE 1=1
         AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
@@ -182,15 +184,12 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
           WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
           WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
           ELSE branch_code
-        END AS branch_code,
+        END::int AS branch_code,
         SUM(COALESCE(stock, 0)) AS estoque
       FROM ultimo_saldo
-      GROUP BY product_sku,
-        CASE
-          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-          ELSE branch_code
-        END
+      -- Agrupa por POSICAO: repetir o CASE cria parametros posicionais novos e o
+      -- Postgres passa a exigir branch_code no GROUP BY.
+      GROUP BY 1, 2
     )
     SELECT a.reference_code, s.branch_code, SUM(COALESCE(s.estoque, 0)) AS estoque
     FROM produto_analitico a

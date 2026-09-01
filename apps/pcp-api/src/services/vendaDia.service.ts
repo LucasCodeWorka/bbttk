@@ -142,7 +142,7 @@ async function getVendasPorPeriodo(
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
       COUNT(DISTINCT t.transaction_code) AS transacoes
     FROM transacoes t
@@ -154,10 +154,13 @@ async function getVendasPorPeriodo(
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
-    -- Agrupa pelos campos-base. Os parâmetros interpolados no CASE do SELECT
-    -- e do GROUP BY recebem posições distintas no PostgreSQL, impedindo que o
-    -- banco reconheça as duas expressões como equivalentes.
-    GROUP BY t.branch_code, co.description
+    -- Agrupa por POSICAO. Repetir o CASE nao funciona (cada parametro interpolado
+    -- recebe uma posicao nova e o Postgres nao reconhece as duas expressoes como
+    -- equivalentes), mas agrupar por t.branch_code + co.description tambem nao:
+    -- devolve uma linha por descricao de operacao e quem consome usa Map.set(),
+    -- que sobrescreve em vez de somar - so a ultima operacao de cada filial
+    -- sobrevivia (116 pecas no lugar de 20.476 em ago/2026).
+    GROUP BY 1
   `;
 }
 
@@ -180,7 +183,7 @@ async function getEstoquePorFilial(
         WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
         WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
         ELSE us.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -190,12 +193,11 @@ async function getEstoquePorFilial(
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
-    GROUP BY
-      CASE
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-        ELSE us.branch_code
-      END
+    -- Agrupa por POSICAO: repetir o CASE aqui cria parametros posicionais novos e o
+    -- Postgres passa a exigir us.branch_code no GROUP BY. Agrupar pelas colunas-base
+    -- (branch_code, stock_code) roda, mas devolve DPA quebrada em uma linha por
+    -- stock_code - e quem consome usa Map.set(), que sobrescreve em vez de somar.
+    GROUP BY 1
   `;
 }
 
