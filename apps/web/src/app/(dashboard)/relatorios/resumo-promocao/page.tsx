@@ -220,7 +220,7 @@ export default function ResumoPromocaoPage() {
         { header: 'Venda Bruta R$', key: 'vendaBrutaGeralPeriodo', width: 18, type: 'currency' },
         { header: 'Venda Líquida R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
         { header: '% Promo / Bruta', key: 'participacaoPromoPct', width: 20, type: 'percent' },
-        { header: 'Giro Promo', key: 'giroPromoPct', width: 14, type: 'percent' },
+        { header: 'Giro Período', key: 'giroPromoPct', width: 14, type: 'percent' },
         { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, type: 'number' },
         { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, type: 'number' },
         { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
@@ -370,7 +370,7 @@ export default function ResumoPromocaoPage() {
                 <ThSortPcp label="Venda Bruta R$" sortKeyName="vendaBrutaGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Líquida R$" sortKeyName="vendaTotalGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="% Promo / Bruta" sortKeyName="participacaoPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda líquida de promoção dividida pela venda bruta" />
-                <ThSortPcp label="Giro Promo" sortKeyName="giroPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda em peças de promoção do período ÷ (venda em peças + estoque em promoção)" />
+                <ThSortPcp label="Giro Período" sortKeyName="giroPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda em peças de promoção do período selecionado ÷ (venda em peças de promoção do período selecionado + estoque final em promoção)" />
                 <ThSortPcp label="Estoque Promo" sortKeyName="estoqueFinalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final em promoção (peças)" />
                 <ThSortPcp label="Estoque Total" sortKeyName="estoqueFinalGeralPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final total (peças)" />
                 <ThSortPcp label="% Estoque Promo" sortKeyName="participacaoEstoquePromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Participação do estoque em promoção" />
