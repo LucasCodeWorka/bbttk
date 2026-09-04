@@ -1387,6 +1387,7 @@ export interface ResumoPromocaoFiltro {
 export interface ResumoPromocaoLojaRow {
   branchCode: number;
   branchName: string;
+  statusPromocao: string | null;
   vendaTotalPromo: number;
   vendaPromoPecas: number;
   vendaTotalGeralPeriodo: number;

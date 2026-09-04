@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -156,6 +157,7 @@ export default function ResumoPromocaoPage() {
     switch (key) {
       case 'branchCode': return row.branchCode;
       case 'branchName': return row.branchName;
+      case 'statusPromocao': return row.statusPromocao || '';
       case 'vendaTotalPromo': return row.vendaTotalPromo;
       case 'vendaPromoPecas': return row.vendaPromoPecas;
       case 'vendaTotalGeralPeriodo': return row.vendaTotalGeralPeriodo;
@@ -212,12 +214,13 @@ export default function ResumoPromocaoPage() {
     try {
       const columns: ExcelColumn[] = [
         { header: 'Loja', key: 'branchName', width: 30 },
+        { header: 'Status', key: 'statusPromocao', width: 35 },
         { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, type: 'currency' },
         { header: 'Venda Promoção (Peças)', key: 'vendaPromoPecas', width: 20, type: 'number' },
         { header: 'Venda Bruta R$', key: 'vendaBrutaGeralPeriodo', width: 18, type: 'currency' },
         { header: 'Venda Líquida R$', key: 'vendaTotalGeralPeriodo', width: 18, type: 'currency' },
         { header: '% Promo / Bruta', key: 'participacaoPromoPct', width: 20, type: 'percent' },
-        { header: 'Giro Promo', key: 'giroPromoPct', width: 14, type: 'percent' },
+        { header: 'Giro Período', key: 'giroPromoPct', width: 14, type: 'percent' },
         { header: 'Estoque Promoção', key: 'estoqueFinalPromo', width: 18, type: 'number' },
         { header: 'Estoque Total', key: 'estoqueFinalGeralPecas', width: 15, type: 'number' },
         { header: '% Participação Estoque', key: 'participacaoEstoquePromoPct', width: 22, type: 'percent' },
@@ -295,21 +298,16 @@ export default function ResumoPromocaoPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status Promoção</label>
-            <select
-              multiple
-              value={statusPromoSelecionados}
-              onChange={(e) => setStatusPromoSelecionados(
-                Array.from(e.target.selectedOptions, opt => opt.value)
-              )}
-              className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--bbtk-purple)] focus:border-transparent"
-            >
-              {statusOpcoes.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <ClassificacaoMultiSelect
+              label="Status Promoção"
+              options={statusOpcoes}
+              selected={statusPromoSelecionados}
+              onChange={setStatusPromoSelecionados}
+              className="w-full"
+              emptyLabel="Nenhum status"
+            />
             <p className="text-xs text-gray-500 mt-1">
-              Ctrl+click para múltipla seleção. Se nenhum status for escolhido, o relatório não considera itens como promoção.
+              Se nenhum status for escolhido, o relatório não considera itens como promoção.
             </p>
           </div>
         </div>
@@ -366,12 +364,13 @@ export default function ResumoPromocaoPage() {
             <TableHead>
               <TableRow>
                 <ThSortPcp label="Loja" sortKeyName="branchName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                <ThSortPcp label="Status" sortKeyName="statusPromocao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" title="Status de classificação dos produtos considerados como promoção" />
                 <ThSortPcp label="Venda Promoção R$" sortKeyName="vendaTotalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Promo (Peças)" sortKeyName="vendaPromoPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Bruta R$" sortKeyName="vendaBrutaGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Líquida R$" sortKeyName="vendaTotalGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="% Promo / Bruta" sortKeyName="participacaoPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda líquida de promoção dividida pela venda bruta" />
-                <ThSortPcp label="Giro Promo" sortKeyName="giroPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda em peças de promoção do período ÷ (venda em peças + estoque em promoção)" />
+                <ThSortPcp label="Giro Período" sortKeyName="giroPromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Venda em peças de promoção do período selecionado ÷ (venda em peças de promoção do período selecionado + estoque final em promoção)" />
                 <ThSortPcp label="Estoque Promo" sortKeyName="estoqueFinalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final em promoção (peças)" />
                 <ThSortPcp label="Estoque Total" sortKeyName="estoqueFinalGeralPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Estoque final total (peças)" />
                 <ThSortPcp label="% Estoque Promo" sortKeyName="participacaoEstoquePromoPct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Participação do estoque em promoção" />
@@ -380,13 +379,13 @@ export default function ResumoPromocaoPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={11} align="center" className="py-8 text-gray-500">
                     Carregando...
                   </TableCell>
                 </TableRow>
               ) : !data?.rows.length ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={11} align="center" className="py-8 text-gray-500">
                     Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
                   </TableCell>
                 </TableRow>
@@ -395,6 +394,9 @@ export default function ResumoPromocaoPage() {
                   {sortedRows.map((row) => (
                     <TableRow key={row.branchCode} className="hover:bg-gray-50">
                       <TableCell className="font-medium">{row.branchName}</TableCell>
+                      <TableCell className="max-w-[260px] truncate" title={row.statusPromocao || undefined}>
+                        {row.statusPromocao || '-'}
+                      </TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaTotalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(row.vendaPromoPecas)}</TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaBrutaGeralPeriodo)}</TableCell>
@@ -414,6 +416,7 @@ export default function ResumoPromocaoPage() {
                   {totais && (
                     <TableRow className="bg-gray-100 font-semibold">
                       <TableCell>TOTAL</TableCell>
+                      <TableCell>-</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaTotalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(totais.vendaPromoPecas)}</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaBrutaGeralPeriodo)}</TableCell>

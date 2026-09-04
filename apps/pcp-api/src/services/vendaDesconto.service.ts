@@ -82,6 +82,7 @@ export interface VendaDescontoResponse {
 export interface ResumoPromocaoLojaRow {
   branchCode: number;
   branchName: string;
+  statusPromocao: string | null;
   vendaTotalPromo: number;
   vendaPromoPecas: number;
   vendaTotalGeralPeriodo: number;
@@ -150,6 +151,15 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   const branchFilter = buildBranchFilter(branches);
   const branchFilterPs = buildBranchFilter(branches, 'ps');
   const classFilter = buildClassificacaoFilter(classificacao, itensClassificacao);
+  const referenciaUltimoNivel = Prisma.sql`
+    COALESCE(
+      NULLIF(TRIM(a.last_reference_code), ''),
+      NULLIF(TRIM(p.last_reference_code), ''),
+      NULLIF(TRIM(a.reference_code), ''),
+      NULLIF(TRIM(p.reference_code), ''),
+      p.product_code::text
+    )
+  `;
 
   // Query principal: vendas com desconto por produto
   // PDV Original = ti.value (preço cheio antes do desconto)
@@ -169,11 +179,12 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
     vendas: Decimal;
     estoque_fim: Decimal;
     tt_vda_vda: Decimal;
+    tt_vda_bruta_desconto: Decimal;
     tt_desconto_venda: Decimal;
   }>>`
     WITH vendas_periodo AS (
       SELECT
-        COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo,
+        ${referenciaUltimoNivel} AS codigo,
         COALESCE(a.reference_name, p.reference_name, p.product_name, p.product_sku) AS descricao,
         TRIM(a.class_categoria) AS categoria,
         TRIM(a.class_linha) AS linha,
@@ -200,11 +211,19 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
           THEN SUM(COALESCE(ti.net_value, ti.value, 0)) / NULLIF(SUM(ABS(${QUANTIDADE_COM_SINAL})), 0)
           ELSE 0
         END AS pdv_atual,
-        -- Desconto total concedido
+        -- Base bruta das vendas usada para percentual de desconto concedido
         SUM(
           CASE
-            WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0))
-            ELSE COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0)
+            WHEN ${IS_VENDA} THEN COALESCE(ti.value, 0)
+            ELSE 0
+          END
+        ) AS tt_vda_bruta_desconto,
+        -- Desconto total concedido: somente vendas. Devolucoes nao entram no desconto
+        -- ofertado e acrescimos (net_value > value) nao devem gerar desconto negativo.
+        SUM(
+          CASE
+            WHEN ${IS_VENDA} THEN GREATEST(COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0), 0)
+            ELSE 0
           END
         ) AS tt_desconto_venda
       FROM transacoes t
@@ -213,7 +232,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       -- Há SKUs com mais de um registro analítico. A seleção lateral garante
       -- uma única classificação por item e impede duplicar venda/desconto.
       LEFT JOIN LATERAL (
-        SELECT reference_code, reference_name, class_categoria, class_linha, class_status, class_colecao
+        SELECT reference_code, last_reference_code, reference_name, class_categoria, class_linha, class_status, class_colecao
         FROM produto_analitico a
         WHERE a.product_sku = p.product_sku
         ORDER BY a.product_code
@@ -227,7 +246,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
         AND ${branchFilter}
         AND ${classFilter}
       GROUP BY
-        COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku),
+        ${referenciaUltimoNivel},
         COALESCE(a.reference_name, p.reference_name, p.product_name, p.product_sku),
         a.class_categoria, a.class_linha, a.class_status, a.class_colecao
       HAVING SUM(${QUANTIDADE_COM_SINAL}) > 0
@@ -241,14 +260,14 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       ORDER BY ps.product_sku, ps.captured_at DESC
     ),
     estoque_atual AS (
-      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, SUM(e.estoque) AS estoque
+      SELECT ${referenciaUltimoNivel} AS codigo, SUM(e.estoque) AS estoque
       FROM estoque_sku e
       JOIN produtos p ON p.product_sku = e.product_sku
       LEFT JOIN LATERAL (
-        SELECT reference_code FROM produto_analitico a
+        SELECT reference_code, last_reference_code FROM produto_analitico a
         WHERE a.product_sku = p.product_sku ORDER BY a.product_code LIMIT 1
       ) a ON TRUE
-      GROUP BY COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku)
+      GROUP BY ${referenciaUltimoNivel}
     ),
     custos_sku AS (
       SELECT DISTINCT ON (pc.product_code)
@@ -259,14 +278,14 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       ORDER BY pc.product_code, pc.synced_at DESC
     ),
     custos AS (
-      SELECT COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku) AS codigo, AVG(c.custo) AS custo
+      SELECT ${referenciaUltimoNivel} AS codigo, AVG(c.custo) AS custo
       FROM custos_sku c
       JOIN produtos p ON p.product_code = c.product_code
       LEFT JOIN LATERAL (
-        SELECT reference_code FROM produto_analitico a
+        SELECT reference_code, last_reference_code FROM produto_analitico a
         WHERE a.product_sku = p.product_sku ORDER BY a.product_code LIMIT 1
       ) a ON TRUE
-      GROUP BY COALESCE(NULLIF(TRIM(a.reference_code), ''), p.product_sku)
+      GROUP BY ${referenciaUltimoNivel}
     )
     SELECT
       v.codigo,
@@ -283,6 +302,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
       v.vendas,
       COALESCE(e.estoque, 0) AS estoque_fim,
       v.tt_vda_vda,
+      v.tt_vda_bruta_desconto,
       v.tt_desconto_venda
     FROM vendas_periodo v
     LEFT JOIN estoque_atual e ON e.codigo = v.codigo
@@ -299,13 +319,14 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
     const vendas = decimalToNumber(row.vendas);
     const estoqueFim = decimalToNumber(row.estoque_fim);
     const ttVdaVda = decimalToNumber(row.tt_vda_vda);
+    const ttVdaBrutaDesconto = decimalToNumber(row.tt_vda_bruta_desconto);
     const ttDescontoVenda = decimalToNumber(row.tt_desconto_venda);
 
     // Markup = PDV Atual / Custo
     const markup = custoProducao > 0 ? round(pdvAtual / custoProducao, 2) : 0;
 
-    // % Desconto = (PDV Original - PDV Atual) / PDV Original * 100
-    const descontoPct = pdvOriginal > 0 ? round(((pdvOriginal - pdvAtual) / pdvOriginal) * 100, 2) : 0;
+    // % Desconto = desconto concedido / venda bruta de vendas, sem devolucoes
+    const descontoPct = ttVdaBrutaDesconto > 0 ? round((ttDescontoVenda / ttVdaBrutaDesconto) * 100, 2) : 0;
 
     // Giro = Vendas / (Vendas + Estoque) * 100
     const giro = vendas + estoqueFim > 0 ? round((vendas / (vendas + estoqueFim)) * 100, 2) : 0;
@@ -367,13 +388,11 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   const geraisResult = await prisma.$queryRaw<Array<{
     total_qtd: Decimal;
     venda_bruta: Decimal;
-    desconto_concedido: Decimal;
     venda_liquida: Decimal;
   }>>`
     SELECT
       COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS total_qtd,
       COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0)) ELSE COALESCE(ti.value, 0) END), 0) AS venda_bruta,
-      COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0) END), 0) AS desconto_concedido,
       COALESCE(SUM(
         CASE
           WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0))
@@ -391,15 +410,17 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   `;
 
   const vendaTotalGeralQtd = decimalToNumber(geraisResult[0]?.total_qtd);
-  const vendaBruta = decimalToNumber(geraisResult[0]?.venda_bruta);
-  const descontoConcedido = decimalToNumber(geraisResult[0]?.desconto_concedido);
-  const vendaLiquida = decimalToNumber(geraisResult[0]?.venda_liquida);
+  const vendaBruta = round(decimalToNumber(geraisResult[0]?.venda_bruta), 2);
+  const vendaLiquida = round(decimalToNumber(geraisResult[0]?.venda_liquida), 2);
+  // O card de desconto precisa fechar exatamente com os cards exibidos:
+  // Venda Bruta - Venda Liquida.
+  const descontoConcedido = round(vendaBruta - vendaLiquida, 2);
 
   const gerais: VendaDescontoGerais = {
     vendaTotalGeralQtd: round(vendaTotalGeralQtd, 0),
-    vendaBruta: round(vendaBruta, 2),
-    descontoConcedido: round(descontoConcedido, 2),
-    vendaLiquida: round(vendaLiquida, 2),
+    vendaBruta,
+    descontoConcedido,
+    vendaLiquida,
     descontoPct: vendaBruta > 0 ? round((descontoConcedido / vendaBruta) * 100, 2) : 0,
   };
 
@@ -441,6 +462,7 @@ export async function getResumoPromocao(filtro: {
   const rows = await prisma.$queryRaw<Array<{
     branch_code: number;
     branch_name: string;
+    status_promocao: string | null;
     venda_promo_valor: Decimal;
     venda_promo_pecas: Decimal;
     venda_total_valor: Decimal;
@@ -461,6 +483,8 @@ export async function getResumoPromocao(filtro: {
           '',
           'i'
         ))) AS branch_name,
+        STRING_AGG(DISTINCT TRIM(a.class_status), ', ' ORDER BY TRIM(a.class_status))
+          FILTER (WHERE ${statusFilter}) AS status_promocao,
         -- Faturamento em promoção
         SUM(
           CASE
@@ -532,6 +556,7 @@ export async function getResumoPromocao(filtro: {
     SELECT
       v.branch_code,
       v.branch_name,
+      v.status_promocao,
       COALESCE(v.venda_promo_valor, 0) AS venda_promo_valor,
       COALESCE(v.venda_promo_pecas, 0) AS venda_promo_pecas,
       COALESCE(v.venda_total_valor, 0) AS venda_total_valor,
@@ -554,6 +579,7 @@ export async function getResumoPromocao(filtro: {
     return {
       branchCode: row.branch_code,
       branchName: row.branch_name,
+      statusPromocao: row.status_promocao,
       vendaTotalPromo: round(vendaTotalPromo, 2),
       vendaPromoPecas: round(vendaPromoPecas, 0),
       vendaTotalGeralPeriodo: round(vendaTotalGeralPeriodo, 2),

@@ -128,7 +128,7 @@ consultando `stock_description` direto no banco:
 
 | stock_code | stock_description observada | uso |
 |---|---|---|
-| 1 | `FISICO` (às vezes `CSV Virtual`, aparenta ser fallback quando a descrição não veio do TOTVS) | estoque físico disponível na loja — **é o único filtrado explicitamente hoje**, em `transferencia.service.ts` (`AND ps.stock_code = 1`) e no relatório novo "Acompanhamento por Linha" |
+| 1 | `FISICO` (às vezes `CSV Virtual`, aparenta ser fallback quando a descrição não veio do TOTVS) | estoque físico disponível na loja — filtrado explicitamente no "Acompanhamento por Linha" (`vendaDia.service.ts`); o módulo Gestão de Transferência, que também isolava esse código, foi removido (ver seção "Sessão 28-30/08/2026") |
 | 5 | `SEGUNDA QUALIDADE` | estoque de segunda linha/avariado |
 | 8 | `ATACADO` | estoque reservado pro canal atacado |
 
@@ -136,6 +136,58 @@ consultando `stock_description` direto no banco:
 lugar nenhum do dado sincronizado — se um relatório pedir "estoque físico + trânsito",
 hoje só dá pra entregar o físico, e é preciso avisar explicitamente que trânsito não
 está disponível (não inventar um número).
+
+### Investigação 31/08/2026 — dá pra calcular "em trânsito" a partir de `transacoes`, mas o número não presta pra previsão de curto prazo
+
+O usuário pediu pra construir "estoque em trânsito" (peças que saíram da Fábrica mas
+ainda não chegaram na loja) achando que precisaria de uma API nova do TOTVS
+(`transaction-receiving`) + um script Python separado. Investigação mostrou as duas
+premissas erradas, mas achou um caminho real:
+
+- **`transaction-receiving`** (`POST /api/totvsmoda/general/v2/transaction-receiving`)
+  é sobre **conciliação de pagamento** (cardOperator, NSU, authorizationCode,
+  paymentStatus, digitalWalletType) — recebimento de dinheiro, não de mercadoria. Não
+  serve pra isso, nunca foi integrada no projeto.
+- **Transferência entre filiais JÁ está nas tabelas sincronizadas** (`transacoes`/
+  `transacao_itens`), só nunca tinha sido decodificada antes:
+  - Saída de transferência: `operation_code` **510**/**1510** (Ceará) ou **512**
+    (RN/MA) — sempre com `operations_type='S', operation_mode='2'` em
+    `classificacao_operacoes`.
+  - Entrada de transferência (do lado da loja que recebe): `operation_code` **3**/
+    **1003** (Ceará) ou **5** (RN/MA).
+  - **A filial contraparte vem codificada no `customer_code`**: `customer_code -
+    110000000 = branch_code` da outra ponta (destino, na saída; origem, na entrada) —
+    o mesmo offset "conta interna do TOTVS" já usado pra excluir cliente falso do
+    faturamento (`customer_code >= 110000000`), só que aqui tem função estrutural real.
+    Confirmado com 100% de correspondência real pra todas as 18 filiais (inclusive as
+    fechadas). Vale pra transferência loja-a-loja também, não só Fábrica→loja.
+  - **Não existe vínculo documento-a-documento** (`guide_code` e `origin_destination`
+    em `transacoes` estão `NULL` em 100% das 853 mil linhas da tabela — colunas mortas,
+    nunca preenchidas pelo ETL; a tabela `operacoes`, que tem uma coluna `invoice_data`
+    JSON que poderia ajudar, está **vazia, 0 linhas**, diferente de
+    `classificacao_operacoes` que é a que realmente é sincronizada e usada). Só dá pra
+    calcular um **saldo agregado**: `SUM(saída pro destino) − SUM(entrada vinda de lá)`
+    por `product_code`, não rastrear uma remessa específica.
+  - Já existia uma tentativa anterior disso: `raioX.service.ts` tem uma função
+    `getTransferencias()` que **nunca foi implementada** (retorna sempre `0`, comentário
+    `// TODO: Implementar lógica de transferências quando soubermos onde isso está no
+    banco`) — agora sabemos onde está, se algum dia for retomada.
+
+**Por que não foi construído mesmo assim**: medindo o saldo pendente (saída − entrada)
+por SKU/destino, **86% do total (7.129 de 8.266 peças) vem de lojas JÁ FECHADAS**
+(Terrazo Shopping sozinha = 5.586, Mossoró = 1.380, Mart Moda = 93, Via Sul = 70) —
+mercadoria que saiu antes de a loja fechar e cujo documento de entrada nunca foi
+baixado no TOTVS, não é trânsito de verdade, é resíduo contábil que vai ficar "pendente"
+pra sempre. E mesmo olhando só lojas abertas, **nenhum saldo pendente tem menos de 61
+dias de idade** (nenhum caso de "saiu há alguns dias, ainda não chegou") — sugere que
+transferência entre lojas ativas costuma ser baixada rápido no TOTVS na prática, e o
+que sobra depois de 60+ dias é muito mais provável ser atraso de lançamento/reconciliação
+do que caminhão parado na estrada. Ou seja: o dado sustenta um relatório de "peças com
+baixa de transferência atrasada" (auditoria/limpeza de cadastro), mas **não** sustenta
+"estoque futuro previsto" como foi pedido — usar pra previsão de curto prazo daria
+número enganoso. Decisão do usuário: não construir por enquanto, revisitar só se
+aparecer uma fonte de dado melhor (ex: TOTVS expor status de romaneio/guia de
+transferência em aberto de verdade).
 
 A maioria dos relatórios do PCP (Relatório Base, Curva ABC, Análise de Grade, Venda do
 Dia, Sugestão de Produção) **não filtra por `stock_code`** — soma todos os códigos
@@ -685,3 +737,105 @@ validar o Dashboard Comercial contra FISFL024/PRDFL074) — se bater com o núme
 que o app mostra, é real (hipótese 1); se o TOTVS mostrar bem mais estoque pra aquela
 data, é lacuna de histórico (hipótese 2). Não assumir nenhuma das duas sem essa
 confirmação externa.
+
+**Atualização 28-30/08/2026 — achada uma 3ª hipótese real e concreta, corrigida**: numa
+devolutiva do cliente (`.docx` "Projeto BI Estoque - Devolutiva 25 08"), a pergunta
+"consideramos a loja Terrazo Shopping (fechada) na venda do ano anterior?" levou a
+achar que `LOJAS_VAREJO` em `apps/pcp-api/src/services/vendaDia.service.ts` — a lista
+hardcoded das 12 lojas de varejo ativas hoje — era reusada **tanto pro período atual
+quanto pro "ano anterior"** em `getAcompanhamentoDiario`. Ou seja: qualquer loja que
+fechou entre um ano atrás e hoje (Terrazo Shopping, Mossoró, Via Sul, Mart Moda — ver
+`LOJAS_VAREJO_FECHADAS` em `apps/pcp-api/src/config/constants.ts`) tinha sua venda E
+estoque do ano anterior **silenciosamente excluídos** da comparação de rede inteira,
+mesmo tendo vendido/tido estoque de verdade naquela época. Isso sozinho já explica uma
+parte real do "ano anterior parece baixo demais" (loja fechada = zero contado, não é
+lacuna de captura de dado, é exclusão by design do filtro de filial). **Corrigido**:
+`getAcompanhamentoDiario` agora usa um universo de filiais mais amplo
+(`branchesAnoAnterior`) só pro lado "ano anterior", incluindo as lojas fechadas — e só
+quando a comparação é de rede inteira sem filtro de loja específico (uma seleção
+explícita de loja continua estrita). Isso **não** resolve sozinho as duas hipóteses
+antigas (real vs. lacuna de captura no `prd_saldo`) — ainda não foi re-testado com o
+banco (Neon fora do ar no momento do fix) pra saber quanto da magnitude de 8-25x esse
+achado explica. Próximo passo: comparar a magnitude do gap antes/depois desse fix pra
+categorias como VESTIDOS/CAMISA assim que o banco voltar, e só então decidir se ainda
+vale a pena perseguir a comparação com relatório nativo do TOTVS.
+
+## Sessão 28-30/08/2026 — merge grande com `limes/teste`, DPA/Atacado virou padrão do PCP
+
+`limes/teste` é o branch de trabalho do Marcelo (ver seção "Git" acima). Entre o último
+merge com `main` e 28/08/2026, ele acumulou 25 commits sem nunca avisar em qual branch
+publicou — isso gerou confusão real (usuário viu no WhatsApp o Marcelo comentando ajuste
+de cor no Raio X sem saber se aquilo já estava em produção). Investigação: comparar
+`git log -1 --format=%ai` do topo de `limes/main` vs `limes/teste` mostrou a `teste`
+6 dias na frente — confirma que o trabalho mais recente dele vai pra lá, não pra `main`,
+até ser mergeado explicitamente. **Path de investigação pra repetir se acontecer de
+novo**: `git fetch` os dois, comparar timestamp do commit mais recente de cada branch
+(não só existência de commits novos — quem está "mais atualizado de verdade" é quem tem
+a data mais recente, não a branch com mais commits).
+
+A pedido do usuário ("traz a teste do git, deixa ela como versão principal"), a `teste`
+inteira foi mergeada em `main` (`git merge limes/teste`), com uma regra clara: **em
+qualquer conflito real de conteúdo, prevalece a versão da `teste`** (não tentar
+reconciliar linha a linha) — só quando o merge automático do Git já resolvia sozinho
+(edições em partes diferentes do arquivo) é que as duas contribuições ficaram lado a
+lado. 13 arquivos em conflito, praticamente todos resolvidos pegando o arquivo inteiro
+da `teste` (`git show limes/teste:caminho > caminho`), porque cada um era parte de uma
+reescrita ampla e coerente (não dava pra misturar metade de cada lado sem quebrar). Uma
+correção pontual foi necessária depois do merge: `apps/pcp-api/src/index.ts` ganhou um
+import/registro duplicado de `pesosGradesRoutes` (efeito colateral de um merge anterior
+já ter "resolvido" isso e o merge novo reintroduzir via 3-way sem base comum
+reconhecida) — sempre conferir duplicatas de import depois de um merge grande assim.
+
+### DPA e Atacado agora são filiais sintéticas em todo o módulo PCP
+
+Atendendo ao pedido do cliente ("considerar sempre dois locais distintos: FÁBRICA (DPA)
+e ATACADO"), o Marcelo introduziu em `apps/pcp-api/src/config/constants.ts`:
+
+```ts
+export const DPA_BRANCH_CODE = -1;      // filial 02 (Fabrica), stock_code 1 e 5 (fisico + segunda qualidade)
+export const ATACADO_BRANCH_CODE = -2;  // filial 02 (Fabrica), stock_code 8 (atacado) OU operacao com "ATACADO" na descricao
+export const DPA_STOCK_CODES = [1, 5];
+export const ATACADO_STOCK_CODE = 8;
+```
+
+Códigos negativos de propósito, pra nunca colidir com um `branch_code` real do TOTVS —
+mesmo padrão que `ATACADO_BRANCH_CODE` já usava sozinho em `relatorioBase.service.ts`
+antes disso (ver seção "stock_code" acima), agora generalizado e com um par (DPA
+também). **Isso substitui o uso solto de `FABRICA_BRANCH_CODE` (branch_code=2) como uma
+coisa só** em `relatorioBase.service.ts`, `vendaDia.service.ts`, `vendaDesconto.service.ts`
+e `raioX.service.ts` — qualquer relatório novo que tocar a Fábrica deveria seguir esse
+mesmo padrão (DPA vs Atacado como duas linhas/opções de filtro separadas), não voltar a
+tratar branch_code=2 como uma coisa só. Distinção: **estoque** usa `stock_code` (1/5 =
+DPA, 8 = Atacado, direto na tabela `prd_saldo`); **venda/transação** não tem stock_code,
+então usa `classificacao_operacoes.description ILIKE '%ATACADO%'` pra decidir o canal
+(`COALESCE(co.description, '') NOT ILIKE '%ATACADO%'` = DPA, senão Atacado).
+
+### Outras entregas trazidas da `teste` nesse merge (correções da devolutiva do cliente)
+
+- **Raio X**: reconstruído do zero pra agrupar por cor (arquivo novo
+  `RaioXCompacto.tsx`) — clicar no produto abre por cor, com grade por tamanho.
+- **Venda e Desconto**: agrupamento por referência (não mais por SKU/código de barras),
+  conciliação venda bruta/líquida/desconto batendo com o relatório 61 do DICFM, e uma
+  tela nova companheira "Resumo de Promoção por Loja" (`/relatorios/resumo-promocao`).
+- **Acompanhamento por Linha**: cobertura recalculada por mês-calendário de verdade (via
+  `getPeriodosCalendario`) em vez da aproximação fixa de 30 dias antiga; colunas Meta
+  R$/Ating. Meta % (proporcional aos dias selecionados) cruzando com
+  `PcpMetaClassificacao`; linha de TOTAL; classificações Coleção e Status adicionadas;
+  vendas sem classificação somam num bucket "SEM CLASSIFICAÇÃO" (pra bater com o
+  dashboard comercial em vez de sumir silenciosamente).
+- **Pesos e Grades para Produção**: ordem de grade corrigida (UN P M G GG 2 4 6 8 10 —
+  ver `ORDEM_GRADES`/`ordemGrade()`), "Por Categoria" agora agrupa a categoria inteira
+  em vez de vir por item, filtros de Linha/Gênero adicionados quando filtra por
+  Categoria, coluna de total vendido.
+- `metaClassificacao.service.ts` ganhou `status` como `tipoClassificacao` válido (antes
+  só tinha categoria/linha/genero/colecao).
+
+### Pendente, ainda não verificado (banco fora do ar no fim dessa sessão)
+
+O Neon ficou inacessível (`P1001`, testado com `prisma db pull` e com o Prisma Client
+direto, TCP puro conecta mas o handshake do Postgres falha) bem no momento de validar
+esse merge com dado real — `npx prisma db pull`/`generate` não rodou, e o fix do
+`LOJAS_VAREJO_FECHADAS` não foi testado contra o banco ainda. `tsc` limpo nos 3 apps
+(prova que o código compila e os tipos batem), mas isso **não** substitui testar as
+telas reescritas (Raio X, Venda e Desconto, Acompanhamento por Linha) com dado real —
+fazer isso assim que o banco voltar, antes de considerar essa entrega fechada.

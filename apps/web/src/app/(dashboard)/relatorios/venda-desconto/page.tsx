@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -96,6 +96,8 @@ export default function VendaDescontoPage() {
   // Ordenação
   const [sortKey, setSortKey] = useState<string | null>('vendas');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const carregarFiltros = useCallback(async () => {
     if (!token) return;
@@ -165,6 +167,18 @@ export default function VendaDescontoPage() {
     } else {
       setSortKey(key);
       setSortDir('desc');
+    }
+  }
+
+  function sincronizarScroll(origem: 'topo' | 'tabela') {
+    const top = topScrollRef.current;
+    const table = tableScrollRef.current;
+    if (!top || !table) return;
+
+    if (origem === 'topo') {
+      table.scrollLeft = top.scrollLeft;
+    } else {
+      top.scrollLeft = table.scrollLeft;
     }
   }
 
@@ -375,12 +389,27 @@ export default function VendaDescontoPage() {
       {/* Tabela */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Detalhamento por Produto</CardTitle>
+          <CardTitle>Detalhamento por Referência</CardTitle>
           {data && (
-            <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} produtos</span>
+            <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} referências</span>
           )}
         </CardHeader>
-        <div className="overflow-x-scroll pb-3" style={{ scrollbarGutter: 'stable' }}>
+        <div
+          ref={topScrollRef}
+          className="mx-4 mb-2 overflow-x-auto pb-1"
+          style={{ scrollbarGutter: 'stable' }}
+          onScroll={() => sincronizarScroll('topo')}
+          aria-label="Rolagem horizontal da tabela"
+        >
+          <div className="h-1 min-w-[2200px]" />
+        </div>
+        <div
+          ref={tableScrollRef}
+          className="overflow-x-auto pb-3"
+          style={{ scrollbarGutter: 'stable' }}
+          onScroll={() => sincronizarScroll('tabela')}
+        >
+          <div className="min-w-[2200px]">
           <Table>
             <TableHead>
               <TableRow>
@@ -467,6 +496,7 @@ export default function VendaDescontoPage() {
               )}
             </TableBody>
           </Table>
+          </div>
         </div>
       </Card>
 

@@ -145,7 +145,7 @@ async function getEstoquesEmLote(
         WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES.map(code => Prisma.sql`${code}`))}) THEN ${DPA_BRANCH_CODE}
         WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
         ELSE branch_code
-      END AS local_code,
+      END::int AS local_code,
       COALESCE(SUM(COALESCE(stock, 0)), 0) AS stock
     FROM ultimo_saldo
     WHERE (branch_code <> ${FABRICA_BRANCH_CODE} AND stock_code = 1)
@@ -191,7 +191,7 @@ async function getVendasEmLote(
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS local_code,
+      END::int AS local_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
       CASE WHEN co.description ILIKE '%ATACADO%' THEN true ELSE false END AS is_atacado
     FROM transacoes t

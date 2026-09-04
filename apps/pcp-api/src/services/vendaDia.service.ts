@@ -9,7 +9,7 @@ import {
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
   FABRICA_BRANCH_CODE,
 } from './relatorioBase.service.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, LOJAS_VAREJO_FECHADAS } from '../config/constants.js';
 
 // Lojas de varejo (excluindo Fábrica que é produção)
 const LOJAS_VAREJO = [1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 17];
@@ -142,7 +142,7 @@ async function getVendasPorPeriodo(
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade,
       COUNT(DISTINCT t.transaction_code) AS transacoes
     FROM transacoes t
@@ -154,10 +154,13 @@ async function getVendasPorPeriodo(
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
-    -- Agrupa pelos campos-base. Os parâmetros interpolados no CASE do SELECT
-    -- e do GROUP BY recebem posições distintas no PostgreSQL, impedindo que o
-    -- banco reconheça as duas expressões como equivalentes.
-    GROUP BY t.branch_code, co.description
+    -- Agrupa por POSICAO. Repetir o CASE nao funciona (cada parametro interpolado
+    -- recebe uma posicao nova e o Postgres nao reconhece as duas expressoes como
+    -- equivalentes), mas agrupar por t.branch_code + co.description tambem nao:
+    -- devolve uma linha por descricao de operacao e quem consome usa Map.set(),
+    -- que sobrescreve em vez de somar - so a ultima operacao de cada filial
+    -- sobrevivia (116 pecas no lugar de 20.476 em ago/2026).
+    GROUP BY 1
   `;
 }
 
@@ -180,7 +183,7 @@ async function getEstoquePorFilial(
         WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
         WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
         ELSE us.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -190,7 +193,11 @@ async function getEstoquePorFilial(
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${classificacaoFiltro}
-    GROUP BY us.branch_code, us.stock_code
+    -- Agrupa por POSICAO: repetir o CASE aqui cria parametros posicionais novos e o
+    -- Postgres passa a exigir us.branch_code no GROUP BY. Agrupar pelas colunas-base
+    -- (branch_code, stock_code) roda, mas devolve DPA quebrada em uma linha por
+    -- stock_code - e quem consome usa Map.set(), que sobrescreve em vez de somar.
+    GROUP BY 1
   `;
 }
 
@@ -689,6 +696,15 @@ function calcularMetaPeriodo(
 export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro): Promise<AcompanhamentoDiarioResponse> {
   const canal = filtro.canal || 'varejo';
   const branches = getBranchesCanal(canal, filtro.branches);
+
+  // Ano anterior tambem inclui lojas de varejo ja fechadas (ex: Terrazo Shopping) -
+  // mas SO quando a rede toda esta sendo comparada, sem filtro de loja especifica
+  // (uma selecao explicita de loja continua estrita, do jeito que o usuario pediu).
+  // Sem isso, uma loja que fechou entre o ano anterior e hoje some da comparacao
+  // inteira, subestimando o ano anterior da rede (ver LOJAS_VAREJO_FECHADAS).
+  const semFiltroDeLoja = !filtro.branches || filtro.branches.length === 0;
+  const branchesAnoAnterior = semFiltroDeLoja && canal !== 'atacado' ? [...branches, ...LOJAS_VAREJO_FECHADAS] : branches;
+
   const fmt = (d: Date) => d.toISOString().split('T')[0];
 
   // Periodo atual: o que o usuario escolheu no filtro de data, ou o default de sempre
@@ -722,9 +738,9 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
 
   const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, emProducaoRows, metas] = await Promise.all([
     getVendaPorClassificacaoDiario(dataInicio, dataFim, filtro.tipoClassificacao, branches),
-    getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branches),
+    getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branchesAnoAnterior),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, null),
-    getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, dataFimAA),
+    getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branchesAnoAnterior, dataFimAA),
     getEmProducaoPorClassificacaoDiario(filtro.tipoClassificacao),
     getMetasPeriodo(filtro.tipoClassificacao, periodosAtual),
   ]);

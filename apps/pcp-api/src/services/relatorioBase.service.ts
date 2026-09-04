@@ -224,7 +224,7 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
              WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
              WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
              ELSE us.branch_code
-           END AS branch_code,
+           END::int AS branch_code,
            COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -232,12 +232,12 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
       AND (us.branch_code != ${FABRICA_BRANCH_CODE} OR us.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
-    GROUP BY us.product_sku, us.product_code,
-      CASE
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-        ELSE us.branch_code
-      END
+    -- Agrupa por POSICAO. Repetir o CASE aqui nao funciona: cada ${'$'}{...} do Prisma
+    -- vira um parametro posicional novo ($8, $9...), entao o Postgres nao reconhece
+    -- as duas expressoes como iguais e exige us.branch_code no GROUP BY. Agrupar
+    -- pelas colunas-base (branch_code, stock_code) tambem nao serve - quebraria DPA
+    -- em uma linha por stock_code, e quem consome usa Map.set() (sobrescreve).
+    GROUP BY 1, 2, 3
   `;
 }
 
@@ -255,7 +255,7 @@ async function getGiroRows(dias: number, productCodes: number[] | null): Promise
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
@@ -264,12 +264,9 @@ async function getGiroRows(dias: number, productCodes: number[] | null): Promise
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code,
-      CASE
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
-        ELSE t.branch_code
-      END
+    -- Agrupa por POSICAO (ver comentario em getEstoqueRows): repetir o CASE cria
+    -- parametros posicionais novos e o Postgres passa a exigir t.branch_code aqui.
+    GROUP BY 1, 2
   `;
 }
 
@@ -300,7 +297,7 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
@@ -309,12 +306,9 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code,
-      CASE
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
-        ELSE t.branch_code
-      END
+    -- Agrupa por POSICAO (ver comentario em getEstoqueRows): repetir o CASE cria
+    -- parametros posicionais novos e o Postgres passa a exigir t.branch_code aqui.
+    GROUP BY 1, 2
   `;
 }
 
@@ -345,7 +339,7 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null): Prom
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
         WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
         ELSE t.branch_code
-      END AS branch_code,
+      END::int AS branch_code,
       SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
@@ -354,12 +348,9 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null): Prom
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code,
-      CASE
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
-        WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
-        ELSE t.branch_code
-      END
+    -- Agrupa por POSICAO (ver comentario em getEstoqueRows): repetir o CASE cria
+    -- parametros posicionais novos e o Postgres passa a exigir t.branch_code aqui.
+    GROUP BY 1, 2
   `;
 }
 

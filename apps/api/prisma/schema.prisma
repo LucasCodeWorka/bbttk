@@ -444,6 +444,10 @@ model PcpCorteMinimoSku {
   @@map("pcp_corte_minimo_skus")
 }
 
+// Meta de venda mensal por classificacao (categoria/linha/genero/colecao) - usada pela
+// tela "Acompanhamento por Linha". Diferente de Meta (comercial), que e por loja/
+// vendedor com niveis de comissao - aqui e um valor unico em R$ por classificacao/mes,
+// sem nivel/comissao, cadastrada direto no modal da propria tela de relatorio.
 model PcpMetaClassificacao {
   id                 Int      @id @default(autoincrement())
   ano                Int
