@@ -388,18 +388,11 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   const geraisResult = await prisma.$queryRaw<Array<{
     total_qtd: Decimal;
     venda_bruta: Decimal;
-    desconto_concedido: Decimal;
     venda_liquida: Decimal;
   }>>`
     SELECT
       COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS total_qtd,
       COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.value, 0)) ELSE COALESCE(ti.value, 0) END), 0) AS venda_bruta,
-      COALESCE(SUM(
-        CASE
-          WHEN ${IS_VENDA} THEN GREATEST(COALESCE(ti.value, 0) - COALESCE(ti.net_value, ti.value, 0), 0)
-          ELSE 0
-        END
-      ), 0) AS desconto_concedido,
       COALESCE(SUM(
         CASE
           WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0))
@@ -417,15 +410,17 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
   `;
 
   const vendaTotalGeralQtd = decimalToNumber(geraisResult[0]?.total_qtd);
-  const vendaBruta = decimalToNumber(geraisResult[0]?.venda_bruta);
-  const descontoConcedido = decimalToNumber(geraisResult[0]?.desconto_concedido);
-  const vendaLiquida = decimalToNumber(geraisResult[0]?.venda_liquida);
+  const vendaBruta = round(decimalToNumber(geraisResult[0]?.venda_bruta), 2);
+  const vendaLiquida = round(decimalToNumber(geraisResult[0]?.venda_liquida), 2);
+  // O card de desconto precisa fechar exatamente com os cards exibidos:
+  // Venda Bruta - Venda Liquida.
+  const descontoConcedido = round(vendaBruta - vendaLiquida, 2);
 
   const gerais: VendaDescontoGerais = {
     vendaTotalGeralQtd: round(vendaTotalGeralQtd, 0),
-    vendaBruta: round(vendaBruta, 2),
-    descontoConcedido: round(descontoConcedido, 2),
-    vendaLiquida: round(vendaLiquida, 2),
+    vendaBruta,
+    descontoConcedido,
+    vendaLiquida,
     descontoPct: vendaBruta > 0 ? round((descontoConcedido / vendaBruta) * 100, 2) : 0,
   };
 

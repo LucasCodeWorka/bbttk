@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -297,21 +298,16 @@ export default function ResumoPromocaoPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status Promoção</label>
-            <select
-              multiple
-              value={statusPromoSelecionados}
-              onChange={(e) => setStatusPromoSelecionados(
-                Array.from(e.target.selectedOptions, opt => opt.value)
-              )}
-              className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--bbtk-purple)] focus:border-transparent"
-            >
-              {statusOpcoes.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <ClassificacaoMultiSelect
+              label="Status Promoção"
+              options={statusOpcoes}
+              selected={statusPromoSelecionados}
+              onChange={setStatusPromoSelecionados}
+              className="w-full"
+              emptyLabel="Nenhum status"
+            />
             <p className="text-xs text-gray-500 mt-1">
-              Ctrl+click para múltipla seleção. Se nenhum status for escolhido, o relatório não considera itens como promoção.
+              Se nenhum status for escolhido, o relatório não considera itens como promoção.
             </p>
           </div>
         </div>

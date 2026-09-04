@@ -15,12 +15,13 @@ interface ClassificacaoMultiSelectProps {
   selected: string[];
   onChange: (selected: string[]) => void;
   className?: string;
+  emptyLabel?: string;
 }
 
 // Dropdown compacto de multi-selecao por string, com busca embutida pra listas
 // grandes (ex: Colecao/Tecido tem centenas de valores) - mesmo padrao visual
 // do FilialMultiSelect, generico o bastante pra qualquer filtro de classificacao.
-export function ClassificacaoMultiSelect({ label, options, selected, onChange, className }: ClassificacaoMultiSelectProps) {
+export function ClassificacaoMultiSelect({ label, options, selected, onChange, className, emptyLabel = 'Todas' }: ClassificacaoMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [busca, setBusca] = useState('');
   const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -68,8 +69,10 @@ export function ClassificacaoMultiSelect({ label, options, selected, onChange, c
   const todasExplicitas = options.length > 0 && selected.length === options.length;
   const semFiltro = selected.length === 0;
 
-  const displayText = semFiltro || todasExplicitas
-    ? `Todas`
+  const displayText = semFiltro
+    ? emptyLabel
+    : todasExplicitas
+      ? 'Todas'
     : selected.length === 1
       ? options.find((o) => o.value === selected[0])?.label || '1 selecionada'
       : `${selected.length} selecionadas`;
