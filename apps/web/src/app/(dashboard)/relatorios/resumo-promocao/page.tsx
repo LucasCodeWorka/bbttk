@@ -156,6 +156,7 @@ export default function ResumoPromocaoPage() {
     switch (key) {
       case 'branchCode': return row.branchCode;
       case 'branchName': return row.branchName;
+      case 'statusPromocao': return row.statusPromocao || '';
       case 'vendaTotalPromo': return row.vendaTotalPromo;
       case 'vendaPromoPecas': return row.vendaPromoPecas;
       case 'vendaTotalGeralPeriodo': return row.vendaTotalGeralPeriodo;
@@ -212,6 +213,7 @@ export default function ResumoPromocaoPage() {
     try {
       const columns: ExcelColumn[] = [
         { header: 'Loja', key: 'branchName', width: 30 },
+        { header: 'Status', key: 'statusPromocao', width: 35 },
         { header: 'Venda Promoção R$', key: 'vendaTotalPromo', width: 18, type: 'currency' },
         { header: 'Venda Promoção (Peças)', key: 'vendaPromoPecas', width: 20, type: 'number' },
         { header: 'Venda Bruta R$', key: 'vendaBrutaGeralPeriodo', width: 18, type: 'currency' },
@@ -366,6 +368,7 @@ export default function ResumoPromocaoPage() {
             <TableHead>
               <TableRow>
                 <ThSortPcp label="Loja" sortKeyName="branchName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
+                <ThSortPcp label="Status" sortKeyName="statusPromocao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" title="Status de classificação dos produtos considerados como promoção" />
                 <ThSortPcp label="Venda Promoção R$" sortKeyName="vendaTotalPromo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Promo (Peças)" sortKeyName="vendaPromoPecas" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Venda Bruta R$" sortKeyName="vendaBrutaGeralPeriodo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
@@ -380,13 +383,13 @@ export default function ResumoPromocaoPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={11} align="center" className="py-8 text-gray-500">
                     Carregando...
                   </TableCell>
                 </TableRow>
               ) : !data?.rows.length ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" className="py-8 text-gray-500">
+                  <TableCell colSpan={11} align="center" className="py-8 text-gray-500">
                     Nenhum dado encontrado. Selecione os filtros e clique em Buscar.
                   </TableCell>
                 </TableRow>
@@ -395,6 +398,9 @@ export default function ResumoPromocaoPage() {
                   {sortedRows.map((row) => (
                     <TableRow key={row.branchCode} className="hover:bg-gray-50">
                       <TableCell className="font-medium">{row.branchName}</TableCell>
+                      <TableCell className="max-w-[260px] truncate" title={row.statusPromocao || undefined}>
+                        {row.statusPromocao || '-'}
+                      </TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaTotalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(row.vendaPromoPecas)}</TableCell>
                       <TableCell align="right">{formatCurrency(row.vendaBrutaGeralPeriodo)}</TableCell>
@@ -414,6 +420,7 @@ export default function ResumoPromocaoPage() {
                   {totais && (
                     <TableRow className="bg-gray-100 font-semibold">
                       <TableCell>TOTAL</TableCell>
+                      <TableCell>-</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaTotalPromo)}</TableCell>
                       <TableCell align="right">{formatNumber(totais.vendaPromoPecas)}</TableCell>
                       <TableCell align="right">{formatCurrency(totais.vendaBrutaGeralPeriodo)}</TableCell>
