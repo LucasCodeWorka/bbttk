@@ -434,8 +434,11 @@ export default function PcpRelatorioBasePage() {
   }, [carregarDados]);
 
   useEffect(() => {
+    // Espera o Relatorio Base terminar antes de acionar os indicadores extras. Antes,
+    // os dois endpoints montavam relatorios grandes ao mesmo tempo no PCP API.
+    if (!data || isLoading) return;
     carregarExtras();
-  }, [carregarExtras]);
+  }, [data, isLoading, carregarExtras]);
 
   // Sincronizar scroll horizontal
   useEffect(() => {
@@ -764,7 +767,7 @@ export default function PcpRelatorioBasePage() {
           className="w-52"
           placeholder="Ex: 7800..."
         />
-        <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
+        <Button onClick={() => { carregarDados(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
         <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
           Exportar Excel
         </Button>
