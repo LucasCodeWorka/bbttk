@@ -25,6 +25,77 @@ const corsOrigins = process.env.CORS_ORIGIN
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const HEAVY_REPORT_PATHS = new Set([
+  '/relatorio-base',
+  '/visao-geral',
+  '/analise-grade',
+  '/analise-grade/curva-abc-tamanho',
+  '/curva-abc',
+  '/curva-abc/resumo-sku',
+  '/curva-abc/skus',
+  '/estoque-sem-giro',
+  '/raio-x',
+  '/redistribuicao/dados-base',
+  '/performance-colecao',
+  '/sugestao-producao',
+  '/pesos-grades',
+  '/venda-dia',
+  '/venda-dia/acompanhamento',
+  '/venda-desconto',
+]);
+
+let heavyReportRunning = false;
+const heavyReportQueue: Array<() => void> = [];
+
+async function reserveHeavyReportSlot(): Promise<() => void> {
+  if (heavyReportRunning) {
+    await new Promise<void>((resolve) => heavyReportQueue.push(resolve));
+  }
+  heavyReportRunning = true;
+
+  return () => {
+    const next = heavyReportQueue.shift();
+    if (next) next();
+    else heavyReportRunning = false;
+  };
+}
+
+function heapMegabytes(): string {
+  return (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0);
+}
+
+async function monitorPcpRequest(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const heavy = HEAVY_REPORT_PATHS.has(req.path);
+  const startedAt = Date.now();
+  const queuedAt = Date.now();
+  let responseClosed = false;
+  // A conexao pode ser fechada enquanto a requisicao aguarda sua vez. Marca isso
+  // antes do await para nao deixar uma vaga da fila presa por um cliente que desistiu.
+  res.once('close', () => {
+    responseClosed = true;
+  });
+  const release = heavy ? await reserveHeavyReportSlot() : null;
+  if (responseClosed || res.writableEnded) {
+    release?.();
+    return;
+  }
+  const queueMs = Date.now() - queuedAt;
+  let finished = false;
+
+  if (heavy) console.log(`[pcp] inicio ${req.method} ${req.path} | fila ${queueMs}ms | heap ${heapMegabytes()}MB`);
+
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    release?.();
+    if (heavy) console.log(`[pcp] fim ${req.method} ${req.path} | ${res.statusCode} | ${Date.now() - startedAt}ms | heap ${heapMegabytes()}MB`);
+  };
+
+  res.once('finish', finish);
+  res.once('close', finish);
+  next();
+}
+
 app.use(cors(corsOrigins?.length ? { origin: corsOrigins } : undefined));
 app.use(express.json());
 
@@ -32,19 +103,20 @@ app.get('/health', (_req, res) => {
   res.json({ service: 'pcp-api', status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), estoqueRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), relatorioBaseRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), visaoGeralRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), analiseGradeRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), curvaAbcRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), raioXRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), redistribuicaoRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), performanceColecaoRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), emProducaoRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDiaRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), sugestaoProducaoRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), pesosGradesRoutes);
-app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), vendaDescontoRoutes);
+app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), monitorPcpRequest);
+app.use('/api/pcp', estoqueRoutes);
+app.use('/api/pcp', relatorioBaseRoutes);
+app.use('/api/pcp', visaoGeralRoutes);
+app.use('/api/pcp', analiseGradeRoutes);
+app.use('/api/pcp', curvaAbcRoutes);
+app.use('/api/pcp', raioXRoutes);
+app.use('/api/pcp', redistribuicaoRoutes);
+app.use('/api/pcp', performanceColecaoRoutes);
+app.use('/api/pcp', emProducaoRoutes);
+app.use('/api/pcp', vendaDiaRoutes);
+app.use('/api/pcp', sugestaoProducaoRoutes);
+app.use('/api/pcp', pesosGradesRoutes);
+app.use('/api/pcp', vendaDescontoRoutes);
 
 async function start() {
   try {

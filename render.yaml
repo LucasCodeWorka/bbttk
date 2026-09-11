@@ -40,6 +40,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.11.1
+      # A instancia free expoe heap default de ~256 MB; reserva margem para os
+      # relatorios PCP enquanto as consultas pesadas sao processadas em serie.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
