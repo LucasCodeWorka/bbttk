@@ -377,10 +377,10 @@ export default function PcpPerformanceColecaoPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <KPICard title="Referencias" value={formatNumber(data?.kpis.referencias || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} color="green" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} subtitle={`${formatNumber(data?.kpis.qtdeVendida || 0)} peças vendidas`} color="green" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Part. colecao" value={`${(data?.kpis.participacaoColecaoPercent || 0).toFixed(1)}%`} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Qtde produzida" value={formatNumber(data?.kpis.qtdeProduzida || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Estoque final" value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
+        <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro medio" value={data?.kpis.giroMedioPercent === null || data?.kpis.giroMedioPercent === undefined ? '-' : data.kpis.giroMedioPercent.toFixed(2).replace('.', ',')} color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
       <Card>

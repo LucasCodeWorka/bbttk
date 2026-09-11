@@ -225,6 +225,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           FROM prd_saldo
           WHERE 1=1
             AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+            AND captured_at <= ${filtro.dataFim}::date + INTERVAL '1 day'
           ${estoqueBranchFiltro}
           ORDER BY product_sku, branch_code, stock_code, captured_at DESC
         )

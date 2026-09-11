@@ -370,7 +370,7 @@ export default function EmProducaoPage() {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
   }
 
-  const rowsDetalhados = data?.rows || [];
+  const rowsDetalhados = useMemo(() => data?.rows || [], [data]);
   const matriz = useMemo(() => montarMatriz(rowsDetalhados), [rowsDetalhados]);
 
   function alternarExpandido(setter: Dispatch<SetStateAction<Set<string>>>, key: string) {
@@ -566,14 +566,14 @@ export default function EmProducaoPage() {
                 <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">STATUS</TableCell>
                 <TableCell isHeader align="center" className="whitespace-nowrap !px-2 !py-2">INÍCIO</TableCell>
                 <TableCell isHeader align="center" className="whitespace-nowrap !px-2 !py-2">PREVISÃO</TableCell>
-                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">COLEÇÃO</TableCell>
-                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">CATEGORIA</TableCell>
-                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">LINHA</TableCell>
                 <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">QTDE OP</TableCell>
                 <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">FINALIZADA</TableCell>
                 <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">PENDENTE</TableCell>
                 <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">% FINAL.</TableCell>
                 <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">ATRASO</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">COLEÇÃO</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">CATEGORIA</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">LINHA</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -603,14 +603,14 @@ export default function EmProducaoPage() {
                           <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.statusLabel}</TableCell>
                           <TableCell align="center" className="whitespace-nowrap !px-2 !py-2">{op.row.dtInicio ? formatDate(op.row.dtInicio) : '-'}</TableCell>
                           <TableCell align="center" className="whitespace-nowrap !px-2 !py-2">{op.row.dtPrevisao ? formatDate(op.row.dtPrevisao) : '-'}</TableCell>
-                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.colecao || '-'}</TableCell>
-                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.categoria || '-'}</TableCell>
-                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.linha || '-'}</TableCell>
                           <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadeOp)}</TableCell>
                           <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadeFinalizada)}</TableCell>
                           <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadePendente)}</TableCell>
                           <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{op.resumo.percentFinalizado.toFixed(1)}%</TableCell>
                           <TableCell align="right" className={op.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 font-semibold text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{op.resumo.diasAtraso > 0 ? `${op.resumo.diasAtraso}d` : '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.colecao || '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.categoria || '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.linha || '-'}</TableCell>
                         </TableRow>
                         {opExpandida && op.cores.map((cor) => {
                           const corExpandida = coresExpandidas.has(cor.key);
@@ -624,23 +624,23 @@ export default function EmProducaoPage() {
                                     <span className="truncate">{cor.cor}</span>
                                   </button>
                                 </TableCell>
-                                <TableCell colSpan={7} className="!px-2 !py-2 text-gray-400">{cor.tamanhos.length} {cor.tamanhos.length === 1 ? 'tamanho' : 'tamanhos'}</TableCell>
                                 <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadeOp)}</TableCell>
                                 <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadeFinalizada)}</TableCell>
                                 <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadePendente)}</TableCell>
                                 <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{cor.resumo.percentFinalizado.toFixed(1)}%</TableCell>
                                 <TableCell align="right" className={cor.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{cor.resumo.diasAtraso > 0 ? `${cor.resumo.diasAtraso}d` : '-'}</TableCell>
+                                <TableCell colSpan={7} className="!px-2 !py-2 text-gray-400">{cor.tamanhos.length} {cor.tamanhos.length === 1 ? 'tamanho' : 'tamanhos'}</TableCell>
                               </TableRow>
                               {corExpandida && cor.tamanhos.map((tamanho) => (
                                 <TableRow key={tamanho.key} className="bg-white">
                                   <TableCell className="!px-2 !py-2" />
                                   <TableCell className="!px-2 !py-2 pl-12 font-medium text-gray-600">{tamanho.tamanho}</TableCell>
-                                  <TableCell colSpan={7} className="!px-2 !py-2 text-gray-300">—</TableCell>
                                   <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadeOp)}</TableCell>
                                   <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadeFinalizada)}</TableCell>
                                   <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadePendente)}</TableCell>
                                   <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{tamanho.resumo.percentFinalizado.toFixed(1)}%</TableCell>
                                   <TableCell align="right" className={tamanho.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{tamanho.resumo.diasAtraso > 0 ? `${tamanho.resumo.diasAtraso}d` : '-'}</TableCell>
+                                  <TableCell colSpan={7} className="!px-2 !py-2 text-gray-300">—</TableCell>
                                 </TableRow>
                               ))}
                             </Fragment>
@@ -650,11 +650,11 @@ export default function EmProducaoPage() {
                     );
                   })}
                   <TableRow isHighlighted className="sticky bottom-0 z-10">
-                    <TableCell colSpan={9} className="font-bold">TOTAL ({rowsDetalhados.length} itens)</TableCell>
+                    <TableCell colSpan={6} className="font-bold">TOTAL ({rowsDetalhados.length} itens)</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadeOp)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadeFinalizada)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadePendente)}</TableCell>
-                    <TableCell colSpan={2} />
+                    <TableCell colSpan={5} />
                   </TableRow>
                 </>
               )}
