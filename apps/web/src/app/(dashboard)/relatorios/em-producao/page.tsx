@@ -70,6 +70,7 @@ type ChartDatum = {
   name: string;
   value: number;
   ordens: number;
+  total: number;
 };
 
 const CHART_COLORS = ['#6b5aa6', '#d32232', '#b7cf2f', '#2095d2', '#f2b705', '#475569', '#0f766e', '#9333ea'];
@@ -84,26 +85,36 @@ function agruparPor(rows: EmProducaoRow[], key: ChartKey, fallback: string, limi
     grupos.set(label, atual);
   });
 
-  return Array.from(grupos.entries())
+  const gruposOrdenados = Array.from(grupos.entries())
     .map(([name, item]) => ({ name, value: item.value, ordens: item.ordens.size }))
     .filter((item) => item.value > 0 || item.ordens > 0)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, limit);
+    .sort((a, b) => b.value - a.value);
+  const total = gruposOrdenados.reduce((acc, item) => acc + item.value, 0);
+
+  return gruposOrdenados
+    .slice(0, limit)
+    .map((item) => ({ ...item, total }));
 }
 
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: ChartDatum }> }) {
+function formatQuantidadeComPercentual(value: number, total: number): string {
+  const percentual = total > 0 ? (value / total) * 100 : 0;
+  return `${formatNumber(value)} (${percentual.toFixed(1)}%)`;
+}
+
+function ChartTooltip({ active, payload, total }: { active?: boolean; payload?: Array<{ payload: ChartDatum }>; total: number }) {
   if (!active || !payload?.length) return null;
   const item = payload[0].payload;
   return (
     <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
       <div className="font-semibold text-gray-900">{item.name}</div>
-      <div className="text-gray-600">Pendente: {formatNumber(item.value)}</div>
+      <div className="text-gray-600">Pendente: {formatQuantidadeComPercentual(item.value, total)}</div>
       <div className="text-gray-600">OPs: {formatNumber(item.ordens)}</div>
     </div>
   );
 }
 
 function HorizontalKpiChart({ title, data, color }: { title: string; data: ChartDatum[]; color: string }) {
+  const total = data[0]?.total || 0;
   return (
     <Card>
       <CardHeader>
@@ -114,7 +125,7 @@ function HorizontalKpiChart({ title, data, color }: { title: string; data: Chart
           <div className="flex h-full items-center justify-center text-sm text-gray-400">Sem dados</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 4, right: 50, left: 12, bottom: 4 }}>
+            <BarChart data={data} layout="vertical" margin={{ top: 4, right: 96, left: 12, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#eef2f7" />
               <XAxis type="number" hide />
               <YAxis
@@ -126,12 +137,12 @@ function HorizontalKpiChart({ title, data, color }: { title: string; data: Chart
                 axisLine={false}
                 interval={0}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: '#f8fafc' }} />
+              <Tooltip content={<ChartTooltip total={total} />} cursor={{ fill: '#f8fafc' }} />
               <Bar dataKey="value" fill={color} radius={[0, 4, 4, 0]} barSize={14}>
                 <LabelList
                   dataKey="value"
                   position="right"
-                  formatter={(value: number) => formatNumber(value)}
+                  formatter={(value: number) => formatQuantidadeComPercentual(value, total)}
                   style={{ fontSize: 10, fill: '#475569', fontWeight: 500 }}
                 />
               </Bar>
@@ -144,7 +155,7 @@ function HorizontalKpiChart({ title, data, color }: { title: string; data: Chart
 }
 
 function DonutKpiChart({ title, data }: { title: string; data: ChartDatum[] }) {
-  const total = data.reduce((acc, item) => acc + item.value, 0);
+  const total = data[0]?.total || 0;
   return (
     <Card>
       <CardHeader>
@@ -163,7 +174,7 @@ function DonutKpiChart({ title, data }: { title: string; data: ChartDatum[] }) {
                       <Cell key={item.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<ChartTooltip />} />
+                  <Tooltip content={<ChartTooltip total={total} />} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
@@ -176,7 +187,7 @@ function DonutKpiChart({ title, data }: { title: string; data: ChartDatum[] }) {
                 <div key={item.name} className="flex min-w-0 items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
                   <span className="min-w-0 flex-1 truncate text-gray-600" title={item.name}>{item.name}</span>
-                  <span className="font-semibold text-gray-900">{total ? ((item.value / total) * 100).toFixed(0) : 0}%</span>
+                  <span className="shrink-0 font-semibold text-gray-900">{formatQuantidadeComPercentual(item.value, total)}</span>
                 </div>
               ))}
             </div>
@@ -471,9 +482,9 @@ export default function EmProducaoPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <HorizontalKpiChart title="Colecao" data={graficos.colecao} color="#6b5aa6" />
-        <HorizontalKpiChart title="Categoria" data={graficos.categoria} color="#d32232" />
         <HorizontalKpiChart title="Linha" data={graficos.linha} color="#2095d2" />
+        <HorizontalKpiChart title="Categoria" data={graficos.categoria} color="#d32232" />
+        <HorizontalKpiChart title="Colecao" data={graficos.colecao} color="#6b5aa6" />
         <DonutKpiChart title="Genero" data={graficos.genero} />
       </div>
       <Card>
