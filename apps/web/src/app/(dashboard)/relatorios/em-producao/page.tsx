@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -15,7 +15,7 @@ import {
   PcpClassificacaoDimensao,
   emProducaoApi,
 } from '@/lib/pcpApi';
-import { cn, formatDate, formatNumber } from '@/lib/utils';
+import { formatDate, formatNumber } from '@/lib/utils';
 import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
 import {
   Bar,
@@ -197,40 +197,109 @@ function DonutKpiChart({ title, data }: { title: string; data: ChartDatum[] }) {
     </Card>
   );
 }
-function formatCell(row: EmProducaoRow, key: SortKey): string {
-  const value = row[key];
-  if (value === null || value === undefined || value === '') return '-';
-  if (key === 'dtInicio' || key === 'dtPrevisao' || key === 'insertDate' || key === 'lastChangeDate') return formatDate(String(value));
-  if (key === 'percentFinalizado') return `${Number(value).toFixed(1)}%`;
-  if (typeof value === 'number') return formatNumber(value);
-  return String(value);
+
+type ResumoQuantidades = Pick<EmProducaoRow, 'quantidadeOp' | 'quantidadeFinalizada' | 'quantidadePendente' | 'percentFinalizado'> & {
+  diasAtraso: number;
+};
+
+type MatrizTamanho = {
+  key: string;
+  tamanho: string;
+  resumo: ResumoQuantidades;
+};
+
+type MatrizCor = {
+  key: string;
+  cor: string;
+  resumo: ResumoQuantidades;
+  tamanhos: MatrizTamanho[];
+};
+
+type MatrizOpReferencia = {
+  key: string;
+  row: EmProducaoRow;
+  resumo: ResumoQuantidades;
+  cores: MatrizCor[];
+};
+
+const ORDEM_TAMANHOS = ['UN', 'PP', 'P', 'M', 'G', 'GG', 'XG', 'EG', '2', '4', '6', '8', '10', '12', '14', '16'];
+
+function resumirQuantidades(rows: EmProducaoRow[]): ResumoQuantidades {
+  const quantidadeOp = rows.reduce((total, row) => total + row.quantidadeOp, 0);
+  const quantidadeFinalizada = rows.reduce((total, row) => total + row.quantidadeFinalizada, 0);
+  const quantidadePendente = rows.reduce((total, row) => total + row.quantidadePendente, 0);
+  return {
+    quantidadeOp,
+    quantidadeFinalizada,
+    quantidadePendente,
+    percentFinalizado: quantidadeOp > 0 ? (quantidadeFinalizada / quantidadeOp) * 100 : 0,
+    diasAtraso: Math.max(0, ...rows.map((row) => row.diasAtraso)),
+  };
 }
 
-function ThSort({
-  coluna,
-  sortKey,
-  sortDir,
-  onSort,
-}: {
-  coluna: (typeof COLUNAS)[number];
-  sortKey: SortKey;
-  sortDir: 'asc' | 'desc';
-  onSort: (key: SortKey) => void;
-}) {
-  const active = sortKey === coluna.key;
-  return (
-    <TableCell
-      isHeader
-      align={coluna.align}
-      onClick={() => onSort(coluna.key)}
-      className="cursor-pointer select-none whitespace-nowrap bg-gray-50 hover:bg-gray-100 !px-2 !py-2"
-    >
-      <span className={cn('flex items-center gap-1.5', coluna.align === 'right' && 'justify-end', coluna.align === 'center' && 'justify-center')}>
-        <span>{coluna.label}</span>
-        <span className={active ? 'text-[var(--bbtk-purple)]' : 'text-gray-300'}>{active && sortDir === 'desc' ? 'v' : '^'}</span>
-      </span>
-    </TableCell>
-  );
+function ordenarTamanho(a: MatrizTamanho, b: MatrizTamanho): number {
+  const indiceA = ORDEM_TAMANHOS.indexOf(a.tamanho.toUpperCase());
+  const indiceB = ORDEM_TAMANHOS.indexOf(b.tamanho.toUpperCase());
+  if (indiceA !== -1 || indiceB !== -1) return (indiceA === -1 ? 999 : indiceA) - (indiceB === -1 ? 999 : indiceB);
+  return a.tamanho.localeCompare(b.tamanho, 'pt-BR', { numeric: true });
+}
+
+function montarMatriz(rows: EmProducaoRow[]): MatrizOpReferencia[] {
+  const grupos = new Map<string, EmProducaoRow[]>();
+
+  rows.forEach((row) => {
+    const referencia = row.referenceCode?.trim() || `produto-${row.productCode}`;
+    const key = `${row.branchCode}-${row.orderCode}-${referencia}`;
+    const grupo = grupos.get(key) || [];
+    grupo.push(row);
+    grupos.set(key, grupo);
+  });
+
+  return Array.from(grupos.entries())
+    .map(([key, rowsDaOp]) => {
+      const gruposCor = new Map<string, EmProducaoRow[]>();
+      rowsDaOp.forEach((row) => {
+        const cor = row.cor?.trim() || 'Sem cor';
+        const grupo = gruposCor.get(cor) || [];
+        grupo.push(row);
+        gruposCor.set(cor, grupo);
+      });
+
+      const cores = Array.from(gruposCor.entries())
+        .map(([cor, rowsDaCor]) => {
+          const gruposTamanho = new Map<string, EmProducaoRow[]>();
+          rowsDaCor.forEach((row) => {
+            const tamanho = row.tamanho?.trim() || 'Sem tamanho';
+            const grupo = gruposTamanho.get(tamanho) || [];
+            grupo.push(row);
+            gruposTamanho.set(tamanho, grupo);
+          });
+
+          const tamanhos = Array.from(gruposTamanho.entries())
+            .map(([tamanho, rowsDoTamanho]) => ({
+              key: `${key}-${cor}-${tamanho}`,
+              tamanho,
+              resumo: resumirQuantidades(rowsDoTamanho),
+            }))
+            .sort(ordenarTamanho);
+
+          return {
+            key: `${key}-${cor}`,
+            cor,
+            resumo: resumirQuantidades(rowsDaCor),
+            tamanhos,
+          };
+        })
+        .sort((a, b) => b.resumo.quantidadePendente - a.resumo.quantidadePendente || a.cor.localeCompare(b.cor, 'pt-BR'));
+
+      return {
+        key,
+        row: rowsDaOp[0],
+        resumo: resumirQuantidades(rowsDaOp),
+        cores,
+      };
+    })
+    .sort((a, b) => b.resumo.quantidadePendente - a.resumo.quantidadePendente || a.row.orderCode - b.row.orderCode);
 }
 
 export default function EmProducaoPage() {
@@ -244,8 +313,8 @@ export default function EmProducaoPage() {
   const [search, setSearch] = useState('');
   const [dataInicio, setDataInicio] = useState('');
   const [considerarSemReferencia, setConsiderarSemReferencia] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>('quantidadePendente');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [opsExpandidas, setOpsExpandidas] = useState<Set<string>>(() => new Set());
+  const [coresExpandidas, setCoresExpandidas] = useState<Set<string>>(() => new Set());
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
@@ -301,27 +370,17 @@ export default function EmProducaoPage() {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
   }
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
-    else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
-  }
+  const rowsDetalhados = data?.rows || [];
+  const matriz = useMemo(() => montarMatriz(rowsDetalhados), [rowsDetalhados]);
 
-  const rowsOrdenadas = useMemo(() => {
-    const rows = data?.rows || [];
-    return [...rows].sort((a, b) => {
-      const va = a[sortKey];
-      const vb = b[sortKey];
-      if (va === null || va === undefined) return 1;
-      if (vb === null || vb === undefined) return -1;
-      const cmp = typeof va === 'number' && typeof vb === 'number'
-        ? va - vb
-        : String(va).localeCompare(String(vb), 'pt-BR', { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
+  function alternarExpandido(setter: Dispatch<SetStateAction<Set<string>>>, key: string) {
+    setter((anterior) => {
+      const proximo = new Set(anterior);
+      if (proximo.has(key)) proximo.delete(key);
+      else proximo.add(key);
+      return proximo;
     });
-  }, [data, sortKey, sortDir]);
+  }
 
 
   useEffect(() => {
@@ -355,7 +414,7 @@ export default function EmProducaoPage() {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', atualizarLargura);
     };
-  }, [rowsOrdenadas.length, isLoading]);
+  }, [matriz.length, opsExpandidas, coresExpandidas, isLoading]);
 
   function sincronizarScrollPeloTopo() {
     const topo = topScrollRef.current;
@@ -364,7 +423,7 @@ export default function EmProducaoPage() {
     tabela.scrollLeft = topo.scrollLeft;
   }
   const totais = useMemo(() => {
-    return rowsOrdenadas.reduce(
+    return rowsDetalhados.reduce(
       (acc, row) => {
         acc.quantidadeOp += row.quantidadeOp;
         acc.quantidadeFinalizada += row.quantidadeFinalizada;
@@ -373,7 +432,7 @@ export default function EmProducaoPage() {
       },
       { quantidadeOp: 0, quantidadeFinalizada: 0, quantidadePendente: 0 }
     );
-  }, [rowsOrdenadas]);
+  }, [rowsDetalhados]);
 
 
   const graficos = useMemo(() => {
@@ -386,7 +445,7 @@ export default function EmProducaoPage() {
     };
   }, [data]);
   function exportarExcel() {
-    if (!data || rowsOrdenadas.length === 0) return;
+    if (!data || rowsDetalhados.length === 0) return;
     const columns: ExcelColumn[] = COLUNAS.map((coluna) => ({
       key: coluna.key,
       header: coluna.label,
@@ -398,9 +457,9 @@ export default function EmProducaoPage() {
       sheetName: 'Em Producao',
       title: 'Relatorio Em Producao',
       columns,
-      data: rowsOrdenadas as unknown as Record<string, unknown>[],
+      data: rowsDetalhados as unknown as Record<string, unknown>[],
       totals: {
-        branchName: `TOTAL (${rowsOrdenadas.length} itens)`,
+        branchName: `TOTAL (${rowsDetalhados.length} itens)`,
         quantidadeOp: totais.quantidadeOp,
         quantidadeFinalizada: totais.quantidadeFinalizada,
         quantidadePendente: totais.quantidadePendente,
@@ -421,7 +480,7 @@ export default function EmProducaoPage() {
             <p className="text-xs text-gray-400 mt-1">Atualizado em {new Date(data.atualizadoEm).toLocaleString('pt-BR')}</p>
           )}
         </div>
-        <Button onClick={exportarExcel} disabled={!data || rowsOrdenadas.length === 0 || isLoading} variant="secondary">
+        <Button onClick={exportarExcel} disabled={!data || rowsDetalhados.length === 0 || isLoading} variant="secondary">
           Exportar Excel
         </Button>
       </div>
@@ -489,50 +548,113 @@ export default function EmProducaoPage() {
       </div>
       <Card>
         <CardHeader>
-          <CardTitle>{rowsOrdenadas.length} itens de OP</CardTitle>
+          <div>
+            <CardTitle>{matriz.length} OPs / referências</CardTitle>
+            <p className="mt-1 text-xs font-normal text-gray-500">Clique na OP para ver as cores e, depois, na cor para detalhar os tamanhos.</p>
+          </div>
         </CardHeader>
         <div ref={topScrollRef} onScroll={sincronizarScrollPeloTopo} className="mb-2 overflow-x-auto overflow-y-hidden">
           <div style={{ width: scrollWidth || '100%', height: 1 }} />
         </div>
 
-        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[640px] overflow-auto" tableClassName="text-[10px] lg:text-xs min-w-[1850px]">
+        <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[640px] overflow-auto" tableClassName="text-[10px] lg:text-xs min-w-[1480px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
-                {COLUNAS.map((coluna) => (
-                  <ThSort key={coluna.key} coluna={coluna} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                ))}
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">OP / REFERÊNCIA</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">COR / TAMANHO</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">FILIAL</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">STATUS</TableCell>
+                <TableCell isHeader align="center" className="whitespace-nowrap !px-2 !py-2">INÍCIO</TableCell>
+                <TableCell isHeader align="center" className="whitespace-nowrap !px-2 !py-2">PREVISÃO</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">COLEÇÃO</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">CATEGORIA</TableCell>
+                <TableCell isHeader className="whitespace-nowrap !px-2 !py-2">LINHA</TableCell>
+                <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">QTDE OP</TableCell>
+                <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">FINALIZADA</TableCell>
+                <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">PENDENTE</TableCell>
+                <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">% FINAL.</TableCell>
+                <TableCell isHeader align="right" className="whitespace-nowrap !px-2 !py-2">ATRASO</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={COLUNAS.length} align="center" className="py-10 text-gray-500">Carregando...</TableCell>
+                  <TableCell colSpan={14} align="center" className="py-10 text-gray-500">Carregando...</TableCell>
                 </TableRow>
-              ) : rowsOrdenadas.length === 0 ? (
+              ) : matriz.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={COLUNAS.length} align="center" className="py-10 text-gray-500">Nenhum item encontrado</TableCell>
+                  <TableCell colSpan={14} align="center" className="py-10 text-gray-500">Nenhum item encontrado</TableCell>
                 </TableRow>
               ) : (
                 <>
-                  {rowsOrdenadas.map((row) => (
-                    <TableRow key={row.id} className={row.diasAtraso > 0 ? 'bg-red-50/40' : undefined}>
-                      {COLUNAS.map((coluna) => (
-                        <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
-                          {coluna.key === 'descricao' ? (
-                            <span className="block max-w-[260px] truncate" title={row.descricao}>{row.descricao}</span>
-                          ) : (
-                            formatCell(row, coluna.key)
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
+                  {matriz.map((op) => {
+                    const opExpandida = opsExpandidas.has(op.key);
+                    return (
+                      <Fragment key={op.key}>
+                        <TableRow key={op.key} className={op.resumo.diasAtraso > 0 ? 'bg-red-50/40' : 'bg-white'}>
+                          <TableCell className="!px-2 !py-2">
+                            <button type="button" onClick={() => alternarExpandido(setOpsExpandidas, op.key)} aria-expanded={opExpandida} className="flex max-w-[280px] items-start gap-1.5 text-left font-semibold text-gray-900 hover:text-[var(--bbtk-purple)]">
+                              <span className="mt-0.5 text-gray-400">{opExpandida ? '−' : '+'}</span>
+                              <span className="min-w-0"><span className="block truncate">OP {formatNumber(op.row.orderCode)} · {op.row.referenceCode || `Cód. ${op.row.productCode}`}</span><span className="block truncate text-[10px] font-normal text-gray-500" title={op.row.descricao}>{op.row.descricao}</span></span>
+                            </button>
+                          </TableCell>
+                          <TableCell className="!px-2 !py-2 text-gray-400">{op.cores.length} {op.cores.length === 1 ? 'cor' : 'cores'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.branchName}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.statusLabel}</TableCell>
+                          <TableCell align="center" className="whitespace-nowrap !px-2 !py-2">{op.row.dtInicio ? formatDate(op.row.dtInicio) : '-'}</TableCell>
+                          <TableCell align="center" className="whitespace-nowrap !px-2 !py-2">{op.row.dtPrevisao ? formatDate(op.row.dtPrevisao) : '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.colecao || '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.categoria || '-'}</TableCell>
+                          <TableCell className="whitespace-nowrap !px-2 !py-2">{op.row.linha || '-'}</TableCell>
+                          <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadeOp)}</TableCell>
+                          <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadeFinalizada)}</TableCell>
+                          <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{formatNumber(op.resumo.quantidadePendente)}</TableCell>
+                          <TableCell align="right" className="whitespace-nowrap !px-2 !py-2 font-semibold">{op.resumo.percentFinalizado.toFixed(1)}%</TableCell>
+                          <TableCell align="right" className={op.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 font-semibold text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{op.resumo.diasAtraso > 0 ? `${op.resumo.diasAtraso}d` : '-'}</TableCell>
+                        </TableRow>
+                        {opExpandida && op.cores.map((cor) => {
+                          const corExpandida = coresExpandidas.has(cor.key);
+                          return (
+                            <Fragment key={cor.key}>
+                              <TableRow key={cor.key} className="bg-slate-50/70">
+                                <TableCell className="!px-2 !py-2" />
+                                <TableCell className="!px-2 !py-2">
+                                  <button type="button" onClick={() => alternarExpandido(setCoresExpandidas, cor.key)} aria-expanded={corExpandida} className="flex max-w-[220px] items-center gap-1.5 pl-4 text-left font-medium text-gray-700 hover:text-[var(--bbtk-purple)]">
+                                    <span className="text-gray-400">{corExpandida ? '−' : '+'}</span>
+                                    <span className="truncate">{cor.cor}</span>
+                                  </button>
+                                </TableCell>
+                                <TableCell colSpan={7} className="!px-2 !py-2 text-gray-400">{cor.tamanhos.length} {cor.tamanhos.length === 1 ? 'tamanho' : 'tamanhos'}</TableCell>
+                                <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadeOp)}</TableCell>
+                                <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadeFinalizada)}</TableCell>
+                                <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(cor.resumo.quantidadePendente)}</TableCell>
+                                <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{cor.resumo.percentFinalizado.toFixed(1)}%</TableCell>
+                                <TableCell align="right" className={cor.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{cor.resumo.diasAtraso > 0 ? `${cor.resumo.diasAtraso}d` : '-'}</TableCell>
+                              </TableRow>
+                              {corExpandida && cor.tamanhos.map((tamanho) => (
+                                <TableRow key={tamanho.key} className="bg-white">
+                                  <TableCell className="!px-2 !py-2" />
+                                  <TableCell className="!px-2 !py-2 pl-12 font-medium text-gray-600">{tamanho.tamanho}</TableCell>
+                                  <TableCell colSpan={7} className="!px-2 !py-2 text-gray-300">—</TableCell>
+                                  <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadeOp)}</TableCell>
+                                  <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadeFinalizada)}</TableCell>
+                                  <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{formatNumber(tamanho.resumo.quantidadePendente)}</TableCell>
+                                  <TableCell align="right" className="whitespace-nowrap !px-2 !py-2">{tamanho.resumo.percentFinalizado.toFixed(1)}%</TableCell>
+                                  <TableCell align="right" className={tamanho.resumo.diasAtraso > 0 ? 'whitespace-nowrap !px-2 !py-2 text-red-600' : 'whitespace-nowrap !px-2 !py-2'}>{tamanho.resumo.diasAtraso > 0 ? `${tamanho.resumo.diasAtraso}d` : '-'}</TableCell>
+                                </TableRow>
+                              ))}
+                            </Fragment>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
                   <TableRow isHighlighted className="sticky bottom-0 z-10">
-                    <TableCell colSpan={15} className="font-bold">TOTAL ({rowsOrdenadas.length} itens)</TableCell>
+                    <TableCell colSpan={9} className="font-bold">TOTAL ({rowsDetalhados.length} itens)</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadeOp)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadeFinalizada)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.quantidadePendente)}</TableCell>
-                    <TableCell colSpan={3} />
+                    <TableCell colSpan={2} />
                   </TableRow>
                 </>
               )}
