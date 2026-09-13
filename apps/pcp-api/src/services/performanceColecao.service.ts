@@ -55,6 +55,21 @@ export interface PerformanceColecaoRow {
   totalEstoqueVenda: number;
 }
 
+export interface PerformanceColecaoResumoMes {
+  mes: string;
+  dataEstoque: string;
+  qtdeEntregue: number;
+  pecasVendidasColecao: number;
+  estoqueFinal: number;
+  estoqueValorCusto: number;
+  estoqueValorVenda: number;
+  markupEstoque: number | null;
+  giroPecasPercent: number;
+  vendaColecaoValor: number;
+  vendaTotalPecas: number;
+  participacaoColecaoPecasPercent: number;
+}
+
 export interface PerformanceColecaoResponse {
   config: {
     precoCustoBranchCode: number;
@@ -79,6 +94,7 @@ export interface PerformanceColecaoResponse {
     participacaoColecaoPercent: number;
     giroMedioPercent: number | null;
   };
+  resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];
 }
 
@@ -160,6 +176,18 @@ interface QueryRow {
   total_estoque_venda: Decimal | null;
 }
 
+interface ResumoMensalQueryRow {
+  mes_inicio: Date;
+  data_estoque: Date;
+  qtde_entregue: Decimal | null;
+  pecas_vendidas_colecao: Decimal | null;
+  estoque_final: Decimal | null;
+  estoque_valor_custo: Decimal | null;
+  estoque_valor_venda: Decimal | null;
+  venda_colecao_valor: Decimal | null;
+  venda_total_pecas: Decimal | null;
+}
+
 async function getVendaPeriodoTotal(filtro: PerformanceColecaoFiltro): Promise<number> {
   const produtoFiltro = buildProdutoFiltro(filtro, false);
   const vendaBranchFiltro = buildVendaBranchFiltro(filtro.branches);
@@ -185,13 +213,176 @@ async function getVendaPeriodoTotal(filtro: PerformanceColecaoFiltro): Promise<n
   return decimalToNumber(rows[0]?.total);
 }
 
+async function getResumoMensal(
+  filtro: PerformanceColecaoFiltro,
+  config: { precoCustoBranchCode: number; custoCode: number; pdvVarejoCode: number; pdvAtacadoCode: number }
+): Promise<PerformanceColecaoResumoMes[]> {
+  const produtoFiltroColecao = buildProdutoFiltro(filtro, true);
+  const produtoFiltroTotal = buildProdutoFiltro(filtro, false);
+  const vendaBranchFiltro = buildVendaBranchFiltro(filtro.branches);
+  const estoqueBranchFiltro = buildEstoqueBranchFiltro(filtro.branches);
+
+  const rows = await prisma.$queryRaw<ResumoMensalQueryRow[]>`
+    WITH periodos AS (
+      SELECT
+        mes_inicio::date AS mes_inicio,
+        GREATEST(mes_inicio::date, ${filtro.dataInicio}::date) AS venda_inicio,
+        LEAST((mes_inicio::date + INTERVAL '1 month' - INTERVAL '1 day')::date, ${filtro.dataFim}::date) AS venda_fim,
+        LEAST((mes_inicio::date + INTERVAL '1 month' - INTERVAL '1 day')::date, ${filtro.dataFim}::date) AS data_estoque
+      FROM generate_series(
+        date_trunc('month', ${filtro.dataInicio}::date),
+        date_trunc('month', ${filtro.dataFim}::date),
+        INTERVAL '1 month'
+      ) AS gs(mes_inicio)
+    ),
+    produtos_colecao AS (
+      SELECT DISTINCT a.product_sku, a.product_code
+      FROM produto_analitico a
+      WHERE a.product_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      ${produtoFiltroColecao}
+    ),
+    produtos_total AS (
+      SELECT DISTINCT a.product_code
+      FROM produto_analitico a
+      WHERE a.product_code IS NOT NULL
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      ${produtoFiltroTotal}
+    ),
+    vendas_colecao AS (
+      SELECT
+        p.mes_inicio,
+        COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS pecas_vendidas_colecao,
+        COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END), 0) AS venda_colecao_valor
+      FROM periodos p
+      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      JOIN produtos_colecao pc ON pc.product_code = ti.product_code
+      ${OPERACAO_JOIN}
+      WHERE t.status = 4
+        AND ${SALE_OPERATION_FILTER}
+        ${vendaBranchFiltro}
+      GROUP BY p.mes_inicio
+    ),
+    vendas_total AS (
+      SELECT
+        p.mes_inicio,
+        COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS venda_total_pecas
+      FROM periodos p
+      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      JOIN produtos_total pt ON pt.product_code = ti.product_code
+      ${OPERACAO_JOIN}
+      WHERE t.status = 4
+        AND ${SALE_OPERATION_FILTER}
+        ${vendaBranchFiltro}
+      GROUP BY p.mes_inicio
+    ),
+    entradas AS (
+      SELECT
+        p.mes_inicio,
+        COALESCE(SUM(ABS(COALESCE(ti.quantity, 0))), 0) AS qtde_entregue
+      FROM periodos p
+      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
+      JOIN produtos_colecao pc ON pc.product_code = ti.product_code
+      ${OPERACAO_JOIN}
+      WHERE t.status = 4
+        AND co.operations_type = 'E'
+        AND NOT ${IS_DEVOLUCAO}
+        ${vendaBranchFiltro}
+      GROUP BY p.mes_inicio
+    ),
+    precos AS (
+      SELECT
+        base.product_code,
+        c.valor AS custo,
+        pv.valor AS pdv_varejo,
+        pa.valor AS pdv_atacado
+      FROM (
+        SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode}
+        UNION
+        SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${config.precoCustoBranchCode}
+      ) base
+      LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${config.custoCode}
+      LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${config.precoCustoBranchCode} AND pv.price_code = ${config.pdvVarejoCode}
+      LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${config.precoCustoBranchCode} AND pa.price_code = ${config.pdvAtacadoCode}
+    ),
+    ultimo_saldo AS (
+      SELECT DISTINCT ON (p.mes_inicio, ps.product_sku, ps.branch_code, ps.stock_code)
+        p.mes_inicio,
+        ps.product_sku,
+        pc.product_code,
+        ps.branch_code,
+        ps.stock_code,
+        ps.stock
+      FROM periodos p
+      JOIN prd_saldo ps ON ps.captured_at <= p.data_estoque + INTERVAL '1 day'
+      JOIN produtos_colecao pc ON pc.product_sku = ps.product_sku
+      WHERE 1=1
+        AND (ps.branch_code != ${FABRICA_BRANCH_CODE} OR ps.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+        ${estoqueBranchFiltro}
+      ORDER BY p.mes_inicio, ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
+    ),
+    estoque AS (
+      SELECT
+        us.mes_inicio,
+        COALESCE(SUM(us.stock), 0) AS estoque_final,
+        COALESCE(SUM(us.stock * COALESCE(p.custo, 0)), 0) AS estoque_valor_custo,
+        COALESCE(SUM(us.stock * COALESCE(p.pdv_varejo, p.pdv_atacado, 0)), 0) AS estoque_valor_venda
+      FROM ultimo_saldo us
+      LEFT JOIN precos p ON p.product_code = us.product_code
+      GROUP BY us.mes_inicio
+    )
+    SELECT
+      p.mes_inicio,
+      p.data_estoque,
+      COALESCE(e.qtde_entregue, 0) AS qtde_entregue,
+      COALESCE(vc.pecas_vendidas_colecao, 0) AS pecas_vendidas_colecao,
+      COALESCE(es.estoque_final, 0) AS estoque_final,
+      COALESCE(es.estoque_valor_custo, 0) AS estoque_valor_custo,
+      COALESCE(es.estoque_valor_venda, 0) AS estoque_valor_venda,
+      COALESCE(vc.venda_colecao_valor, 0) AS venda_colecao_valor,
+      COALESCE(vt.venda_total_pecas, 0) AS venda_total_pecas
+    FROM periodos p
+    LEFT JOIN entradas e ON e.mes_inicio = p.mes_inicio
+    LEFT JOIN vendas_colecao vc ON vc.mes_inicio = p.mes_inicio
+    LEFT JOIN vendas_total vt ON vt.mes_inicio = p.mes_inicio
+    LEFT JOIN estoque es ON es.mes_inicio = p.mes_inicio
+    ORDER BY p.mes_inicio
+  `;
+
+  return rows.map((row) => {
+    const pecasVendidasColecao = decimalToNumber(row.pecas_vendidas_colecao);
+    const estoqueFinal = decimalToNumber(row.estoque_final);
+    const estoqueValorCusto = decimalToNumber(row.estoque_valor_custo);
+    const estoqueValorVenda = decimalToNumber(row.estoque_valor_venda);
+    const vendaTotalPecas = decimalToNumber(row.venda_total_pecas);
+    const baseGiro = pecasVendidasColecao + estoqueFinal;
+    return {
+      mes: row.mes_inicio.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+      dataEstoque: row.data_estoque.toISOString().slice(0, 10),
+      qtdeEntregue: round(decimalToNumber(row.qtde_entregue), 0),
+      pecasVendidasColecao: round(pecasVendidasColecao, 0),
+      estoqueFinal: round(estoqueFinal, 0),
+      estoqueValorCusto: round(estoqueValorCusto, 2),
+      estoqueValorVenda: round(estoqueValorVenda, 2),
+      markupEstoque: estoqueValorCusto > 0 ? round(estoqueValorVenda / estoqueValorCusto, 2) : null,
+      giroPecasPercent: baseGiro > 0 ? round((pecasVendidasColecao / baseGiro) * 100, 1) : 0,
+      vendaColecaoValor: round(decimalToNumber(row.venda_colecao_valor), 2),
+      vendaTotalPecas: round(vendaTotalPecas, 0),
+      participacaoColecaoPecasPercent: vendaTotalPecas > 0 ? round((pecasVendidasColecao / vendaTotalPecas) * 100, 1) : 0,
+    };
+  });
+}
+
 export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): Promise<PerformanceColecaoResponse> {
   const config = await getConfig();
   const produtoFiltro = buildProdutoFiltro(filtro, true);
   const vendaBranchFiltro = buildVendaBranchFiltro(filtro.branches);
   const estoqueBranchFiltro = buildEstoqueBranchFiltro(filtro.branches);
 
-  const [rows, vendaPeriodoTotal] = await Promise.all([
+  const [rows, vendaPeriodoTotal, resumoMensal] = await Promise.all([
     prisma.$queryRaw<QueryRow[]>`
       WITH produtos_filtrados AS (
         SELECT
@@ -361,6 +552,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       ORDER BY SUM(total_venda_valor) DESC, reference_code ASC
     `,
     getVendaPeriodoTotal(filtro),
+    getResumoMensal(filtro, config),
   ]);
 
   const mappedRows: PerformanceColecaoRow[] = rows.map((row) => {
@@ -442,6 +634,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       participacaoColecaoPercent: vendaPeriodoTotal > 0 ? round((totals.totalVendaValor / vendaPeriodoTotal) * 100, 1) : 0,
       giroMedioPercent: totals.qtdeProduzida > 0 ? round(totals.qtdeVendida / totals.qtdeProduzida, 2) : null,
     },
+    resumoMensal,
     rows: mappedRows,
   };
 }
