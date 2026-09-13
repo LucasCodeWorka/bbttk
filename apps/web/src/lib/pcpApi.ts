@@ -736,6 +736,21 @@ export interface PerformanceColecaoRow {
   totalEstoqueVenda: number;
 }
 
+export interface PerformanceColecaoResumoMes {
+  mes: string;
+  dataEstoque: string;
+  qtdeEntregue: number;
+  pecasVendidasColecao: number;
+  estoqueFinal: number;
+  estoqueValorCusto: number;
+  estoqueValorVenda: number;
+  markupEstoque: number | null;
+  giroPecasPercent: number;
+  vendaColecaoValor: number;
+  vendaTotalPecas: number;
+  participacaoColecaoPecasPercent: number;
+}
+
 export interface PerformanceColecaoResponse {
   config: {
     precoCustoBranchCode: number;
@@ -756,6 +771,7 @@ export interface PerformanceColecaoResponse {
     participacaoColecaoPercent: number;
     giroMedioPercent: number | null;
   };
+  resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];
 }
 
