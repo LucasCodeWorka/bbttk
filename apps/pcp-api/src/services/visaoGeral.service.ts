@@ -20,44 +20,49 @@ export interface VisaoGeralExtrasFiltro {
   branches?: number[];
 }
 
-// Indicadores extra da tela unificada "Visao Geral" - NAO reusam o motor do Relatorio
-// Base (esses 3 ja tem calculo proprio, testado, em cada relatorio de origem) - so
-// chamam direto os services ja existentes (mesmo workspace apps/pcp-api, import direto
-// sem duplicar SQL) e extraem os poucos numeros que viram card aqui. Aceita rodar por
-// baixo os 3 relatorios inteiros so pra pegar 2-3 numeros de cada - tradeoff aceito no
-// Fase 1 (correcao/reuso > microperf); se o carregamento da tela unificada ficar
-// sensivelmente mais lento que visitar as 3 telas separadas, extrair depois uma versao
-// "resumo" mais enxuta de cada service.
+// Indicadores extra da tela unificada "Visao Geral". Cada motor abaixo e pesado e
+// devolve muito mais informacao do que os cards precisam. Executa-los em paralelo
+// fazia quatro relatorios completos coexistirem na heap (o Relatorio Base + estes 3),
+// ultrapassando o limite da instancia do Render. Extraimos apenas os resumos e os
+// processamos um a um para que o resultado anterior possa ser liberado antes do proximo.
 export async function getVisaoGeralExtras(filtro: VisaoGeralExtrasFiltro) {
-  const [metaRow, grade, estoque, curva] = await Promise.all([
-    // Meta e exposta aqui (rota so protegida por moduleAccess, nao por adminOnly) pra
-    // qualquer usuario do modulo PCP ver "Meta: X - gap Y" nos cards. So a EDICAO da
-    // meta exige admin - isso continua no fluxo separado (pcpConfigApi.getMetaVisaoGeral/
-    // updateMetaVisaoGeral, apps/api, rota admin-only) quando o usuario abre o modal.
-    prisma.pcpMetaVisaoGeral.upsert({
-      where: { relatorio: META_VISAO_GERAL_KEY },
-      create: { relatorio: META_VISAO_GERAL_KEY },
-      update: {},
-    }),
-    getGrade({
+  // Meta e exposta aqui (rota so protegida por moduleAccess, nao por adminOnly) pra
+  // qualquer usuario do modulo PCP ver "Meta: X - gap Y" nos cards. So a EDICAO da
+  // meta exige admin - isso continua no fluxo separado (pcpConfigApi.getMetaVisaoGeral/
+  // updateMetaVisaoGeral, apps/api, rota admin-only) quando o usuario abre o modal.
+  const metaRow = await prisma.pcpMetaVisaoGeral.upsert({
+    where: { relatorio: META_VISAO_GERAL_KEY },
+    create: { relatorio: META_VISAO_GERAL_KEY },
+    update: {},
+  });
+
+  const skusEmRisco = await getGrade({
       categoria: filtro.categoria,
       linha: filtro.linha,
       genero: filtro.genero,
       status: filtro.status,
       branches: filtro.branches,
-    }),
-    getEstoqueSemGiro({
-      dias: 90,
-      branchCodes: filtro.branches,
-      produtoFiltro: { categoria: filtro.categoria, linha: filtro.linha, genero: filtro.genero },
-    }),
-    getCurvaAbcResumo({
-      categoria: filtro.categoria,
-      linha: filtro.linha,
-      genero: filtro.genero,
-      status: filtro.status,
-    }),
-  ]);
+    }).then((grade) => ({
+      percent: grade.indicadores.percentSkusEmRisco,
+      referenciasCriticas: grade.indicadores.referenciasCriticas,
+      skusEmRiscoTotal: grade.indicadores.skusEmRiscoTotal,
+      totalSkus: grade.indicadores.totalSkus,
+    }));
+
+  const estoqueSemGiro = await getEstoqueSemGiro({
+    dias: 90,
+    branchCodes: filtro.branches,
+    produtoFiltro: { categoria: filtro.categoria, linha: filtro.linha, genero: filtro.genero },
+    // A Visao Geral so usa "resumo"; nao devolve milhares de SKUs ao processo.
+    limit: 1,
+  }).then((estoque) => estoque.resumo);
+
+  const curvaAbc = await getCurvaAbcResumo({
+    categoria: filtro.categoria,
+    linha: filtro.linha,
+    genero: filtro.genero,
+    status: filtro.status,
+  }).then((curva) => curva.curvas.map((item) => ({ curva: item.curva, percentDoTotal: item.percentDoTotal })));
 
   return {
     meta: {
@@ -67,13 +72,8 @@ export async function getVisaoGeralExtras(filtro: VisaoGeralExtrasFiltro) {
       metaCoberturaBasicoMeses: decimalToNumber(metaRow.metaCoberturaBasicoMeses),
       metaCoberturaColecaoMeses: decimalToNumber(metaRow.metaCoberturaColecaoMeses),
     },
-    skusEmRisco: {
-      percent: grade.indicadores.percentSkusEmRisco,
-      referenciasCriticas: grade.indicadores.referenciasCriticas,
-      skusEmRiscoTotal: grade.indicadores.skusEmRiscoTotal,
-      totalSkus: grade.indicadores.totalSkus,
-    },
-    estoqueSemGiro: estoque.resumo,
-    curvaAbc: curva.curvas.map((c) => ({ curva: c.curva, percentDoTotal: c.percentDoTotal })),
+    skusEmRisco,
+    estoqueSemGiro,
+    curvaAbc,
   };
 }

@@ -252,46 +252,33 @@ export default function PcpPerformanceColecaoPage() {
 
 
   const resumoFinal = useMemo(() => {
-    const meses = data?.periodo.meses || ['Mes 1', 'Mes 2', 'Mes 3'];
-    const vendaMeses = [
-      { label: `Vendas ${meses[0] || '1o Mes'}`, quantidade: totais.vendaMes1, valor: totais.valorMes1 },
-      { label: `Vendas ${meses[1] || '2o Mes'}`, quantidade: totais.vendaMes2, valor: totais.valorMes2 },
-      { label: `Vendas ${meses[2] || '3o Mes'}`, quantidade: totais.vendaMes3, valor: totais.valorMes3 },
-    ];
-    const totalPecasVendidas = totais.vendaMes1 + totais.vendaMes2 + totais.vendaMes3;
-    const totalValorVendido = totais.valorMes1 + totais.valorMes2 + totais.valorMes3;
-    const basePecas = totalPecasVendidas + totais.estoqueFinal;
-    const baseValorVenda = totalValorVendido + totais.totalEstoqueVenda;
-    const baseValorCusto = totais.totalVendaCusto + totais.totalEstoqueCusto;
-    let acumulado = 0;
+    const meses = data?.resumoMensal || [];
+    const totalPecasVendidas = meses.reduce((sum, row) => sum + row.pecasVendidasColecao, 0);
+    const totalEntregue = meses.reduce((sum, row) => sum + row.qtdeEntregue, 0);
+    const totalVendaColecaoValor = meses.reduce((sum, row) => sum + row.vendaColecaoValor, 0);
+    const totalVendaTotalPecas = meses.reduce((sum, row) => sum + row.vendaTotalPecas, 0);
+    const ultimoMes = meses[meses.length - 1];
+    const estoqueFinal = ultimoMes?.estoqueFinal || 0;
+    const estoqueValorCusto = ultimoMes?.estoqueValorCusto || 0;
+    const estoqueValorVenda = ultimoMes?.estoqueValorVenda || 0;
+    const baseGiro = totalPecasVendidas + estoqueFinal;
 
     return {
-      meses: vendaMeses.map((mes) => {
-        acumulado += mes.quantidade;
-        return {
-          ...mes,
-          percentualPecas: basePecas > 0 ? (mes.quantidade / basePecas) * 100 : 0,
-          sobra: Math.max(totais.qtdeProduzida - acumulado, 0),
-          percentualValor: baseValorVenda > 0 ? (mes.valor / baseValorVenda) * 100 : 0,
-        };
-      }),
+      meses,
       total: {
-        quantidade: totalPecasVendidas,
-        percentualPecas: basePecas > 0 ? (totalPecasVendidas / basePecas) * 100 : 0,
-        sobra: totais.estoqueFinal,
-        valor: totalValorVendido,
-        percentualValor: baseValorVenda > 0 ? (totalValorVendido / baseValorVenda) * 100 : 0,
-      },
-      sobra: {
-        quantidade: totais.estoqueFinal,
-        valorCusto: totais.totalEstoqueCusto,
-        valorVenda: totais.totalEstoqueVenda,
-        percentualQuantidade: basePecas > 0 ? (totais.estoqueFinal / basePecas) * 100 : 0,
-        percentualCusto: baseValorCusto > 0 ? (totais.totalEstoqueCusto / baseValorCusto) * 100 : 0,
-        percentualVenda: baseValorVenda > 0 ? (totais.totalEstoqueVenda / baseValorVenda) * 100 : 0,
+        qtdeEntregue: totalEntregue,
+        pecasVendidasColecao: totalPecasVendidas,
+        estoqueFinal,
+        estoqueValorCusto,
+        estoqueValorVenda,
+        markupEstoque: estoqueValorCusto > 0 ? estoqueValorVenda / estoqueValorCusto : null,
+        giroPecasPercent: baseGiro > 0 ? (totalPecasVendidas / baseGiro) * 100 : 0,
+        vendaColecaoValor: totalVendaColecaoValor,
+        vendaTotalPecas: totalVendaTotalPecas,
+        participacaoColecaoPecasPercent: totalVendaTotalPecas > 0 ? (totalPecasVendidas / totalVendaTotalPecas) * 100 : 0,
       },
     };
-  }, [data?.periodo.meses, totais]);
+  }, [data?.resumoMensal]);
   function exportarExcel() {
     if (!data || rowsOrdenadas.length === 0) return;
     const columns: ExcelColumn[] = COLUNAS.map((coluna) => ({
@@ -377,78 +364,64 @@ export default function PcpPerformanceColecaoPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <KPICard title="Referencias" value={formatNumber(data?.kpis.referencias || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} color="green" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} subtitle={`${formatNumber(data?.kpis.qtdeVendida || 0)} peças vendidas`} color="green" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Part. colecao" value={`${(data?.kpis.participacaoColecaoPercent || 0).toFixed(1)}%`} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Qtde produzida" value={formatNumber(data?.kpis.qtdeProduzida || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Estoque final" value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
+        <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro medio" value={data?.kpis.giroMedioPercent === null || data?.kpis.giroMedioPercent === undefined ? '-' : data.kpis.giroMedioPercent.toFixed(2).replace('.', ',')} color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
       <Card>
         <CardHeader>
           <CardTitle>Resumo final</CardTitle>
         </CardHeader>
-        <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-5">
-          <div className="overflow-x-auto">
-            <table className="min-w-[620px] w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-gray-100 text-gray-900">
-                  <th className="border border-gray-300 px-3 py-2 text-left">Meses</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">%</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">Pcs vendidas</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">Qtde de sobra</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">Total do mes</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">%</th>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1320px] w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-gray-100 text-gray-900">
+                <th className="border border-gray-300 px-3 py-2 text-left">Meses</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Qtde entregue</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Pcs vendidas</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Qtde de sobra</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Estoque custo</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Estoque venda</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Markup estoque</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Giro em pecas</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Venda colecao mes</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Venda total mes (pcs)</th>
+                <th className="border border-gray-300 px-3 py-2 text-right">Part. colecao na venda total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resumoFinal.meses.map((row) => (
+                <tr key={row.mes}>
+                  <td className="border border-gray-300 bg-blue-100 px-3 py-2 font-semibold text-gray-900">Vendas {row.mes}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.qtdeEntregue)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.pecasVendidasColecao)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right" title={`Estoque em ${formatDate(row.dataEstoque)}`}>{formatNumber(row.estoqueFinal)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(row.estoqueValorCusto)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(row.estoqueValorVenda)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{row.markupEstoque === null ? '-' : row.markupEstoque.toFixed(2).replace('.', ',')}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.giroPecasPercent.toFixed(1)}%</td>
+                  <td className="border border-gray-300 bg-green-50 px-3 py-2 text-right">{formatMoney(row.vendaColecaoValor)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.vendaTotalPecas)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.participacaoColecaoPecasPercent.toFixed(1)}%</td>
                 </tr>
-              </thead>
-              <tbody>
-                {resumoFinal.meses.map((row) => (
-                  <tr key={row.label}>
-                    <td className="border border-gray-300 bg-blue-100 px-3 py-2 font-semibold text-gray-900">{row.label}</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.percentualPecas.toFixed(0)}%</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.quantidade)}</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.sobra)}</td>
-                    <td className="border border-gray-300 bg-green-50 px-3 py-2 text-right">{formatMoney(row.valor)}</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.percentualValor.toFixed(0)}%</td>
-                  </tr>
-                ))}
-                <tr className="bg-blue-100 font-bold text-gray-900">
-                  <td className="border border-gray-300 px-3 py-2">TOTAL</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.percentualPecas.toFixed(0)}%</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.quantidade)}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.sobra)}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.valor)}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.percentualValor.toFixed(0)}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="overflow-x-auto self-start">
-            <table className="min-w-[460px] w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  <th colSpan={3} className="border border-gray-300 bg-gray-100 px-3 py-2 text-center uppercase text-gray-900">Sobra de estoque</th>
-                </tr>
-                <tr className="bg-blue-100 text-gray-900">
-                  <th className="border border-gray-300 px-3 py-2 text-right">Qtde</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">Valor custo</th>
-                  <th className="border border-gray-300 px-3 py-2 text-right">Valor de venda</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="border border-gray-300 px-3 py-2 text-right text-lg">{formatNumber(resumoFinal.sobra.quantidade)}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right text-lg">{formatMoney(resumoFinal.sobra.valorCusto)}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right text-lg">{formatMoney(resumoFinal.sobra.valorVenda)}</td>
-                </tr>
-                <tr className="bg-blue-50 font-bold">
-                  <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.sobra.percentualQuantidade.toFixed(2)}%</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.sobra.percentualCusto.toFixed(2)}%</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.sobra.percentualVenda.toFixed(2)}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+              ))}
+              <tr className="bg-blue-100 font-bold text-gray-900">
+                <td className="border border-gray-300 px-3 py-2">TOTAL</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.qtdeEntregue)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.pecasVendidasColecao)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.estoqueFinal)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.estoqueValorCusto)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.estoqueValorVenda)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.markupEstoque === null ? '-' : resumoFinal.total.markupEstoque.toFixed(2).replace('.', ',')}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.giroPecasPercent.toFixed(1)}%</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.vendaColecaoValor)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.vendaTotalPecas)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.participacaoColecaoPecasPercent.toFixed(1)}%</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </Card>
 
