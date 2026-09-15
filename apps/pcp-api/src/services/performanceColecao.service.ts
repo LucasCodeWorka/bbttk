@@ -70,6 +70,15 @@ export interface PerformanceColecaoResumoMes {
   participacaoColecaoPecasPercent: number;
 }
 
+export interface PerformanceColecaoResumoProducao {
+  valorTotal: number;
+  custoTotal: number;
+  markup: number | null;
+  pecas: number;
+  precoVendaMedio: number | null;
+  precoCustoMedio: number | null;
+}
+
 export interface PerformanceColecaoResponse {
   config: {
     precoCustoBranchCode: number;
@@ -94,6 +103,7 @@ export interface PerformanceColecaoResponse {
     participacaoColecaoPercent: number;
     giroMedioPercent: number | null;
   };
+  resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];
 }
@@ -174,6 +184,8 @@ interface QueryRow {
   total_venda_custo: Decimal | null;
   total_estoque_custo: Decimal | null;
   total_estoque_venda: Decimal | null;
+  total_producao_valor: Decimal | null;
+  total_producao_custo: Decimal | null;
 }
 
 interface ResumoMensalQueryRow {
@@ -545,7 +557,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         SUM(total_venda_valor) AS total_venda_valor,
         SUM(total_venda_custo) AS total_venda_custo,
         SUM(total_estoque_custo) AS total_estoque_custo,
-        SUM(total_estoque_venda) AS total_estoque_venda
+        SUM(total_estoque_venda) AS total_estoque_venda,
+        SUM(qtde_entregue * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
+        SUM(qtde_entregue * COALESCE(custo, 0)) AS total_producao_custo
       FROM por_produto
       WHERE qtde_produzida <> 0 OR qtde_vendida <> 0 OR estoque_final <> 0
       GROUP BY grupo, reference_code
@@ -603,6 +617,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
     { qtdeProduzida: 0, qtdeVendida: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
   );
 
+  const totalProducaoValor = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_valor), 0);
+  const totalProducaoCusto = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_custo), 0);
+
   const inicio = new Date(`${filtro.dataInicio}T00:00:00`);
   const meses = [0, 1, 2].map((offset) => {
     const date = new Date(inicio);
@@ -633,6 +650,14 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       totalEstoqueVenda: round(totals.totalEstoqueVenda, 2),
       participacaoColecaoPercent: vendaPeriodoTotal > 0 ? round((totals.totalVendaValor / vendaPeriodoTotal) * 100, 1) : 0,
       giroMedioPercent: totals.qtdeProduzida > 0 ? round(totals.qtdeVendida / totals.qtdeProduzida, 2) : null,
+    },
+    resumoProducao: {
+      valorTotal: round(totalProducaoValor, 2),
+      custoTotal: round(totalProducaoCusto, 2),
+      markup: totalProducaoCusto > 0 ? round(totalProducaoValor / totalProducaoCusto, 2) : null,
+      pecas: round(totals.qtdeProduzida, 0),
+      precoVendaMedio: totals.qtdeProduzida > 0 ? round(totalProducaoValor / totals.qtdeProduzida, 2) : null,
+      precoCustoMedio: totals.qtdeProduzida > 0 ? round(totalProducaoCusto / totals.qtdeProduzida, 2) : null,
     },
     resumoMensal,
     rows: mappedRows,

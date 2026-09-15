@@ -250,6 +250,24 @@ export default function PcpPerformanceColecaoPage() {
     );
   }, [rowsOrdenadas]);
 
+  const resumoProducaoColecao = data?.resumoProducao || {
+    valorTotal: 0,
+    custoTotal: 0,
+    markup: null,
+    pecas: 0,
+    precoVendaMedio: null,
+    precoCustoMedio: null,
+  };
+
+  const linhasResumoProducao = [
+    { label: 'Valor Total da Colecao', currency: true, value: formatNumber(resumoProducaoColecao.valorTotal, 2) },
+    { label: 'Custo Total da Colecao', currency: true, value: formatNumber(resumoProducaoColecao.custoTotal, 2) },
+    { label: 'Markup da Colecao', currency: false, value: resumoProducaoColecao.markup === null ? '-' : formatNumber(resumoProducaoColecao.markup, 2) },
+    { label: 'Pecas', currency: false, value: formatNumber(resumoProducaoColecao.pecas, 0) },
+    { label: 'Preco de Venda Medio', currency: true, value: resumoProducaoColecao.precoVendaMedio === null ? '-' : formatNumber(resumoProducaoColecao.precoVendaMedio, 2) },
+    { label: 'Preco de Custo Medio', currency: true, value: resumoProducaoColecao.precoCustoMedio === null ? '-' : formatNumber(resumoProducaoColecao.precoCustoMedio, 2) },
+  ];
+
 
   const resumoFinal = useMemo(() => {
     const meses = data?.resumoMensal || [];
@@ -370,6 +388,19 @@ export default function PcpPerformanceColecaoPage() {
         <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro medio" value={data?.kpis.giroMedioPercent === null || data?.kpis.giroMedioPercent === undefined ? '-' : data.kpis.giroMedioPercent.toFixed(2).replace('.', ',')} color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
+      <Card className="max-w-md overflow-hidden !p-0">
+        <table className="w-full border-collapse text-sm">
+          <tbody>
+            {linhasResumoProducao.map((row, index) => (
+              <tr key={row.label} className={index < 3 ? 'bg-gray-50' : 'bg-white'}>
+                <td className="border border-gray-300 px-2 py-1 font-bold text-gray-900">{row.label}</td>
+                <td className="w-12 border border-gray-300 px-2 py-1 text-center font-bold text-gray-900">{row.currency ? 'R$' : ''}</td>
+                <td className="w-32 border border-gray-300 px-2 py-1 text-right font-bold text-gray-900">{isLoading || !data ? '-' : row.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Resumo final</CardTitle>
