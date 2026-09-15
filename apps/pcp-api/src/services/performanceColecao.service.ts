@@ -95,6 +95,15 @@ export interface PerformanceColecaoResumoMes {
   participacaoColecaoPecasPercent: number;
 }
 
+export interface PerformanceColecaoResumoProducao {
+  valorTotal: number;
+  custoTotal: number;
+  markup: number | null;
+  pecas: number;
+  precoVendaMedio: number | null;
+  precoCustoMedio: number | null;
+}
+
 export interface PerformanceColecaoResponse {
   config: {
     precoCustoBranchCode: number;
@@ -123,6 +132,7 @@ export interface PerformanceColecaoResponse {
     giroPeriodo: number;
     giroAteHoje: number | null;
   };
+  resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];
 }
@@ -207,6 +217,8 @@ interface QueryRow {
   total_venda_custo: Decimal | null;
   total_estoque_custo: Decimal | null;
   total_estoque_venda: Decimal | null;
+  total_producao_valor: Decimal | null;
+  total_producao_custo: Decimal | null;
 }
 
 interface ResumoMensalQueryRow {
@@ -797,7 +809,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         SUM(total_venda_valor) AS total_venda_valor,
         SUM(total_venda_custo) AS total_venda_custo,
         SUM(total_estoque_custo) AS total_estoque_custo,
-        SUM(total_estoque_venda) AS total_estoque_venda
+        SUM(total_estoque_venda) AS total_estoque_venda,
+        SUM(qtde_entregue * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
+        SUM(qtde_entregue * COALESCE(custo, 0)) AS total_producao_custo
       FROM por_produto
       WHERE qtdes_liberadas <> 0 OR qtde_entregue <> 0 OR qtde_vendida <> 0 OR estoque_final <> 0
       GROUP BY colecao, reference_code, cor, tamanho
@@ -829,6 +843,8 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
   // estoque pequeno puxando a media pra cima/baixo desproporcionalmente.
   const somaVendaAteHoje = rows.reduce((s, r) => s + decimalToNumber(r.qtde_vendida_ate_hoje), 0);
   const somaEstoqueAtual = rows.reduce((s, r) => s + decimalToNumber(r.estoque_atual), 0);
+  const totalProducaoValor = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_valor), 0);
+  const totalProducaoCusto = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_custo), 0);
 
   const inicio = new Date(`${filtro.dataInicio}T00:00:00`);
   const meses = [0, 1, 2].map((offset) => {
@@ -864,6 +880,14 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       participacaoColecaoPercent: vendaPeriodoTotal > 0 ? round((totals.totalVendaValor / vendaPeriodoTotal) * 100, 1) : 0,
       giroPeriodo: round(totals.qtdeVendida, 0),
       giroAteHoje: somaEstoqueAtual > 0 ? round(somaVendaAteHoje / somaEstoqueAtual, 2) : null,
+    },
+    resumoProducao: {
+      valorTotal: round(totalProducaoValor, 2),
+      custoTotal: round(totalProducaoCusto, 2),
+      markup: totalProducaoCusto > 0 ? round(totalProducaoValor / totalProducaoCusto, 2) : null,
+      pecas: round(totals.qtdeEntregue, 0),
+      precoVendaMedio: totals.qtdeEntregue > 0 ? round(totalProducaoValor / totals.qtdeEntregue, 2) : null,
+      precoCustoMedio: totals.qtdeEntregue > 0 ? round(totalProducaoCusto / totals.qtdeEntregue, 2) : null,
     },
     resumoMensal,
     rows: mappedRows,

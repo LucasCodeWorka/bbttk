@@ -767,6 +767,15 @@ export interface PerformanceColecaoResumoMes {
   participacaoColecaoPecasPercent: number;
 }
 
+export interface PerformanceColecaoResumoProducao {
+  valorTotal: number;
+  custoTotal: number;
+  markup: number | null;
+  pecas: number;
+  precoVendaMedio: number | null;
+  precoCustoMedio: number | null;
+}
+
 export interface PerformanceColecaoResponse {
   config: {
     precoCustoBranchCode: number;
@@ -791,6 +800,7 @@ export interface PerformanceColecaoResponse {
     giroPeriodo: number;
     giroAteHoje: number | null;
   };
+  resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];
 }

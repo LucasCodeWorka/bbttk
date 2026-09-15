@@ -12,6 +12,7 @@ import produtosRoutes from './routes/produtos.routes.js';
 import agrupamentosRoutes from './routes/agrupamentos.routes.js';
 import pcpConfigRoutes from './routes/pcpConfig.routes.js';
 import metaClassificacaoRoutes from './routes/metaClassificacao.routes.js';
+import { reportQueueMiddleware } from './middleware/reportQueue.middleware.js';
 
 const app = express();
 // Render (e outras plataformas de hospedagem) definem PORT automaticamente;
@@ -30,6 +31,7 @@ app.get('/health', (_req, res) => {
 });
 
 // API Routes
+app.use('/api', reportQueueMiddleware);
 app.use('/api', vendasRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api', metasRoutes);

@@ -4,6 +4,10 @@ import { prisma } from '../config/database.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bebetenkite-secret';
 const JWT_EXPIRATION = '24h';
+const configuredUserCacheTtl = Number(process.env.AUTH_USER_CACHE_TTL_MS);
+const USER_CACHE_TTL_MS = Number.isFinite(configuredUserCacheTtl) && configuredUserCacheTtl > 0
+  ? configuredUserCacheTtl
+  : 30_000;
 
 interface TokenPayload {
   userId: number;
@@ -11,6 +15,37 @@ interface TokenPayload {
   role: string;
   branchCodes: number[];
   moduleAccess: string[];
+}
+
+interface CachedUser {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  branchCodes: number[];
+  sellerCode: number | null;
+  isActive: boolean | null;
+  moduleAccess: string[];
+}
+
+const userCache = new Map<number, { expiresAt: number; user: CachedUser }>();
+
+function cacheUser(user: CachedUser) {
+  userCache.set(user.id, { expiresAt: Date.now() + USER_CACHE_TTL_MS, user });
+}
+
+function getCachedUser(id: number): CachedUser | null {
+  const cached = userCache.get(id);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    userCache.delete(id);
+    return null;
+  }
+  return cached.user;
+}
+
+function clearCachedUser(id: number) {
+  userCache.delete(id);
 }
 
 export async function createUser(
@@ -50,6 +85,17 @@ export async function authenticateUser(email: string, password: string) {
   if (!isValid) {
     return null;
   }
+
+  cacheUser({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    branchCodes: user.branchCodes,
+    sellerCode: user.sellerCode,
+    isActive: user.isActive,
+    moduleAccess: user.moduleAccess,
+  });
 
   const token = generateToken(user);
 
@@ -94,7 +140,10 @@ export function verifyToken(token: string): TokenPayload | null {
 }
 
 export async function getUserById(id: number) {
-  return prisma.user.findUnique({
+  const cached = getCachedUser(id);
+  if (cached) return cached;
+
+  const user = await prisma.user.findUnique({
     where: { id },
     select: {
       id: true,
@@ -107,6 +156,9 @@ export async function getUserById(id: number) {
       moduleAccess: true,
     },
   });
+
+  if (user) cacheUser(user);
+  return user;
 }
 
 export async function getAllUsers() {
@@ -145,7 +197,7 @@ export async function updateUser(
     delete updateData.password;
   }
 
-  return prisma.user.update({
+  const user = await prisma.user.update({
     where: { id },
     data: updateData,
     select: {
@@ -159,9 +211,13 @@ export async function updateUser(
       moduleAccess: true,
     },
   });
+
+  cacheUser(user);
+  return user;
 }
 
 export async function deleteUser(id: number) {
+  clearCachedUser(id);
   return prisma.user.delete({
     where: { id },
   });
