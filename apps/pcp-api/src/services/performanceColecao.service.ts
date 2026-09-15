@@ -558,8 +558,8 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         SUM(total_venda_custo) AS total_venda_custo,
         SUM(total_estoque_custo) AS total_estoque_custo,
         SUM(total_estoque_venda) AS total_estoque_venda,
-        SUM(qtde_entregue * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
-        SUM(qtde_entregue * COALESCE(custo, 0)) AS total_producao_custo
+        SUM(qtde_produzida * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
+        SUM(qtde_produzida * COALESCE(custo, 0)) AS total_producao_custo
       FROM por_produto
       WHERE qtde_produzida <> 0 OR qtde_vendida <> 0 OR estoque_final <> 0
       GROUP BY grupo, reference_code
