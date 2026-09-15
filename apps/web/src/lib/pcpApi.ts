@@ -709,19 +709,16 @@ export interface PerformanceColecaoFiltro {
   search?: string;
 }
 
-export interface PerformanceColecaoRow {
-  grupo: string | null;
-  referenceCode: string;
-  descricao: string;
-  categoria: string | null;
-  linha: string | null;
+export interface PerformanceColecaoMetricas {
   custo: number | null;
   pdvVarejo: number | null;
   markupVarejo: number | null;
   pdvAtacado: number | null;
   markupAtacado: number | null;
-  entrouDpa: string | null;
-  qtdeProduzida: number;
+  qtdesLiberadas: number;
+  qtdeEntregue: number;
+  saldoAEntregar: number;
+  percentEntregue: number | null;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;
@@ -729,11 +726,30 @@ export interface PerformanceColecaoRow {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
-  giro: number | null;
+  giroPeriodo: number;
+  giroAteHoje: number | null;
   totalVendaValor: number;
   totalVendaCusto: number;
   totalEstoqueCusto: number;
   totalEstoqueVenda: number;
+}
+
+export interface PerformanceColecaoTamanho extends PerformanceColecaoMetricas {
+  tamanho: string;
+}
+
+export interface PerformanceColecaoCor extends PerformanceColecaoMetricas {
+  cor: string;
+  tamanhos: PerformanceColecaoTamanho[];
+}
+
+export interface PerformanceColecaoRow extends PerformanceColecaoMetricas {
+  colecao: string | null;
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  cores: PerformanceColecaoCor[];
 }
 
 export interface PerformanceColecaoResumoMes {
@@ -761,7 +777,10 @@ export interface PerformanceColecaoResponse {
   periodo: { dataInicio: string; dataFim: string; meses: string[] };
   kpis: {
     referencias: number;
-    qtdeProduzida: number;
+    qtdesLiberadas: number;
+    qtdeEntregue: number;
+    saldoAEntregar: number;
+    percentEntregue: number | null;
     qtdeVendida: number;
     estoqueFinal: number;
     totalVendaValor: number;
@@ -769,7 +788,8 @@ export interface PerformanceColecaoResponse {
     totalEstoqueCusto: number;
     totalEstoqueVenda: number;
     participacaoColecaoPercent: number;
-    giroMedioPercent: number | null;
+    giroPeriodo: number;
+    giroAteHoje: number | null;
   };
   resumoMensal: PerformanceColecaoResumoMes[];
   rows: PerformanceColecaoRow[];

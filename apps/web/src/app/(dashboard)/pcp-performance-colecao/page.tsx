@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, Dispatch, SetStateAction } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -12,42 +12,57 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   PcpClassificacaoDimensao,
+  PerformanceColecaoCor,
+  PerformanceColecaoMetricas,
   PerformanceColecaoResponse,
   PerformanceColecaoRow,
+  PerformanceColecaoTamanho,
   performanceColecaoApi,
 } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber } from '@/lib/utils';
 import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
+import { ordemGrade } from '@/lib/gradeOrdem';
 
-type SortKey = keyof PerformanceColecaoRow;
+type SortKey = keyof Omit<PerformanceColecaoRow, 'cores'>;
+type MetricaKey = keyof PerformanceColecaoMetricas;
 
-const COLUNAS: Array<{
-  key: SortKey;
+type Coluna<K extends string> = {
+  key: K;
   label: string;
   align?: 'left' | 'right' | 'center';
   type?: 'text' | 'number' | 'currency' | 'percent';
   width: number;
-}> = [
-  { key: 'grupo', label: 'GRUPO', width: 18, type: 'text' },
+};
+
+const COLUNAS_IDENTIDADE: Array<Coluna<'colecao' | 'referenceCode' | 'descricao' | 'categoria' | 'linha'>> = [
+  { key: 'colecao', label: 'COLECAO', width: 18, type: 'text' },
   { key: 'referenceCode', label: 'REFERENCIA', width: 16, type: 'text' },
   { key: 'descricao', label: 'DESCRICAO', width: 32, type: 'text' },
   { key: 'categoria', label: 'CATEGORIA', width: 16, type: 'text' },
   { key: 'linha', label: 'LINHA', width: 16, type: 'text' },
+];
+
+const COLUNAS_METRICA: Array<Coluna<MetricaKey>> = [
   { key: 'custo', label: 'CUSTO', align: 'right', width: 12, type: 'currency' },
   { key: 'pdvVarejo', label: 'PDV VAREJO', align: 'right', width: 13, type: 'currency' },
-  { key: 'markupVarejo', label: 'MKUP VAR', align: 'right', width: 11, type: 'number' },
+  { key: 'markupVarejo', label: 'MKUP VAR', align: 'right', width: 11, type: 'percent' },
   { key: 'pdvAtacado', label: 'PDV ATACADO', align: 'right', width: 14, type: 'currency' },
-  { key: 'markupAtacado', label: 'MKUP ATA', align: 'right', width: 11, type: 'number' },
-  { key: 'entrouDpa', label: 'ENTROU DPA', align: 'center', width: 13, type: 'text' },
-  { key: 'qtdeProduzida', label: 'QTDE PRODUZIDA', align: 'right', width: 15, type: 'number' },
+  { key: 'markupAtacado', label: 'MKUP ATA', align: 'right', width: 11, type: 'percent' },
+  { key: 'qtdesLiberadas', label: 'QTDES LIBERADAS', align: 'right', width: 15, type: 'number' },
+  { key: 'qtdeEntregue', label: 'QTDE ENTREGUE', align: 'right', width: 14, type: 'number' },
+  { key: 'saldoAEntregar', label: 'SALDO A ENTREGAR', align: 'right', width: 15, type: 'number' },
+  { key: 'percentEntregue', label: '% ENTREGUE', align: 'right', width: 12, type: 'percent' },
   { key: 'vendaMes1', label: 'VDA 1 MES', align: 'right', width: 12, type: 'number' },
   { key: 'vendaMes2', label: 'VDA 2 MES', align: 'right', width: 12, type: 'number' },
   { key: 'vendaMes3', label: 'VDA 3 MES', align: 'right', width: 12, type: 'number' },
   { key: 'estoqueFinal', label: 'ESTQ FINAL', align: 'right', width: 12, type: 'number' },
-  { key: 'giro', label: 'GIRO', align: 'right', width: 10, type: 'number' },
+  { key: 'giroPeriodo', label: 'GIRO PERIODO', align: 'right', width: 13, type: 'number' },
+  { key: 'giroAteHoje', label: 'GIRO ATE HOJE', align: 'right', width: 13, type: 'number' },
   { key: 'totalVendaValor', label: 'TT $ VENDA', align: 'right', width: 14, type: 'currency' },
   { key: 'totalEstoqueCusto', label: 'TT ESTQ $ CUSTO', align: 'right', width: 17, type: 'currency' },
 ];
+
+const COLUNAS: Array<Coluna<SortKey>> = [...COLUNAS_IDENTIDADE, ...COLUNAS_METRICA];
 
 function defaultDataInicio(): string {
   const date = new Date();
@@ -60,17 +75,26 @@ function hoje(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-function formatCell(row: PerformanceColecaoRow, key: SortKey): string {
-  const value = row[key];
+function formatValue(value: unknown, key: SortKey): string {
   if (value === null || value === undefined || value === '') return '-';
-  if (key === 'entrouDpa') return formatDate(String(value));
   if (key === 'custo' || key === 'pdvVarejo' || key === 'pdvAtacado' || key === 'totalVendaValor' || key === 'totalEstoqueCusto') {
     return formatMoney(Number(value));
   }
-  if (key === 'markupVarejo' || key === 'markupAtacado') return Number(value).toFixed(2).replace('.', ',');
-  if (key === 'giro') return Number(value).toFixed(2).replace('.', ',');
+  if (key === 'markupVarejo' || key === 'markupAtacado' || key === 'percentEntregue') {
+    return `${Number(value).toFixed(1).replace('.', ',')}%`;
+  }
+  if (key === 'giroAteHoje') return Number(value).toFixed(2).replace('.', ',');
   if (typeof value === 'number') return formatNumber(value);
   return String(value);
+}
+
+function toggle(set: Dispatch<SetStateAction<Set<string>>>, chave: string) {
+  set((anterior) => {
+    const proximo = new Set(anterior);
+    if (proximo.has(chave)) proximo.delete(chave);
+    else proximo.add(chave);
+    return proximo;
+  });
 }
 
 function ThSort({
@@ -116,6 +140,8 @@ export default function PcpPerformanceColecaoPage() {
   const [lojas, setLojas] = useState<{ branchCode: number; label: string }[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('totalVendaValor');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [referenciasAbertas, setReferenciasAbertas] = useState<Set<string>>(new Set());
+  const [coresAbertas, setCoresAbertas] = useState<Set<string>>(new Set());
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
@@ -230,9 +256,10 @@ export default function PcpPerformanceColecaoPage() {
     tabela.scrollLeft = topo.scrollLeft;
   }
   const totais = useMemo(() => {
-    return rowsOrdenadas.reduce(
+    const acc = rowsOrdenadas.reduce(
       (acc, row) => {
-        acc.qtdeProduzida += row.qtdeProduzida;
+        acc.qtdesLiberadas += row.qtdesLiberadas;
+        acc.qtdeEntregue += row.qtdeEntregue;
         acc.vendaMes1 += row.vendaMes1;
         acc.vendaMes2 += row.vendaMes2;
         acc.vendaMes3 += row.vendaMes3;
@@ -246,8 +273,11 @@ export default function PcpPerformanceColecaoPage() {
         acc.totalEstoqueVenda += row.totalEstoqueVenda;
         return acc;
       },
-      { qtdeProduzida: 0, vendaMes1: 0, vendaMes2: 0, vendaMes3: 0, valorMes1: 0, valorMes2: 0, valorMes3: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
+      { qtdesLiberadas: 0, qtdeEntregue: 0, vendaMes1: 0, vendaMes2: 0, vendaMes3: 0, valorMes1: 0, valorMes2: 0, valorMes3: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
     );
+    const saldoAEntregar = Math.max(acc.qtdesLiberadas - acc.qtdeEntregue, 0);
+    const percentEntregue = acc.qtdesLiberadas > 0 ? (acc.qtdeEntregue / acc.qtdesLiberadas) * 100 : null;
+    return { ...acc, saldoAEntregar, percentEntregue };
   }, [rowsOrdenadas]);
 
 
@@ -281,22 +311,51 @@ export default function PcpPerformanceColecaoPage() {
   }, [data?.resumoMensal]);
   function exportarExcel() {
     if (!data || rowsOrdenadas.length === 0) return;
-    const columns: ExcelColumn[] = COLUNAS.map((coluna) => ({
-      key: coluna.key,
-      header: coluna.label,
-      width: coluna.width,
-      type: coluna.type === 'currency' || coluna.type === 'percent' || coluna.type === 'number' || coluna.type === 'text' ? coluna.type : undefined,
-    }));
+
+    // Exporta no grao mais fino (1 linha por referencia+cor+tamanho) - decidido junto
+    // com o usuario ao introduzir o drill-down: mais util numa planilha do que so o
+    // resumo por referencia que a tela mostra fechada por padrao.
+    const linhas: Record<string, unknown>[] = [];
+    for (const row of rowsOrdenadas) {
+      for (const cor of row.cores) {
+        const tamanhosOrdenados = [...cor.tamanhos].sort((a, b) => ordemGrade(a.tamanho) - ordemGrade(b.tamanho));
+        for (const tamanho of tamanhosOrdenados) {
+          linhas.push({
+            colecao: row.colecao,
+            referenceCode: row.referenceCode,
+            descricao: row.descricao,
+            categoria: row.categoria,
+            linha: row.linha,
+            cor: cor.cor,
+            ...tamanho,
+          });
+        }
+      }
+    }
+
+    const columns: ExcelColumn[] = [
+      ...COLUNAS_IDENTIDADE.map((coluna) => ({ key: coluna.key, header: coluna.label, width: coluna.width, type: coluna.type })),
+      { key: 'cor', header: 'COR', width: 14, type: 'text' as const },
+      { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' as const },
+      ...COLUNAS_METRICA.map((coluna) => ({
+        key: coluna.key,
+        header: coluna.label,
+        width: coluna.width,
+        type: coluna.type === 'currency' || coluna.type === 'percent' || coluna.type === 'number' || coluna.type === 'text' ? coluna.type : undefined,
+      })),
+    ];
 
     exportToExcel({
       filename: `Performance_Colecao_${dataInicio}_${dataFim}`,
       sheetName: 'Performance',
       title: `Performance Colecao - ${formatDate(dataInicio)} a ${formatDate(dataFim)}`,
       columns,
-      data: rowsOrdenadas as unknown as Record<string, unknown>[],
+      data: linhas,
       totals: {
-        grupo: `TOTAL (${rowsOrdenadas.length} refs)`,
-        qtdeProduzida: totais.qtdeProduzida,
+        colecao: `TOTAL (${rowsOrdenadas.length} refs)`,
+        qtdesLiberadas: totais.qtdesLiberadas,
+        qtdeEntregue: totais.qtdeEntregue,
+        saldoAEntregar: totais.saldoAEntregar,
         vendaMes1: totais.vendaMes1,
         vendaMes2: totais.vendaMes2,
         vendaMes3: totais.vendaMes3,
@@ -362,14 +421,20 @@ export default function PcpPerformanceColecaoPage() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <KPICard title="Referencias" value={formatNumber(data?.kpis.referencias || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} subtitle={`${formatNumber(data?.kpis.qtdeVendida || 0)} peças vendidas`} color="green" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Part. colecao" value={`${(data?.kpis.participacaoColecaoPercent || 0).toFixed(1)}%`} color="yellow" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Qtde produzida" value={formatNumber(data?.kpis.qtdeProduzida || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Qtdes liberadas" value={formatNumber(data?.kpis.qtdesLiberadas || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Qtde entregue" value={formatNumber(data?.kpis.qtdeEntregue || 0)} subtitle={data?.kpis.percentEntregue === null || data?.kpis.percentEntregue === undefined ? undefined : `${data.kpis.percentEntregue.toFixed(1)}% entregue`} color="blue" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Saldo a entregar" value={formatNumber(data?.kpis.saldoAEntregar || 0)} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro medio" value={data?.kpis.giroMedioPercent === null || data?.kpis.giroMedioPercent === undefined ? '-' : data.kpis.giroMedioPercent.toFixed(2).replace('.', ',')} color="purple" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Giro no periodo" value={formatNumber(data?.kpis.giroPeriodo || 0)} subtitle="peças vendidas" color="purple" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Giro ate hoje" value={data?.kpis.giroAteHoje === null || data?.kpis.giroAteHoje === undefined ? '-' : data.kpis.giroAteHoje.toFixed(2).replace('.', ',')} subtitle="vendido/estoque atual" color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
+      <p className="text-xs text-gray-500">
+        Qtdes liberadas/entregue/saldo consideram OPs abertas ate a data fim escolhida, mas as quantidades finalizadas refletem o estado atual da producao (nao ha historico diario de OP pra reconstruir "como estava" numa data passada).
+      </p>
       <Card>
         <CardHeader>
           <CardTitle>Resumo final</CardTitle>
@@ -458,26 +523,86 @@ export default function PcpPerformanceColecaoPage() {
                 </TableRow>
               ) : (
                 <>
-                  {rowsOrdenadas.map((row) => (
-                    <TableRow key={`${row.grupo || 'sem-grupo'}-${row.referenceCode}`}>
-                      {COLUNAS.map((coluna) => (
-                        <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
-                          {coluna.key === 'descricao' ? (
-                            <span className="block max-w-[260px] truncate" title={row.descricao}>{row.descricao}</span>
-                          ) : (
-                            formatCell(row, coluna.key)
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
+                  {rowsOrdenadas.map((row) => {
+                    const chaveRef = `${row.colecao || 'sem-colecao'}-${row.referenceCode}`;
+                    const refAberta = referenciasAbertas.has(chaveRef);
+                    return (
+                      <Fragment key={chaveRef}>
+                        <TableRow>
+                          {COLUNAS.map((coluna, idx) => (
+                            <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
+                              {idx === 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggle(setReferenciasAbertas, chaveRef)}
+                                  className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-600 hover:bg-gray-100"
+                                  title={refAberta ? 'Recolher cores' : 'Expandir por cor'}
+                                >
+                                  {refAberta ? '−' : '+'}
+                                </button>
+                              )}
+                              {coluna.key === 'descricao' ? (
+                                <span className="block max-w-[260px] truncate" title={row.descricao}>{row.descricao}</span>
+                              ) : (
+                                formatValue(row[coluna.key], coluna.key)
+                              )}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                        {refAberta && row.cores.map((cor: PerformanceColecaoCor) => {
+                          const chaveCor = `${chaveRef}|${cor.cor}`;
+                          const corAberta = coresAbertas.has(chaveCor);
+                          return (
+                            <Fragment key={chaveCor}>
+                              <TableRow className="bg-gray-50">
+                                <TableCell colSpan={COLUNAS_IDENTIDADE.length} className="whitespace-nowrap !px-2 !py-2 pl-6 font-medium text-gray-700">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggle(setCoresAbertas, chaveCor)}
+                                    className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-600 hover:bg-gray-100"
+                                    title={corAberta ? 'Recolher tamanhos' : 'Expandir por tamanho'}
+                                  >
+                                    {corAberta ? '−' : '+'}
+                                  </button>
+                                  Cor: {cor.cor}
+                                </TableCell>
+                                {COLUNAS_METRICA.map((coluna) => (
+                                  <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
+                                    {formatValue(cor[coluna.key], coluna.key)}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                              {corAberta && [...cor.tamanhos]
+                                .sort((a, b) => ordemGrade(a.tamanho) - ordemGrade(b.tamanho))
+                                .map((tamanho: PerformanceColecaoTamanho) => (
+                                  <TableRow key={`${chaveCor}|${tamanho.tamanho}`} className="bg-gray-50/60">
+                                    <TableCell colSpan={COLUNAS_IDENTIDADE.length} className="whitespace-nowrap !px-2 !py-2 pl-10 text-gray-500">
+                                      Tamanho: {tamanho.tamanho}
+                                    </TableCell>
+                                    {COLUNAS_METRICA.map((coluna) => (
+                                      <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-2 !py-2">
+                                        {formatValue(tamanho[coluna.key], coluna.key)}
+                                      </TableCell>
+                                    ))}
+                                  </TableRow>
+                                ))}
+                            </Fragment>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
                   <TableRow isHighlighted className="sticky bottom-0 z-20 bg-yellow-50 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
-                    <TableCell colSpan={11} className="font-bold">TOTAL ({rowsOrdenadas.length} refs)</TableCell>
-                    <TableCell align="right" className="font-bold">{formatNumber(totais.qtdeProduzida)}</TableCell>
+                    <TableCell colSpan={10} className="font-bold">TOTAL ({rowsOrdenadas.length} refs)</TableCell>
+                    <TableCell align="right" className="font-bold">{formatNumber(totais.qtdesLiberadas)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatNumber(totais.qtdeEntregue)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatNumber(totais.saldoAEntregar)}</TableCell>
+                    <TableCell align="right" className="font-bold">{totais.percentEntregue === null ? '-' : `${totais.percentEntregue.toFixed(1)}%`}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes1)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes2)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes3)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.estoqueFinal)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes1 + totais.vendaMes2 + totais.vendaMes3)}</TableCell>
                     <TableCell align="right" className="font-bold">-</TableCell>
                     <TableCell align="right" className="font-bold">{formatMoney(totais.totalVendaValor)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatMoney(totais.totalEstoqueCusto)}</TableCell>

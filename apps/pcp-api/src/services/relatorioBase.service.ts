@@ -384,7 +384,7 @@ async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number
 
 // Markup: (preco - custo) / custo * 100. Null se nao tem custo (ou custo <= 0) ou nao
 // tem preco - nao faz sentido calcular markup sem os dois.
-function markupPercentual(preco: number | null, custo: number | null): number | null {
+export function markupPercentual(preco: number | null, custo: number | null): number | null {
   if (preco === null || custo === null || custo <= 0) return null;
   return round(((preco - custo) / custo) * 100, 1);
 }
@@ -401,6 +401,22 @@ export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, pro
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
     WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
+      ${filtroProductCode(productCodes)}
+  `;
+}
+
+// Custo de PRODUCAO (costCode=1, fixo) - achado na investigacao do Performance Colecao
+// (16/09/2026): CUSTO_ULTIMA_COMPRA_CODE (2) tem cobertura boa no catalogo geral (~87%)
+// mas fica zerado em colecoes especificas (ex: sem "ultima compra" registrada ainda).
+// cost_code=1 ("PRODUCAO" no TOTVS) tem cobertura quase total (99,8% dos produtos,
+// branch_code=1) e e semanticamente o que um relatorio de PCP quer (custo de produzir
+// a peca, nao preco da ultima compra de matéria-prima/mercadoria).
+export const CUSTO_PRODUCAO_CODE = 1;
+
+export async function getCustoProducaoRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+  return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
+    SELECT product_code, valor FROM produto_custos
+    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_PRODUCAO_CODE}
       ${filtroProductCode(productCodes)}
   `;
 }
