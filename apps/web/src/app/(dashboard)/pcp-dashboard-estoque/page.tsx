@@ -10,10 +10,12 @@ import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { useAuth } from '@/contexts/AuthContext';
-import { DashboardEstoqueBucket, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
+import { DashboardEstoqueBucket, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
 
 const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'grupo', 'categoria', 'genero', 'status'];
+type SortDir = 'asc' | 'desc';
+type SortKey = 'referencia' | 'descricao' | 'colecao' | 'linha' | 'categoria' | 'quantidade' | 'custo' | 'valorCusto' | `saldo-${number}`;
 
 const GRAFICOS: Array<{ key: keyof DashboardEstoqueResponse['graficos']; title: string; color: string }> = [
   { key: 'linha', title: 'Estoque por linha', color: 'var(--bbtk-green)' },
@@ -30,11 +32,13 @@ function ChartCard({ title, data, color }: { title: string; data: DashboardEstoq
   }));
 
   return (
-    <Card>
+    <Card className="flex h-[360px] flex-col overflow-hidden">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle size="xs">{title}</CardTitle>
       </CardHeader>
-      <BarChart data={chartData} horizontal formatValue={(value) => formatNumber(value)} />
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <BarChart data={chartData} horizontal formatValue={(value) => formatNumber(value)} />
+      </div>
     </Card>
   );
 }
@@ -54,6 +58,26 @@ function saldoQuantidade(saldos: DashboardEstoqueSaldoTipo[], stockCode: number)
   return saldos.find((saldo) => saldo.stockCode === stockCode)?.quantidade || 0;
 }
 
+function sortValue(item: DashboardEstoqueReferencia, key: SortKey): string | number {
+  if (key.startsWith('saldo-')) return saldoQuantidade(item.saldos, Number(key.replace('saldo-', '')));
+  switch (key) {
+    case 'referencia':
+    case 'descricao':
+    case 'colecao':
+    case 'linha':
+    case 'categoria':
+      return (item[key] || '').toString().toLocaleLowerCase('pt-BR');
+    case 'custo':
+      return item.custo ?? 0;
+    case 'quantidade':
+      return item.quantidade;
+    case 'valorCusto':
+      return item.valorCusto;
+    default:
+      return 0;
+  }
+}
+
 export default function DashboardEstoquePage() {
   const { token, user } = useAuth();
   const [dataCorte, setDataCorte] = useState(getToday());
@@ -66,6 +90,8 @@ export default function DashboardEstoquePage() {
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [data, setData] = useState<DashboardEstoqueResponse | null>(null);
   const [referenciasAbertas, setReferenciasAbertas] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<SortKey>('quantidade');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -151,9 +177,41 @@ export default function DashboardEstoquePage() {
     });
   }
 
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'referencia' || key === 'descricao' || key === 'colecao' || key === 'linha' || key === 'categoria' ? 'asc' : 'desc');
+    }
+  }
+
+  function ThSort({ label, sortKeyName, align = 'left', title }: { label: string; sortKeyName: SortKey; align?: 'left' | 'right' | 'center'; title?: string }) {
+    const active = sortKey === sortKeyName;
+    return (
+      <TableCell isHeader align={align} title={title || label} onClick={() => handleSort(sortKeyName)}>
+        <span className={cn('inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
+          <span className="truncate">{label}</span>
+          {active && <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '^' : 'v'}</span>}
+        </span>
+      </TableCell>
+    );
+  }
+
   const total = data?.total;
   const tiposSaldoTabela = data?.tiposSaldo || [];
   const tabelaColSpan = 8 + tiposSaldoTabela.length;
+  const itensOrdenados = useMemo(() => {
+    const itens = data?.itens || [];
+    return [...itens].sort((a, b) => {
+      const aVal = sortValue(a, sortKey);
+      const bVal = sortValue(b, sortKey);
+      const cmp = typeof aVal === 'string' || typeof bVal === 'string'
+        ? String(aVal).localeCompare(String(bVal), 'pt-BR')
+        : aVal - bVal;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [data?.itens, sortDir, sortKey]);
 
   return (
     <div className="space-y-6">
@@ -237,7 +295,7 @@ export default function DashboardEstoquePage() {
         <KPICard title="Filiais/locais" value={formatNumber(total?.filiais || 0)} color="yellow" isLoading={isLoading} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-4">
         {GRAFICOS.map((grafico) => (
           <ChartCard
             key={grafico.key}
@@ -251,24 +309,21 @@ export default function DashboardEstoquePage() {
       <Card>
         <CardHeader>
           <CardTitle>Referencias em estoque</CardTitle>
-          <span className="text-xs text-gray-400">Ordenado por quantidade</span>
         </CardHeader>
         <Table className="max-h-[560px] overflow-y-auto" tableClassName="min-w-[1180px]">
           <TableHead>
             <TableRow>
-              <TableCell isHeader>Referencia</TableCell>
-              <TableCell isHeader>Descricao</TableCell>
-              <TableCell isHeader>Colecao</TableCell>
-              <TableCell isHeader>Linha</TableCell>
-              <TableCell isHeader>Categoria</TableCell>
-              <TableCell isHeader align="right">Pecas</TableCell>
+              <ThSort label="Referencia" sortKeyName="referencia" />
+              <ThSort label="Descricao" sortKeyName="descricao" />
+              <ThSort label="Colecao" sortKeyName="colecao" />
+              <ThSort label="Linha" sortKeyName="linha" />
+              <ThSort label="Categoria" sortKeyName="categoria" />
+              <ThSort label="Pecas" sortKeyName="quantidade" align="right" />
               {tiposSaldoTabela.map((tipo) => (
-                <TableCell key={tipo.stockCode} isHeader align="right" title={tipo.label}>
-                  {tipo.label}
-                </TableCell>
+                <ThSort key={tipo.stockCode} label={tipo.label} sortKeyName={`saldo-${tipo.stockCode}`} align="right" title={tipo.label} />
               ))}
-              <TableCell isHeader align="right">Custo un.</TableCell>
-              <TableCell isHeader align="right">Valor</TableCell>
+              <ThSort label="Custo un." sortKeyName="custo" align="right" />
+              <ThSort label="Valor" sortKeyName="valorCusto" align="right" />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -280,14 +335,14 @@ export default function DashboardEstoquePage() {
                   </TableCell>
                 </TableRow>
               ))
-            ) : (data?.itens || []).length === 0 ? (
+            ) : itensOrdenados.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={tabelaColSpan} className="text-center text-gray-500">
                   Nenhum saldo encontrado para os filtros selecionados.
                 </TableCell>
               </TableRow>
             ) : (
-              data!.itens.map((item) => {
+              itensOrdenados.map((item) => {
                 const aberta = referenciasAbertas.has(item.referencia);
                 return (
                   <Fragment key={item.referencia}>
