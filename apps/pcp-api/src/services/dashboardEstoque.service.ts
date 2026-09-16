@@ -5,6 +5,11 @@ import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_COD
 import { FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
+const STOCK_CODE_LABELS: Record<number, string> = {
+  1: 'FISICO',
+  5: 'DPA (SEGUNDA QUALIDADE)',
+  8: 'ATACADO',
+};
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -14,6 +19,11 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 
 function round(value: number, decimals = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
+function stockCodeLabel(stockCode: number, stockDescription?: string | null) {
+  const label = STOCK_CODE_LABELS[stockCode] || stockDescription || '';
+  return label ? `${stockCode} - ${label}` : String(stockCode);
 }
 
 export interface DashboardEstoqueFiltro {
@@ -372,7 +382,7 @@ function formatFilialBuckets(rows: BucketRow[], totalQuantidade: number): Dashbo
 function formatSaldoTipo(stockCode: number, stockDescription: string | null, quantidade: Decimal | number | null | undefined): DashboardEstoqueSaldoTipo {
   return {
     stockCode,
-    label: stockDescription ? `${stockCode} - ${stockDescription}` : String(stockCode),
+    label: stockCodeLabel(stockCode, stockDescription),
     quantidade: round(decimalToNumber(quantidade), 0),
   };
 }
@@ -606,7 +616,7 @@ export async function getFiltrosDashboardEstoque() {
     classificacoes: entradas,
     tiposEstoque: tiposEstoque.map((row) => ({
       stockCode: row.stock_code,
-      label: row.stock_description ? `${row.stock_code} - ${row.stock_description}` : String(row.stock_code),
+      label: stockCodeLabel(row.stock_code, row.stock_description),
       qtd_skus: Number(row.qtd_skus),
     })),
     lojas: RELATORIO_BASE_BRANCH_ORDER.map((item) => ({ branch_code: item.branchCode, branch_name: item.label })),
