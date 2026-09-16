@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
@@ -10,6 +10,7 @@ const STOCK_CODE_LABELS: Record<number, string> = {
   5: 'DPA (SEGUNDA QUALIDADE)',
   8: 'ATACADO',
 };
+const DASHBOARD_ESTOQUE_CACHE_MAX_ENTRIES = 20;
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -19,6 +20,12 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 
 function round(value: number, decimals = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
+function createDashboardPrisma() {
+  return new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
 }
 
 function stockCodeLabel(stockCode: number, stockDescription?: string | null) {
@@ -321,17 +328,17 @@ function formatBuckets(rows: BucketRow[], totalQuantidade: number): DashboardEst
   });
 }
 
-async function getConfig() {
-  return prisma.pcpRelatorioConfig.upsert({
+async function getConfig(db: PrismaClient = prisma) {
+  return db.pcpRelatorioConfig.upsert({
     where: { relatorio: RELATORIO_KEY },
     create: { relatorio: RELATORIO_KEY },
     update: {},
   });
 }
 
-async function getBuckets(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
+async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
   const column = Prisma.raw(dimensao);
-  return prisma.$queryRaw<BucketRow[]>`
+  return db.$queryRaw<BucketRow[]>`
     ${baseCte(filtro, custoCode, precoCustoBranchCode)}
     SELECT
       ${column} AS label,
@@ -345,8 +352,8 @@ async function getBuckets(filtro: DashboardEstoqueFiltro, custoCode: number, pre
   `;
 }
 
-async function getBucketFilial(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number) {
-  return prisma.$queryRaw<BucketRow[]>`
+async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number) {
+  return db.$queryRaw<BucketRow[]>`
     ${baseCte(filtro, custoCode, precoCustoBranchCode)}
     SELECT
       branch_code::text AS label,
@@ -389,8 +396,33 @@ function gradeKey(referencia: string, cor: string, tamanho: string) {
   return `${referencia}||${cor}||${tamanho}`;
 }
 
-export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
-  const config = await getConfig();
+function normalizeList(values?: Array<string | number>) {
+  return values?.map((value) => String(value)).sort() || [];
+}
+
+function dashboardEstoqueCacheKey(filtro: DashboardEstoqueFiltro) {
+  return JSON.stringify({
+    data: filtro.data,
+    branches: normalizeList(filtro.branches),
+    stockCodes: normalizeList(filtro.stockCodes),
+    search: filtro.search?.trim() || '',
+    tipo: normalizeList(filtro.tipo),
+    categoria: normalizeList(filtro.categoria),
+    grupo: normalizeList(filtro.grupo),
+    linha: normalizeList(filtro.linha),
+    colecao: normalizeList(filtro.colecao),
+    genero: normalizeList(filtro.genero),
+    modelo: normalizeList(filtro.modelo),
+    tecido: normalizeList(filtro.tecido),
+    lancamento: normalizeList(filtro.lancamento),
+    status: normalizeList(filtro.status),
+    motorPromocional: normalizeList(filtro.motorPromocional),
+    campanha: normalizeList(filtro.campanha),
+  });
+}
+
+async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoqueFiltro) {
+  const config = await getConfig(db);
   const [
     totais,
     porColecao,
@@ -403,7 +435,7 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
     gradeRows,
     gradeSaldosRows,
   ] = await Promise.all([
-    prisma.$queryRaw<TotalRow[]>`
+    db.$queryRaw<TotalRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         SUM(quantidade) AS quantidade,
@@ -415,11 +447,11 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       FROM saldo
       WHERE quantidade <> 0
     `,
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'colecao'),
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'linha'),
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'categoria'),
-    getBucketFilial(filtro, config.custoCode, config.precoCustoBranchCode),
-    prisma.$queryRaw<SaldoTipoRow[]>`
+    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'colecao'),
+    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'linha'),
+    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'categoria'),
+    getBucketFilial(db, filtro, config.custoCode, config.precoCustoBranchCode),
+    db.$queryRaw<SaldoTipoRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         stock_code,
@@ -430,7 +462,7 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       GROUP BY stock_code
       ORDER BY stock_code
     `,
-    prisma.$queryRaw<ReferenciaRow[]>`
+    db.$queryRaw<ReferenciaRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         referencia,
@@ -449,7 +481,7 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       GROUP BY referencia
       ORDER BY SUM(quantidade) DESC, SUM(quantidade * COALESCE(custo, 0)) DESC
     `,
-    prisma.$queryRaw<ReferenciaSaldoTipoRow[]>`
+    db.$queryRaw<ReferenciaSaldoTipoRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         referencia,
@@ -461,7 +493,7 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       GROUP BY referencia, stock_code
       ORDER BY referencia, stock_code
     `,
-    prisma.$queryRaw<GradeRow[]>`
+    db.$queryRaw<GradeRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         referencia,
@@ -476,7 +508,7 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       GROUP BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
       ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
     `,
-    prisma.$queryRaw<GradeSaldoTipoRow[]>`
+    db.$queryRaw<GradeSaldoTipoRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
         referencia,
@@ -578,6 +610,35 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
     itens,
     lojas: RELATORIO_BASE_BRANCH_ORDER.map((item) => ({ branch_code: item.branchCode, branch_name: item.label })),
   };
+}
+
+type DashboardEstoqueData = Awaited<ReturnType<typeof calcularDashboardEstoque>>;
+const dashboardEstoqueCache = new Map<string, { data: DashboardEstoqueData; createdAt: number }>();
+
+export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro, options: { refresh?: boolean } = {}) {
+  const key = dashboardEstoqueCacheKey(filtro);
+  if (!options.refresh) {
+    const cached = dashboardEstoqueCache.get(key);
+    if (cached) return { data: cached.data, fromCache: true };
+  }
+
+  const db = createDashboardPrisma();
+  try {
+    const data = await calcularDashboardEstoque(db, filtro);
+    dashboardEstoqueCache.set(key, { data, createdAt: Date.now() });
+
+    while (dashboardEstoqueCache.size > DASHBOARD_ESTOQUE_CACHE_MAX_ENTRIES) {
+      const oldest = [...dashboardEstoqueCache.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0]?.[0];
+      if (!oldest) break;
+      dashboardEstoqueCache.delete(oldest);
+    }
+
+    return { data, fromCache: false };
+  } finally {
+    await db.$disconnect().catch((error) => {
+      console.error('Erro ao fechar conexao temporaria do dashboard de estoque:', error);
+    });
+  }
 }
 
 export async function getFiltrosDashboardEstoque() {

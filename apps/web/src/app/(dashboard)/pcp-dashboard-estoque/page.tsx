@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart } from '@/components/charts/BarChart';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -80,6 +80,7 @@ function sortValue(item: DashboardEstoqueReferencia, key: SortKey): string | num
 
 export default function DashboardEstoquePage() {
   const { token, user } = useAuth();
+  const carregouInicial = useRef(false);
   const [dataCorte, setDataCorte] = useState(getToday());
   const [search, setSearch] = useState('');
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
@@ -95,7 +96,7 @@ export default function DashboardEstoquePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  const carregarDados = useCallback(async () => {
+  const carregarDados = useCallback(async (refresh = false) => {
     if (!token) return;
     setIsLoading(true);
     setErro(null);
@@ -117,6 +118,7 @@ export default function DashboardEstoquePage() {
         status: produtoFiltro.status,
         motorPromocional: produtoFiltro.motorPromocional,
         campanha: produtoFiltro.campanha,
+        refresh,
       });
       setData(response);
       setReferenciasAbertas(new Set());
@@ -139,8 +141,10 @@ export default function DashboardEstoquePage() {
   }, [token]);
 
   useEffect(() => {
+    if (!token || carregouInicial.current) return;
+    carregouInicial.current = true;
     carregarDados();
-  }, [carregarDados]);
+  }, [carregarDados, token]);
 
   const filialOptions = useMemo(() => {
     return lojasFiltro
@@ -230,7 +234,7 @@ export default function DashboardEstoquePage() {
           <Button variant="secondary" onClick={limparFiltros} disabled={filtrosAtivos === 0}>
             Limpar filtros
           </Button>
-          <Button onClick={carregarDados} disabled={isLoading}>
+          <Button onClick={() => carregarDados(true)} disabled={isLoading}>
             Atualizar
           </Button>
         </div>

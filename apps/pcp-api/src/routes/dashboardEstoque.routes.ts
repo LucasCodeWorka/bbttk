@@ -54,7 +54,9 @@ router.get('/dashboard-estoque', async (req: Request, res: Response) => {
       campanha: parseList(req.query.campanha),
     };
 
-    res.json(await getDashboardEstoque(filtro));
+    const resultado = await getDashboardEstoque(filtro, { refresh: req.query.refresh === '1' });
+    res.setHeader('X-Dashboard-Estoque-Cache', resultado.fromCache ? 'HIT' : 'MISS');
+    res.json(resultado.data);
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

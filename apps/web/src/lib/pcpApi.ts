@@ -128,6 +128,7 @@ export interface DashboardEstoqueFiltro {
   status?: string[];
   motorPromocional?: string[];
   campanha?: string[];
+  refresh?: boolean;
 }
 
 export interface DashboardEstoqueBucket {
@@ -244,6 +245,7 @@ export const pcpApi = {
     appendList(params, 'status', filtro.status);
     appendList(params, 'motorPromocional', filtro.motorPromocional);
     appendList(params, 'campanha', filtro.campanha);
+    if (filtro.refresh) params.set('refresh', '1');
 
     return fetchPcpApi<DashboardEstoqueResponse>(`/api/pcp/dashboard-estoque?${params.toString()}`, { token });
   },
