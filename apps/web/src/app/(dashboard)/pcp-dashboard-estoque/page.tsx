@@ -113,7 +113,7 @@ export default function DashboardEstoquePage() {
       });
       setData(response);
     } catch (error) {
-      setErro(error instanceof Error ? error.message : 'Erro ao carregar dashboard de estoque');
+      setErro(error instanceof Error ? error.message : 'Erro ao carregar analise de estoque');
     } finally {
       setIsLoading(false);
     }
@@ -127,7 +127,7 @@ export default function DashboardEstoquePage() {
         setTiposEstoque(response.tiposEstoque);
         setLojasFiltro(response.lojas);
       })
-      .catch((error) => console.error('Erro ao carregar filtros do dashboard de estoque:', error));
+      .catch((error) => console.error('Erro ao carregar filtros da analise de estoque:', error));
   }, [token]);
 
   useEffect(() => {
@@ -166,7 +166,7 @@ export default function DashboardEstoquePage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard de Estoque</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Analise de Estoque</h1>
           <p className="text-sm text-gray-500 mt-1">
             Posicao em {data ? formatDate(data.data) : formatDate(dataCorte)} · ultimo saldo capturado ate {atualizacaoLabel(data?.atualizadoEm || null)}
           </p>
