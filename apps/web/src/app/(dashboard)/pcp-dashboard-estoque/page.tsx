@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart } from '@/components/charts/BarChart';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,7 @@ import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { useAuth } from '@/contexts/AuthContext';
-import { DashboardEstoqueBucket, DashboardEstoqueResponse, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
+import { DashboardEstoqueBucket, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
 
 const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'grupo', 'categoria', 'genero', 'status'];
@@ -50,6 +50,10 @@ function atualizacaoLabel(value: string | null) {
   });
 }
 
+function saldoQuantidade(saldos: DashboardEstoqueSaldoTipo[], stockCode: number) {
+  return saldos.find((saldo) => saldo.stockCode === stockCode)?.quantidade || 0;
+}
+
 export default function DashboardEstoquePage() {
   const { token, user } = useAuth();
   const [dataCorte, setDataCorte] = useState(getToday());
@@ -61,6 +65,7 @@ export default function DashboardEstoquePage() {
   const [lojasFiltro, setLojasFiltro] = useState<PcpLojaFiltro[]>([]);
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [data, setData] = useState<DashboardEstoqueResponse | null>(null);
+  const [referenciasAbertas, setReferenciasAbertas] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -88,6 +93,7 @@ export default function DashboardEstoquePage() {
         campanha: produtoFiltro.campanha,
       });
       setData(response);
+      setReferenciasAbertas(new Set());
     } catch (error) {
       setErro(error instanceof Error ? error.message : 'Erro ao carregar analise de estoque');
     } finally {
@@ -136,7 +142,18 @@ export default function DashboardEstoquePage() {
     setProdutoFiltro({});
   }
 
+  function toggleReferencia(referencia: string) {
+    setReferenciasAbertas((prev) => {
+      const next = new Set(prev);
+      if (next.has(referencia)) next.delete(referencia);
+      else next.add(referencia);
+      return next;
+    });
+  }
+
   const total = data?.total;
+  const tiposSaldoTabela = data?.tiposSaldo || [];
+  const tabelaColSpan = 8 + tiposSaldoTabela.length;
 
   return (
     <div className="space-y-6">
@@ -168,7 +185,7 @@ export default function DashboardEstoquePage() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="SKU, referencia ou descricao"
+              placeholder="Referencia ou descricao"
             />
           </div>
           <FilialMultiSelect
@@ -233,65 +250,100 @@ export default function DashboardEstoquePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Top SKUs em estoque</CardTitle>
-          <span className="text-xs text-gray-400">Top 100 por quantidade</span>
+          <CardTitle>Referencias em estoque</CardTitle>
+          <span className="text-xs text-gray-400">Ordenado por quantidade</span>
         </CardHeader>
-        <Table className="max-h-[560px] overflow-y-auto">
+        <Table className="max-h-[560px] overflow-y-auto" tableClassName="min-w-[1180px]">
           <TableHead>
             <TableRow>
-              <TableCell isHeader>SKU</TableCell>
               <TableCell isHeader>Referencia</TableCell>
               <TableCell isHeader>Descricao</TableCell>
               <TableCell isHeader>Colecao</TableCell>
               <TableCell isHeader>Linha</TableCell>
-              <TableCell isHeader>Grupo</TableCell>
+              <TableCell isHeader>Categoria</TableCell>
               <TableCell isHeader align="right">Pecas</TableCell>
+              {tiposSaldoTabela.map((tipo) => (
+                <TableCell key={tipo.stockCode} isHeader align="right" title={tipo.label}>
+                  {tipo.label}
+                </TableCell>
+              ))}
               <TableCell isHeader align="right">Custo un.</TableCell>
               <TableCell isHeader align="right">Valor</TableCell>
-              <TableCell isHeader>Principais locais</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 8 }).map((_, index) => (
                 <TableRow key={index}>
-                  <TableCell colSpan={10}>
+                  <TableCell colSpan={tabelaColSpan}>
                     <div className="h-5 animate-pulse rounded bg-gray-100" />
                   </TableCell>
                 </TableRow>
               ))
-            ) : (data?.topSkus || []).length === 0 ? (
+            ) : (data?.itens || []).length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-gray-500">
+                <TableCell colSpan={tabelaColSpan} className="text-center text-gray-500">
                   Nenhum saldo encontrado para os filtros selecionados.
                 </TableCell>
               </TableRow>
             ) : (
-              data!.topSkus.map((sku) => (
-                <TableRow key={sku.sku}>
-                  <TableCell className="font-semibold text-gray-900">{sku.sku}</TableCell>
-                  <TableCell>{sku.referencia}</TableCell>
-                  <TableCell className="max-w-[280px] truncate" title={sku.descricao}>{sku.descricao}</TableCell>
-                  <TableCell>{sku.colecao || '-'}</TableCell>
-                  <TableCell>{sku.linha || '-'}</TableCell>
-                  <TableCell>{sku.grupo || '-'}</TableCell>
-                  <TableCell align="right" className="font-semibold">{formatNumber(sku.quantidade)}</TableCell>
-                  <TableCell align="right">{sku.custo === null ? '-' : formatMoney(sku.custo)}</TableCell>
-                  <TableCell align="right">{formatMoney(sku.valorCusto)}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {sku.filiais.slice(0, 4).map((filial) => (
-                        <span
-                          key={`${sku.sku}-${filial.branchCode}`}
-                          className={cn('rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700')}
+              data!.itens.map((item) => {
+                const aberta = referenciasAbertas.has(item.referencia);
+                return (
+                  <Fragment key={item.referencia}>
+                    <TableRow>
+                      <TableCell className="font-semibold text-gray-900">
+                        <button
+                          type="button"
+                          onClick={() => toggleReferencia(item.referencia)}
+                          className={cn(
+                            'inline-flex items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-gray-100',
+                            item.grades.length === 0 && 'cursor-default hover:bg-transparent'
+                          )}
+                          disabled={item.grades.length === 0}
+                          title={aberta ? 'Recolher grade' : 'Expandir grade'}
                         >
-                          {filial.branchName}: {formatNumber(filial.quantidade)}
-                        </span>
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded border border-gray-200 text-xs text-gray-600">
+                            {aberta ? '-' : '+'}
+                          </span>
+                          {item.referencia}
+                        </button>
+                      </TableCell>
+                      <TableCell className="max-w-[280px] truncate" title={item.descricao}>{item.descricao}</TableCell>
+                      <TableCell>{item.colecao || '-'}</TableCell>
+                      <TableCell>{item.linha || '-'}</TableCell>
+                      <TableCell>{item.categoria || '-'}</TableCell>
+                      <TableCell align="right" className="font-semibold">{formatNumber(item.quantidade)}</TableCell>
+                      {tiposSaldoTabela.map((tipo) => (
+                        <TableCell key={`${item.referencia}-${tipo.stockCode}`} align="right">
+                          {formatNumber(saldoQuantidade(item.saldos, tipo.stockCode))}
+                        </TableCell>
                       ))}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+                      <TableCell align="right">{item.custo === null ? '-' : formatMoney(item.custo)}</TableCell>
+                      <TableCell align="right">{formatMoney(item.valorCusto)}</TableCell>
+                    </TableRow>
+                    {aberta && item.grades.map((grade) => (
+                      <TableRow key={`${item.referencia}-${grade.cor}-${grade.tamanho}`} className="bg-gray-50/60">
+                        <TableCell className="pl-12 text-gray-700">
+                          {grade.cor} / {grade.tamanho}
+                        </TableCell>
+                        <TableCell className="text-gray-400">Cor / tamanho</TableCell>
+                        <TableCell>{item.colecao || '-'}</TableCell>
+                        <TableCell>{item.linha || '-'}</TableCell>
+                        <TableCell>{item.categoria || '-'}</TableCell>
+                        <TableCell align="right" className="font-medium">{formatNumber(grade.quantidade)}</TableCell>
+                        {tiposSaldoTabela.map((tipo) => (
+                          <TableCell key={`${item.referencia}-${grade.cor}-${grade.tamanho}-${tipo.stockCode}`} align="right">
+                            {formatNumber(saldoQuantidade(grade.saldos, tipo.stockCode))}
+                          </TableCell>
+                        ))}
+                        <TableCell align="right">{grade.custo === null ? '-' : formatMoney(grade.custo)}</TableCell>
+                        <TableCell align="right">{formatMoney(grade.valorCusto)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
+                );
+              })
             )}
           </TableBody>
         </Table>

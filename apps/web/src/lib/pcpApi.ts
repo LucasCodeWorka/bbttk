@@ -139,20 +139,36 @@ export interface DashboardEstoqueBucket {
   pctQuantidade: number;
 }
 
-export interface DashboardEstoqueSku {
-  sku: string;
+export interface DashboardEstoqueSaldoTipo {
+  stockCode: number;
+  label: string;
+  quantidade: number;
+}
+
+export interface DashboardEstoqueGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+  valorCusto: number;
+  custo: number | null;
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+}
+
+export interface DashboardEstoqueReferencia {
   referencia: string;
   descricao: string;
   colecao: string | null;
   linha: string | null;
-  grupo: string | null;
   categoria: string | null;
   genero: string | null;
   status: string | null;
   quantidade: number;
   valorCusto: number;
   custo: number | null;
-  filiais: { branchCode: number; branchName: string; quantidade: number }[];
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+  grades: DashboardEstoqueGrade[];
 }
 
 export interface DashboardEstoqueResponse {
@@ -175,7 +191,8 @@ export interface DashboardEstoqueResponse {
     categoria: DashboardEstoqueBucket[];
     filial: DashboardEstoqueBucket[];
   };
-  topSkus: DashboardEstoqueSku[];
+  tiposSaldo: DashboardEstoqueSaldoTipo[];
+  itens: DashboardEstoqueReferencia[];
   lojas: PcpLojaFiltro[];
 }
 

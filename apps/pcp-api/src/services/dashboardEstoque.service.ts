@@ -44,20 +44,36 @@ export interface DashboardEstoqueBucket {
   pctQuantidade: number;
 }
 
-export interface DashboardEstoqueSku {
-  sku: string;
+export interface DashboardEstoqueSaldoTipo {
+  stockCode: number;
+  label: string;
+  quantidade: number;
+}
+
+export interface DashboardEstoqueGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+  valorCusto: number;
+  custo: number | null;
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+}
+
+export interface DashboardEstoqueReferencia {
   referencia: string;
   descricao: string;
   colecao: string | null;
   linha: string | null;
-  grupo: string | null;
   categoria: string | null;
   genero: string | null;
   status: string | null;
   quantidade: number;
   valorCusto: number;
   custo: number | null;
-  filiais: { branchCode: number; branchName: string; quantidade: number }[];
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+  grades: DashboardEstoqueGrade[];
 }
 
 interface BucketRow {
@@ -68,25 +84,44 @@ interface BucketRow {
   referencias: bigint | number;
 }
 
-interface SkuRow {
-  product_sku: string;
+interface ReferenciaRow {
   referencia: string | null;
   descricao: string | null;
   colecao: string | null;
   linha: string | null;
-  grupo: string | null;
   categoria: string | null;
   genero: string | null;
   status: string | null;
   quantidade: Decimal | null;
   valor_custo: Decimal | null;
   custo: Decimal | null;
+  skus: bigint | number;
 }
 
-interface FilialSkuRow {
-  product_sku: string;
-  branch_code: number;
+interface SaldoTipoRow {
+  stock_code: number;
+  stock_description: string | null;
   quantidade: Decimal | null;
+}
+
+interface ReferenciaSaldoTipoRow extends SaldoTipoRow {
+  referencia: string | null;
+}
+
+interface GradeRow {
+  referencia: string | null;
+  cor: string | null;
+  tamanho: string | null;
+  quantidade: Decimal | null;
+  valor_custo: Decimal | null;
+  custo: Decimal | null;
+  skus: bigint | number;
+}
+
+interface GradeSaldoTipoRow extends SaldoTipoRow {
+  referencia: string | null;
+  cor: string | null;
+  tamanho: string | null;
 }
 
 interface TotalRow {
@@ -172,6 +207,8 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         a.product_code,
         COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) AS referencia,
         COALESCE(NULLIF(TRIM(a.reference_name), ''), NULLIF(TRIM(a.product_name), ''), a.product_sku) AS descricao,
+        COALESCE(NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), '')) AS cor,
+        NULLIF(TRIM(a.size), '') AS tamanho,
         NULLIF(TRIM(a.class_colecao), '') AS colecao,
         NULLIF(TRIM(a.class_linha), '') AS linha,
         NULLIF(TRIM(a.class_grupo), '') AS grupo,
@@ -191,6 +228,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         ps.product_code,
         ps.branch_code,
         ps.stock_code,
+        ps.stock_description,
         ps.stock,
         ps.captured_at
       FROM prd_saldo ps
@@ -212,6 +250,8 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         pf.product_code,
         pf.referencia,
         pf.descricao,
+        pf.cor,
+        pf.tamanho,
         pf.colecao,
         pf.linha,
         pf.grupo,
@@ -223,6 +263,8 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
           WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
           ELSE us.branch_code
         END::int AS branch_code,
+        us.stock_code,
+        NULLIF(TRIM(us.stock_description), '') AS stock_description,
         COALESCE(us.stock, 0) AS quantidade,
         pc.custo,
         us.captured_at
@@ -236,6 +278,8 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         MIN(product_code) AS product_code,
         MIN(referencia) AS referencia,
         MIN(descricao) AS descricao,
+        MIN(cor) AS cor,
+        MIN(tamanho) AS tamanho,
         MIN(colecao) AS colecao,
         MIN(linha) AS linha,
         MIN(grupo) AS grupo,
@@ -325,9 +369,32 @@ function formatFilialBuckets(rows: BucketRow[], totalQuantidade: number): Dashbo
   });
 }
 
+function formatSaldoTipo(stockCode: number, stockDescription: string | null, quantidade: Decimal | number | null | undefined): DashboardEstoqueSaldoTipo {
+  return {
+    stockCode,
+    label: stockDescription ? `${stockCode} - ${stockDescription}` : String(stockCode),
+    quantidade: round(decimalToNumber(quantidade), 0),
+  };
+}
+
+function gradeKey(referencia: string, cor: string, tamanho: string) {
+  return `${referencia}||${cor}||${tamanho}`;
+}
+
 export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
   const config = await getConfig();
-  const [totais, porColecao, porLinha, porCategoria, porFilial, topSkus, filiaisSkus] = await Promise.all([
+  const [
+    totais,
+    porColecao,
+    porLinha,
+    porCategoria,
+    porFilial,
+    tiposSaldoRows,
+    referenciasRows,
+    referenciaSaldosRows,
+    gradeRows,
+    gradeSaldosRows,
+  ] = await Promise.all([
     prisma.$queryRaw<TotalRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
@@ -344,56 +411,140 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
     getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'linha'),
     getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'categoria'),
     getBucketFilial(filtro, config.custoCode, config.precoCustoBranchCode),
-    prisma.$queryRaw<SkuRow[]>`
+    prisma.$queryRaw<SaldoTipoRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
-      SELECT *
-      FROM saldo_sku
-      ORDER BY quantidade DESC, valor_custo DESC
-      LIMIT 100
+      SELECT
+        stock_code,
+        MIN(stock_description) AS stock_description,
+        SUM(quantidade) AS quantidade
+      FROM saldo
+      WHERE quantidade <> 0
+      GROUP BY stock_code
+      ORDER BY stock_code
     `,
-    prisma.$queryRaw<FilialSkuRow[]>`
+    prisma.$queryRaw<ReferenciaRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
-      SELECT s.product_sku, s.branch_code, SUM(s.quantidade) AS quantidade
-      FROM saldo s
-      JOIN (
-        SELECT product_sku
-        FROM saldo_sku
-        ORDER BY quantidade DESC, valor_custo DESC
-        LIMIT 100
-      ) top ON top.product_sku = s.product_sku
-      GROUP BY s.product_sku, s.branch_code
+      SELECT
+        referencia,
+        MIN(descricao) AS descricao,
+        MIN(colecao) AS colecao,
+        MIN(linha) AS linha,
+        MIN(categoria) AS categoria,
+        MIN(genero) AS genero,
+        MIN(status) AS status,
+        SUM(quantidade) AS quantidade,
+        SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
+        AVG(custo) FILTER (WHERE custo IS NOT NULL) AS custo,
+        COUNT(DISTINCT product_sku) AS skus
+      FROM saldo
+      WHERE quantidade <> 0
+      GROUP BY referencia
+      ORDER BY SUM(quantidade) DESC, SUM(quantidade * COALESCE(custo, 0)) DESC
+    `,
+    prisma.$queryRaw<ReferenciaSaldoTipoRow[]>`
+      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      SELECT
+        referencia,
+        stock_code,
+        MIN(stock_description) AS stock_description,
+        SUM(quantidade) AS quantidade
+      FROM saldo
+      WHERE quantidade <> 0
+      GROUP BY referencia, stock_code
+      ORDER BY referencia, stock_code
+    `,
+    prisma.$queryRaw<GradeRow[]>`
+      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      SELECT
+        referencia,
+        COALESCE(cor, 'SEM COR') AS cor,
+        COALESCE(tamanho, 'SEM TAM') AS tamanho,
+        SUM(quantidade) AS quantidade,
+        SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
+        AVG(custo) FILTER (WHERE custo IS NOT NULL) AS custo,
+        COUNT(DISTINCT product_sku) AS skus
+      FROM saldo
+      WHERE quantidade <> 0
+      GROUP BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
+      ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
+    `,
+    prisma.$queryRaw<GradeSaldoTipoRow[]>`
+      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      SELECT
+        referencia,
+        COALESCE(cor, 'SEM COR') AS cor,
+        COALESCE(tamanho, 'SEM TAM') AS tamanho,
+        stock_code,
+        MIN(stock_description) AS stock_description,
+        SUM(quantidade) AS quantidade
+      FROM saldo
+      WHERE quantidade <> 0
+      GROUP BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM'), stock_code
+      ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM'), stock_code
     `,
   ]);
 
   const total = totais[0];
   const totalQuantidade = decimalToNumber(total?.quantidade);
-  const filialPorSku = new Map<string, { branchCode: number; branchName: string; quantidade: number }[]>();
-  for (const row of filiaisSkus) {
-    const arr = filialPorSku.get(row.product_sku) || [];
-    const branchInfo = RELATORIO_BASE_BRANCH_ORDER.find((item) => item.branchCode === row.branch_code);
-    arr.push({
-      branchCode: row.branch_code,
-      branchName: branchInfo?.label || `Filial ${row.branch_code}`,
-      quantidade: round(decimalToNumber(row.quantidade), 0),
-    });
-    filialPorSku.set(row.product_sku, arr);
+
+  const tiposSaldo = tiposSaldoRows.map((row) => formatSaldoTipo(row.stock_code, row.stock_description, row.quantidade));
+
+  const saldosPorReferencia = new Map<string, DashboardEstoqueSaldoTipo[]>();
+  for (const row of referenciaSaldosRows) {
+    const referencia = row.referencia || '';
+    const arr = saldosPorReferencia.get(referencia) || [];
+    arr.push(formatSaldoTipo(row.stock_code, row.stock_description, row.quantidade));
+    saldosPorReferencia.set(referencia, arr);
   }
 
-  const top: DashboardEstoqueSku[] = topSkus.map((row) => ({
-    sku: row.product_sku,
-    referencia: row.referencia || row.product_sku,
-    descricao: row.descricao || row.referencia || row.product_sku,
-    colecao: row.colecao,
-    linha: row.linha,
-    grupo: row.grupo,
-    categoria: row.categoria,
-    genero: row.genero,
-    status: row.status,
-    quantidade: round(decimalToNumber(row.quantidade), 0),
-    valorCusto: round(decimalToNumber(row.valor_custo), 2),
-    custo: row.custo === null ? null : round(decimalToNumber(row.custo), 2),
-    filiais: (filialPorSku.get(row.product_sku) || []).sort((a, b) => b.quantidade - a.quantidade),
-  }));
+  const saldosPorGrade = new Map<string, DashboardEstoqueSaldoTipo[]>();
+  for (const row of gradeSaldosRows) {
+    const referencia = row.referencia || '';
+    const cor = row.cor || 'SEM COR';
+    const tamanho = row.tamanho || 'SEM TAM';
+    const key = gradeKey(referencia, cor, tamanho);
+    const arr = saldosPorGrade.get(key) || [];
+    arr.push(formatSaldoTipo(row.stock_code, row.stock_description, row.quantidade));
+    saldosPorGrade.set(key, arr);
+  }
+
+  const gradesPorReferencia = new Map<string, DashboardEstoqueGrade[]>();
+  for (const row of gradeRows) {
+    const referencia = row.referencia || '';
+    const cor = row.cor || 'SEM COR';
+    const tamanho = row.tamanho || 'SEM TAM';
+    const grade: DashboardEstoqueGrade = {
+      cor,
+      tamanho,
+      quantidade: round(decimalToNumber(row.quantidade), 0),
+      valorCusto: round(decimalToNumber(row.valor_custo), 2),
+      custo: row.custo === null ? null : round(decimalToNumber(row.custo), 2),
+      skus: Number(row.skus),
+      saldos: saldosPorGrade.get(gradeKey(referencia, cor, tamanho)) || [],
+    };
+    const arr = gradesPorReferencia.get(referencia) || [];
+    arr.push(grade);
+    gradesPorReferencia.set(referencia, arr);
+  }
+
+  const itens: DashboardEstoqueReferencia[] = referenciasRows.map((row) => {
+    const referencia = row.referencia || '';
+    return {
+      referencia,
+      descricao: row.descricao || referencia,
+      colecao: row.colecao,
+      linha: row.linha,
+      categoria: row.categoria,
+      genero: row.genero,
+      status: row.status,
+      quantidade: round(decimalToNumber(row.quantidade), 0),
+      valorCusto: round(decimalToNumber(row.valor_custo), 2),
+      custo: row.custo === null ? null : round(decimalToNumber(row.custo), 2),
+      skus: Number(row.skus),
+      saldos: saldosPorReferencia.get(referencia) || [],
+      grades: gradesPorReferencia.get(referencia) || [],
+    };
+  });
 
   return {
     data: filtro.data,
@@ -415,7 +566,8 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
       categoria: formatBuckets(porCategoria, totalQuantidade),
       filial: formatFilialBuckets(porFilial, totalQuantidade),
     },
-    topSkus: top,
+    tiposSaldo,
+    itens,
     lojas: RELATORIO_BASE_BRANCH_ORDER.map((item) => ({ branch_code: item.branchCode, branch_name: item.label })),
   };
 }
