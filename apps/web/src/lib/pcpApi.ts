@@ -172,10 +172,8 @@ export interface DashboardEstoqueResponse {
   graficos: {
     colecao: DashboardEstoqueBucket[];
     linha: DashboardEstoqueBucket[];
-    grupo: DashboardEstoqueBucket[];
     categoria: DashboardEstoqueBucket[];
-    genero: DashboardEstoqueBucket[];
-    status: DashboardEstoqueBucket[];
+    filial: DashboardEstoqueBucket[];
   };
   topSkus: DashboardEstoqueSku[];
   lojas: PcpLojaFiltro[];

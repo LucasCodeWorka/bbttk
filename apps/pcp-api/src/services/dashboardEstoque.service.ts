@@ -292,9 +292,42 @@ async function getBuckets(filtro: DashboardEstoqueFiltro, custoCode: number, pre
   `;
 }
 
+async function getBucketFilial(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number) {
+  return prisma.$queryRaw<BucketRow[]>`
+    ${baseCte(filtro, custoCode, precoCustoBranchCode)}
+    SELECT
+      branch_code::text AS label,
+      SUM(quantidade) AS quantidade,
+      SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
+      COUNT(DISTINCT product_sku) AS skus,
+      COUNT(DISTINCT referencia) AS referencias
+    FROM saldo
+    WHERE quantidade <> 0
+    GROUP BY branch_code
+    ORDER BY SUM(quantidade) DESC
+    LIMIT 12
+  `;
+}
+
+function formatFilialBuckets(rows: BucketRow[], totalQuantidade: number): DashboardEstoqueBucket[] {
+  return rows.map((row) => {
+    const branchCode = Number(row.label);
+    const branchInfo = RELATORIO_BASE_BRANCH_ORDER.find((item) => item.branchCode === branchCode);
+    const quantidade = decimalToNumber(row.quantidade);
+    return {
+      label: branchInfo?.label || `Filial ${row.label}`,
+      quantidade: round(quantidade, 0),
+      valorCusto: round(decimalToNumber(row.valor_custo), 2),
+      skus: Number(row.skus),
+      referencias: Number(row.referencias),
+      pctQuantidade: totalQuantidade > 0 ? round((quantidade / totalQuantidade) * 100, 2) : 0,
+    };
+  });
+}
+
 export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
   const config = await getConfig();
-  const [totais, porColecao, porLinha, porGrupo, porCategoria, porGenero, porStatus, topSkus, filiaisSkus] = await Promise.all([
+  const [totais, porColecao, porLinha, porCategoria, porFilial, topSkus, filiaisSkus] = await Promise.all([
     prisma.$queryRaw<TotalRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT
@@ -309,10 +342,8 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
     `,
     getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'colecao'),
     getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'linha'),
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'grupo'),
     getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'categoria'),
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'genero'),
-    getBuckets(filtro, config.custoCode, config.precoCustoBranchCode, 'status'),
+    getBucketFilial(filtro, config.custoCode, config.precoCustoBranchCode),
     prisma.$queryRaw<SkuRow[]>`
       ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
       SELECT *
@@ -381,10 +412,8 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro) {
     graficos: {
       colecao: formatBuckets(porColecao, totalQuantidade),
       linha: formatBuckets(porLinha, totalQuantidade),
-      grupo: formatBuckets(porGrupo, totalQuantidade),
       categoria: formatBuckets(porCategoria, totalQuantidade),
-      genero: formatBuckets(porGenero, totalQuantidade),
-      status: formatBuckets(porStatus, totalQuantidade),
+      filial: formatFilialBuckets(porFilial, totalQuantidade),
     },
     topSkus: top,
     lojas: RELATORIO_BASE_BRANCH_ORDER.map((item) => ({ branch_code: item.branchCode, branch_name: item.label })),

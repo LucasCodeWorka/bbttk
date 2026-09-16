@@ -16,12 +16,10 @@ import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils
 const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'grupo', 'categoria', 'genero', 'status'];
 
 const GRAFICOS: Array<{ key: keyof DashboardEstoqueResponse['graficos']; title: string; color: string }> = [
-  { key: 'colecao', title: 'Estoque por colecao', color: 'var(--bbtk-red)' },
   { key: 'linha', title: 'Estoque por linha', color: 'var(--bbtk-green)' },
-  { key: 'grupo', title: 'Estoque por grupo', color: 'var(--bbtk-purple)' },
+  { key: 'colecao', title: 'Estoque por colecao', color: 'var(--bbtk-red)' },
   { key: 'categoria', title: 'Estoque por categoria', color: 'var(--bbtk-orange)' },
-  { key: 'genero', title: 'Estoque por genero', color: 'var(--bbtk-turquoise)' },
-  { key: 'status', title: 'Estoque por status', color: 'var(--bbtk-blue)' },
+  { key: 'filial', title: 'Estoque por filial', color: 'var(--bbtk-blue)' },
 ];
 
 function ChartCard({ title, data, color }: { title: string; data: DashboardEstoqueBucket[]; color: string }) {
@@ -37,28 +35,6 @@ function ChartCard({ title, data, color }: { title: string; data: DashboardEstoq
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <BarChart data={chartData} horizontal formatValue={(value) => formatNumber(value)} />
-      <div className="mt-4 overflow-hidden rounded-lg border border-gray-100">
-        <Table className="max-h-64 overflow-y-auto">
-          <TableHead>
-            <TableRow>
-              <TableCell isHeader>Classificacao</TableCell>
-              <TableCell isHeader align="right">Pecas</TableCell>
-              <TableCell isHeader align="right">%</TableCell>
-              <TableCell isHeader align="right">Valor</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.slice(0, 8).map((item) => (
-              <TableRow key={item.label}>
-                <TableCell className="font-medium text-gray-800">{item.label}</TableCell>
-                <TableCell align="right">{formatNumber(item.quantidade)}</TableCell>
-                <TableCell align="right">{formatNumber(item.pctQuantidade, 2)}%</TableCell>
-                <TableCell align="right">{formatMoney(item.valorCusto)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
     </Card>
   );
 }
