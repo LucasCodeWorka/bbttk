@@ -1,6 +1,8 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Badge } from '@/components/ui/Badge';
 import { BarChart } from '@/components/charts/BarChart';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +12,7 @@ import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { useAuth } from '@/contexts/AuthContext';
-import { DashboardEstoqueBucket, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
+import { DashboardEstoqueBucket, DashboardEstoqueProdutoSugestao, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
 
 const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'grupo', 'categoria', 'genero', 'status'];
@@ -78,11 +80,141 @@ function sortValue(item: DashboardEstoqueReferencia, key: SortKey): string | num
   }
 }
 
+function ProdutoMultiSelect({
+  token,
+  selected,
+  onChange,
+}: {
+  token: string | null;
+  selected: DashboardEstoqueProdutoSugestao[];
+  onChange: (selected: DashboardEstoqueProdutoSugestao[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [sugestoes, setSugestoes] = useState<DashboardEstoqueProdutoSugestao[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !inputRef.current) return;
+    const rect = inputRef.current.getBoundingClientRect();
+    setPosicao({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 360) });
+  }, [open, selected.length]);
+
+  useEffect(() => {
+    if (!token || busca.trim().length < 2) {
+      setSugestoes([]);
+      return;
+    }
+
+    const handle = window.setTimeout(() => {
+      setIsLoading(true);
+      pcpApi.getProdutosDashboardEstoque(token, busca)
+        .then((response) => setSugestoes(response.produtos))
+        .catch(() => setSugestoes([]))
+        .finally(() => setIsLoading(false));
+    }, 250);
+
+    return () => window.clearTimeout(handle);
+  }, [busca, token]);
+
+  function adicionar(produto: DashboardEstoqueProdutoSugestao) {
+    if (!selected.some((item) => item.referencia === produto.referencia)) onChange([...selected, produto]);
+    setBusca('');
+    setSugestoes([]);
+    setOpen(false);
+  }
+
+  function remover(referencia: string) {
+    onChange(selected.filter((item) => item.referencia !== referencia));
+  }
+
+  const sugestoesFiltradas = sugestoes.filter((produto) => !selected.some((item) => item.referencia === produto.referencia));
+
+  return (
+    <div className="xl:col-span-2" ref={containerRef}>
+      <label className="block text-sm font-medium text-gray-700 mb-1">Buscar produto</label>
+      <div className="min-h-[42px] rounded-lg border border-gray-300 bg-white px-2 py-1.5 focus-within:ring-2 focus-within:ring-[var(--bbtk-red)] focus-within:border-transparent">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {selected.map((produto) => (
+            <Badge key={produto.referencia} variant="info" className="max-w-[260px] pr-1">
+              <span className="truncate">{produto.referencia}</span>
+              <button
+                type="button"
+                onClick={() => remover(produto.referencia)}
+                className="ml-1.5 hover:text-red-600"
+                aria-label={`Remover ${produto.referencia}`}
+              >
+                x
+              </button>
+            </Badge>
+          ))}
+          <input
+            ref={inputRef}
+            value={busca}
+            onFocus={() => setOpen(true)}
+            onChange={(e) => {
+              setBusca(e.target.value);
+              setOpen(true);
+            }}
+            placeholder={selected.length ? 'Adicionar outra referencia...' : 'Digite referencia ou descricao'}
+            className="min-w-[220px] flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none"
+          />
+        </div>
+      </div>
+
+      {open && posicao && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={dropdownRef}
+          className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
+          style={{ top: posicao.top, left: posicao.left, width: posicao.width }}
+        >
+          {busca.trim().length < 2 ? (
+            <p className="px-3 py-3 text-sm text-gray-400">Digite pelo menos 2 caracteres</p>
+          ) : isLoading ? (
+            <p className="px-3 py-3 text-sm text-gray-400">Buscando...</p>
+          ) : sugestoesFiltradas.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-gray-400">Nenhum produto encontrado</p>
+          ) : (
+            sugestoesFiltradas.map((produto) => (
+              <button
+                key={produto.referencia}
+                type="button"
+                onClick={() => adicionar(produto)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50"
+              >
+                <span className="min-w-0">
+                  <span className="block font-semibold text-gray-800">{produto.referencia}</span>
+                  <span className="block truncate text-xs text-gray-500">{produto.descricao}</span>
+                </span>
+                <span className="shrink-0 text-xs text-gray-400">{formatNumber(produto.skus)} SKUs</span>
+              </button>
+            ))
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 export default function DashboardEstoquePage() {
   const { token, user } = useAuth();
   const carregouInicial = useRef(false);
   const [dataCorte, setDataCorte] = useState(getToday());
-  const [search, setSearch] = useState('');
+  const [produtosSelecionados, setProdutosSelecionados] = useState<DashboardEstoqueProdutoSugestao[]>([]);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [tiposEstoqueSelecionados, setTiposEstoqueSelecionados] = useState<string[]>([]);
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
@@ -103,7 +235,7 @@ export default function DashboardEstoquePage() {
     try {
       const response = await pcpApi.getDashboardEstoque(token, {
         data: dataCorte,
-        search,
+        produtos: produtosSelecionados.length ? produtosSelecionados.map((produto) => produto.referencia) : undefined,
         branches: filiaisSelecionadas.length ? filiaisSelecionadas : undefined,
         stockCodes: tiposEstoqueSelecionados.length ? tiposEstoqueSelecionados.map(Number) : undefined,
         tipo: produtoFiltro.tipo,
@@ -127,7 +259,7 @@ export default function DashboardEstoquePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataCorte, filiaisSelecionadas, produtoFiltro, search, tiposEstoqueSelecionados, token]);
+  }, [dataCorte, filiaisSelecionadas, produtoFiltro, produtosSelecionados, tiposEstoqueSelecionados, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -162,11 +294,11 @@ export default function DashboardEstoquePage() {
 
   const filtrosAtivos = useMemo(() => {
     const totalClassificacoes = Object.values(produtoFiltro).reduce((sum, values) => sum + (values?.length || 0), 0);
-    return totalClassificacoes + filiaisSelecionadas.length + tiposEstoqueSelecionados.length + (search.trim() ? 1 : 0);
-  }, [filiaisSelecionadas, produtoFiltro, search, tiposEstoqueSelecionados]);
+    return totalClassificacoes + filiaisSelecionadas.length + tiposEstoqueSelecionados.length + produtosSelecionados.length;
+  }, [filiaisSelecionadas, produtoFiltro, produtosSelecionados.length, tiposEstoqueSelecionados]);
 
   function limparFiltros() {
-    setSearch('');
+    setProdutosSelecionados([]);
     setFiliaisSelecionadas([]);
     setTiposEstoqueSelecionados([]);
     setProdutoFiltro({});
@@ -242,14 +374,7 @@ export default function DashboardEstoquePage() {
 
       <Card>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <div className="xl:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Buscar produto</label>
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Referencia ou descricao"
-            />
-          </div>
+          <ProdutoMultiSelect token={token} selected={produtosSelecionados} onChange={setProdutosSelecionados} />
           <FilialMultiSelect
             label="Filiais"
             options={filialOptions}

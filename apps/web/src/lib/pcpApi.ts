@@ -116,6 +116,7 @@ export interface DashboardEstoqueFiltro {
   branches?: number[];
   stockCodes?: number[];
   search?: string;
+  produtos?: string[];
   tipo?: string[];
   categoria?: string[];
   grupo?: string[];
@@ -203,6 +204,12 @@ export interface DashboardEstoqueFiltrosResponse {
   lojas: PcpLojaFiltro[];
 }
 
+export interface DashboardEstoqueProdutoSugestao {
+  referencia: string;
+  descricao: string;
+  skus: number;
+}
+
 function appendList(params: URLSearchParams, key: string, values?: Array<string | number>) {
   if (values && values.length > 0) {
     params.set(key, values.join(','));
@@ -231,6 +238,7 @@ export const pcpApi = {
     const params = new URLSearchParams();
     params.set('data', filtro.data);
     if (filtro.search?.trim()) params.set('search', filtro.search.trim());
+    appendList(params, 'produtos', filtro.produtos);
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'stockCodes', filtro.stockCodes);
     appendList(params, 'tipo', filtro.tipo);
@@ -252,6 +260,12 @@ export const pcpApi = {
 
   getFiltrosDashboardEstoque: (token: string) =>
     fetchPcpApi<DashboardEstoqueFiltrosResponse>('/api/pcp/dashboard-estoque/filtros', { token }),
+
+  getProdutosDashboardEstoque: (token: string, search: string) => {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('search', search.trim());
+    return fetchPcpApi<{ produtos: DashboardEstoqueProdutoSugestao[] }>(`/api/pcp/dashboard-estoque/produtos?${params.toString()}`, { token });
+  },
 };
 
 // Relatorio Base

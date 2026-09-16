@@ -38,6 +38,7 @@ export interface DashboardEstoqueFiltro {
   branches?: number[];
   stockCodes?: number[];
   search?: string;
+  produtos?: string[];
   tipo?: string[];
   categoria?: string[];
   grupo?: string[];
@@ -91,6 +92,12 @@ export interface DashboardEstoqueReferencia {
   skus: number;
   saldos: DashboardEstoqueSaldoTipo[];
   grades: DashboardEstoqueGrade[];
+}
+
+export interface DashboardEstoqueProdutoSugestao {
+  referencia: string;
+  descricao: string;
+  skus: number;
 }
 
 interface BucketRow {
@@ -156,6 +163,12 @@ interface EstoqueTipoRow {
   qtd_skus: bigint | number;
 }
 
+interface ProdutoSugestaoRow {
+  referencia: string | null;
+  descricao: string | null;
+  skus: bigint | number;
+}
+
 const CLASS_FIELDS: Record<string, { label: string; column: string }> = {
   tipo: { label: 'Tipo', column: 'class_tipo' },
   categoria: { label: 'Categoria', column: 'class_categoria' },
@@ -191,6 +204,10 @@ function buildProdutoFiltro(filtro: DashboardEstoqueFiltro): Prisma.Sql {
       OR a.product_name ILIKE ${termo}
       OR a.description ILIKE ${termo}
     )`);
+  }
+
+  if (filtro.produtos?.length) {
+    clauses.push(Prisma.sql`AND COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) IN (${Prisma.join(filtro.produtos)})`);
   }
 
   return clauses.length ? Prisma.sql`${Prisma.join(clauses, ' ')}` : Prisma.empty;
@@ -406,6 +423,7 @@ function dashboardEstoqueCacheKey(filtro: DashboardEstoqueFiltro) {
     branches: normalizeList(filtro.branches),
     stockCodes: normalizeList(filtro.stockCodes),
     search: filtro.search?.trim() || '',
+    produtos: normalizeList(filtro.produtos),
     tipo: normalizeList(filtro.tipo),
     categoria: normalizeList(filtro.categoria),
     grupo: normalizeList(filtro.grupo),
@@ -639,6 +657,44 @@ export async function getDashboardEstoque(filtro: DashboardEstoqueFiltro, option
       console.error('Erro ao fechar conexao temporaria do dashboard de estoque:', error);
     });
   }
+}
+
+export async function buscarProdutosDashboardEstoque(search: string): Promise<DashboardEstoqueProdutoSugestao[]> {
+  const termo = search.trim();
+  if (termo.length < 2) return [];
+
+  const like = `%${termo}%`;
+  const rows = await prisma.$queryRaw<ProdutoSugestaoRow[]>`
+    SELECT
+      COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) AS referencia,
+      COALESCE(NULLIF(TRIM(a.reference_name), ''), NULLIF(TRIM(a.product_name), ''), a.product_sku) AS descricao,
+      COUNT(DISTINCT a.product_sku) AS skus
+    FROM produto_analitico a
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE a.product_code IS NOT NULL
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      AND (
+        a.product_sku ILIKE ${like}
+        OR a.reference_code ILIKE ${like}
+        OR a.reference_name ILIKE ${like}
+        OR a.product_name ILIKE ${like}
+        OR a.description ILIKE ${like}
+      )
+    GROUP BY
+      COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku),
+      COALESCE(NULLIF(TRIM(a.reference_name), ''), NULLIF(TRIM(a.product_name), ''), a.product_sku)
+    ORDER BY
+      CASE WHEN COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) ILIKE ${`${termo}%`} THEN 0 ELSE 1 END,
+      COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku)
+    LIMIT 30
+  `;
+
+  return rows.map((row) => ({
+    referencia: row.referencia || '',
+    descricao: row.descricao || row.referencia || '',
+    skus: Number(row.skus),
+  }));
 }
 
 export async function getFiltrosDashboardEstoque() {

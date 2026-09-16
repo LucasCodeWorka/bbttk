@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { DashboardEstoqueFiltro, getDashboardEstoque, getFiltrosDashboardEstoque } from '../services/dashboardEstoque.service.js';
+import { DashboardEstoqueFiltro, buscarProdutosDashboardEstoque, getDashboardEstoque, getFiltrosDashboardEstoque } from '../services/dashboardEstoque.service.js';
 
 const router = Router();
 
@@ -27,6 +27,15 @@ router.get('/dashboard-estoque/filtros', async (_req: Request, res: Response) =>
   }
 });
 
+router.get('/dashboard-estoque/produtos', async (req: Request, res: Response) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    res.json({ produtos: await buscarProdutosDashboardEstoque(search) });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/dashboard-estoque', async (req: Request, res: Response) => {
   try {
     const data = req.query.data;
@@ -40,6 +49,7 @@ router.get('/dashboard-estoque', async (req: Request, res: Response) => {
       branches: parseBranchCodes(req.query.branches),
       stockCodes: parseBranchCodes(req.query.stockCodes),
       search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      produtos: parseList(req.query.produtos),
       tipo: parseList(req.query.tipo),
       categoria: parseList(req.query.categoria),
       grupo: parseList(req.query.grupo),
