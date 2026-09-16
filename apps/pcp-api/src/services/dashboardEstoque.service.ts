@@ -342,7 +342,6 @@ async function getBuckets(filtro: DashboardEstoqueFiltro, custoCode: number, pre
     FROM saldo_sku
     GROUP BY ${column}
     ORDER BY SUM(quantidade) DESC
-    LIMIT 12
   `;
 }
 
@@ -359,7 +358,6 @@ async function getBucketFilial(filtro: DashboardEstoqueFiltro, custoCode: number
     WHERE quantidade <> 0
     GROUP BY branch_code
     ORDER BY SUM(quantidade) DESC
-    LIMIT 12
   `;
 }
 
