@@ -5,6 +5,7 @@ export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/metas', module: 'comercial' },
   { prefix: '/comissoes', module: 'comercial' },
   { prefix: '/pcp-novo', module: 'pcp_servico' },
+  { prefix: '/pcp-dashboard-estoque', module: 'pcp_servico' },
   { prefix: '/pcp-relatorio-base', module: 'pcp_servico' },
   { prefix: '/pcp-analise-grade', module: 'pcp_servico' },
   { prefix: '/pcp-curva-abc', module: 'pcp_servico' },

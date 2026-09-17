@@ -5,8 +5,8 @@ import { Card } from '@/components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { raioXApi, RaioXFiltro, RaioXProduto, RaioXProdutoSearch, RaioXResponse } from '@/lib/pcpApi';
 import { cn } from '@/lib/utils';
+import { GRADES, tamanhoNormalizado } from '@/lib/gradeOrdem';
 
-const GRADES = ['UN', 'P', 'M', 'G', 'GG', '2', '4', '6', '8', '10'];
 const numero = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
 
 type Props = { token: string | null };
@@ -22,12 +22,6 @@ const METRICAS_RESUMO: Array<{ campo: CampoSoma; rotulo: string; destaque?: 'mov
   { campo: 'estoqueFinal', rotulo: 'EST. FINAL', destaque: 'estoque' },
   { campo: 'pecasEmProducao', rotulo: 'EM PRODUCAO', destaque: 'producao' },
 ];
-
-function tamanhoNormalizado(tamanho: string) {
-  const valor = tamanho.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-  if (valor === 'UNICO' || valor === 'U') return 'UN';
-  return valor;
-}
 
 function Cobertura({ value, config }: { value: number; config: RaioXResponse['config'] }) {
   if (value >= 999) return <>INF</>;

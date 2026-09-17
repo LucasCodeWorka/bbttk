@@ -16,6 +16,7 @@ import vendaDiaRoutes from './routes/vendaDia.routes.js';
 import sugestaoProducaoRoutes from './routes/sugestaoProducao.routes.js';
 import pesosGradesRoutes from './routes/pesosGrades.routes.js';
 import vendaDescontoRoutes from './routes/vendaDesconto.routes.js';
+import dashboardEstoqueRoutes from './routes/dashboardEstoque.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -34,6 +35,7 @@ const HEAVY_REPORT_PATHS = new Set([
   '/curva-abc/resumo-sku',
   '/curva-abc/skus',
   '/estoque-sem-giro',
+  '/dashboard-estoque',
   '/raio-x',
   '/redistribuicao/dados-base',
   '/performance-colecao',
@@ -105,6 +107,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), monitorPcpRequest);
 app.use('/api/pcp', estoqueRoutes);
+app.use('/api/pcp', dashboardEstoqueRoutes);
 app.use('/api/pcp', relatorioBaseRoutes);
 app.use('/api/pcp', visaoGeralRoutes);
 app.use('/api/pcp', analiseGradeRoutes);

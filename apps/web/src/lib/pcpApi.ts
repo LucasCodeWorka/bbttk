@@ -32,7 +32,7 @@ export interface PcpClassificacaoOpcao {
 }
 
 export interface PcpClassificacaoDimensao {
-  chave: 'categoria' | 'linha' | 'genero' | 'status' | 'statusProduto';
+  chave: string;
   label: string;
   opcoes: PcpClassificacaoOpcao[];
 }
@@ -111,6 +111,105 @@ export interface EstoqueSemGiroFiltrosResponse {
   lojas: PcpLojaFiltro[];
 }
 
+export interface DashboardEstoqueFiltro {
+  data: string;
+  branches?: number[];
+  stockCodes?: number[];
+  search?: string;
+  produtos?: string[];
+  tipo?: string[];
+  categoria?: string[];
+  grupo?: string[];
+  linha?: string[];
+  colecao?: string[];
+  genero?: string[];
+  modelo?: string[];
+  tecido?: string[];
+  lancamento?: string[];
+  status?: string[];
+  motorPromocional?: string[];
+  campanha?: string[];
+  refresh?: boolean;
+}
+
+export interface DashboardEstoqueBucket {
+  label: string;
+  quantidade: number;
+  valorCusto: number;
+  skus: number;
+  referencias: number;
+  pctQuantidade: number;
+}
+
+export interface DashboardEstoqueSaldoTipo {
+  stockCode: number;
+  label: string;
+  quantidade: number;
+}
+
+export interface DashboardEstoqueGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+  valorCusto: number;
+  custo: number | null;
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+}
+
+export interface DashboardEstoqueReferencia {
+  referencia: string;
+  descricao: string;
+  colecao: string | null;
+  linha: string | null;
+  categoria: string | null;
+  genero: string | null;
+  status: string | null;
+  quantidade: number;
+  valorCusto: number;
+  custo: number | null;
+  skus: number;
+  saldos: DashboardEstoqueSaldoTipo[];
+  grades: DashboardEstoqueGrade[];
+}
+
+export interface DashboardEstoqueResponse {
+  data: string;
+  atualizadoEm: string | null;
+  config: {
+    precoCustoBranchCode: number;
+    custoCode: number;
+  };
+  total: {
+    quantidade: number;
+    valorCusto: number;
+    skus: number;
+    referencias: number;
+    filiais: number;
+  };
+  graficos: {
+    colecao: DashboardEstoqueBucket[];
+    linha: DashboardEstoqueBucket[];
+    categoria: DashboardEstoqueBucket[];
+    filial: DashboardEstoqueBucket[];
+  };
+  tiposSaldo: DashboardEstoqueSaldoTipo[];
+  itens: DashboardEstoqueReferencia[];
+  lojas: PcpLojaFiltro[];
+}
+
+export interface DashboardEstoqueFiltrosResponse {
+  classificacoes: PcpClassificacaoDimensao[];
+  tiposEstoque: { stockCode: number; label: string; qtd_skus: number }[];
+  lojas: PcpLojaFiltro[];
+}
+
+export interface DashboardEstoqueProdutoSugestao {
+  referencia: string;
+  descricao: string;
+  skus: number;
+}
+
 function appendList(params: URLSearchParams, key: string, values?: Array<string | number>) {
   if (values && values.length > 0) {
     params.set(key, values.join(','));
@@ -134,6 +233,39 @@ export const pcpApi = {
 
   getFiltrosEstoqueSemGiro: (token: string) =>
     fetchPcpApi<EstoqueSemGiroFiltrosResponse>('/api/pcp/estoque-sem-giro/filtros', { token }),
+
+  getDashboardEstoque: (token: string, filtro: DashboardEstoqueFiltro) => {
+    const params = new URLSearchParams();
+    params.set('data', filtro.data);
+    if (filtro.search?.trim()) params.set('search', filtro.search.trim());
+    appendList(params, 'produtos', filtro.produtos);
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'stockCodes', filtro.stockCodes);
+    appendList(params, 'tipo', filtro.tipo);
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'grupo', filtro.grupo);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'colecao', filtro.colecao);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'modelo', filtro.modelo);
+    appendList(params, 'tecido', filtro.tecido);
+    appendList(params, 'lancamento', filtro.lancamento);
+    appendList(params, 'status', filtro.status);
+    appendList(params, 'motorPromocional', filtro.motorPromocional);
+    appendList(params, 'campanha', filtro.campanha);
+    if (filtro.refresh) params.set('refresh', '1');
+
+    return fetchPcpApi<DashboardEstoqueResponse>(`/api/pcp/dashboard-estoque?${params.toString()}`, { token });
+  },
+
+  getFiltrosDashboardEstoque: (token: string) =>
+    fetchPcpApi<DashboardEstoqueFiltrosResponse>('/api/pcp/dashboard-estoque/filtros', { token }),
+
+  getProdutosDashboardEstoque: (token: string, search: string) => {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('search', search.trim());
+    return fetchPcpApi<{ produtos: DashboardEstoqueProdutoSugestao[] }>(`/api/pcp/dashboard-estoque/produtos?${params.toString()}`, { token });
+  },
 };
 
 // Relatorio Base
