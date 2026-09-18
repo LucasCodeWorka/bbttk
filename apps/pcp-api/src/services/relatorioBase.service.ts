@@ -28,6 +28,7 @@ export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(t
 
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';
+const MATRIZ_SEM_CLASSIFICACAO = 'Nao classificado';
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -216,7 +217,11 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
-      WHERE 1=1 ${filtroProductSku(productSkus)}
+      WHERE (
+          stock_code = 1
+          OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+        )
+        ${filtroProductSku(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT us.product_sku, us.product_code,
@@ -230,7 +235,7 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
     JOIN produto_analitico a ON a.product_sku = us.product_sku
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
-      AND (us.branch_code != ${FABRICA_BRANCH_CODE} OR us.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+      AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
     -- Agrupa por POSICAO. Repetir o CASE aqui nao funciona: cada ${'$'}{...} do Prisma
     -- vira um parametro posicional novo ($8, $9...), entao o Postgres nao reconhece
@@ -749,14 +754,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     return { estVarejo: 0, estAtacado: 0, vendaVarejo: 0, vendaAtacado: 0, valorEstoque: 0 };
   }
   function acumularBucket(mapa: Map<string, BucketAcc>, chave: string | null, valores: BucketAcc) {
-    if (!chave) return;
-    const acc = mapa.get(chave) || bucketVazio();
+    const bucket = chave?.trim() || MATRIZ_SEM_CLASSIFICACAO;
+    const acc = mapa.get(bucket) || bucketVazio();
     acc.estVarejo += valores.estVarejo;
     acc.estAtacado += valores.estAtacado;
     acc.vendaVarejo += valores.vendaVarejo;
     acc.vendaAtacado += valores.vendaAtacado;
     acc.valorEstoque += valores.valorEstoque;
-    mapa.set(chave, acc);
+    mapa.set(bucket, acc);
   }
 
   const matrizLinhaAgg = new Map<string, BucketAcc>();
