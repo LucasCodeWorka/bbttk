@@ -11,10 +11,14 @@ export const FILIAIS: Record<number, string> = {
   7: 'PARANGABA',
   8: 'RIOMAR',
   9: 'IGUATEMI EXP.',
+  10: 'MOSSORO',
   11: 'RIOMAR PK',
   12: 'MESSEJANA',
   13: 'EUSEBIO',
+  16: 'VIA SUL',
   17: 'NORTH SHOPPING',
+  18: 'TERRAZO SHOPPING',
+  19: 'MART MODA',
 };
 
 // A filial 02 contem dois locais: DPA (fisico + segunda qualidade) e ATACADO.
