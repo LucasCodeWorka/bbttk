@@ -301,6 +301,38 @@ async function getGiroRows(dias: number, productCodes: number[] | null, dataPosi
   `;
 }
 
+// Total agregado de giro em dias para cards executivos. Evita materializar um Map
+// product_code x filial quando a tela so precisa do total.
+async function getGiroTotalDias(dias: number, productCodes: number[] | null, branchCodes: number[] | null, dataPosicao?: string): Promise<number> {
+  const dataBase = dataBaseSql(dataPosicao);
+  const filtroBranch = branchCodes && branchCodes.length > 0
+    ? Prisma.sql`AND venda.branch_code IN (${Prisma.join(branchCodes)})`
+    : Prisma.empty;
+  const rows = await prisma.$queryRaw<Array<{ quantidade: Decimal | null }>>`
+    SELECT COALESCE(SUM(venda.quantidade), 0) AS quantidade
+    FROM (
+      SELECT
+        CASE
+          WHEN t.branch_code = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%' THEN ${ATACADO_BRANCH_CODE}
+          WHEN t.branch_code = ${FABRICA_BRANCH_CODE} THEN ${DPA_BRANCH_CODE}
+          ELSE t.branch_code
+        END::int AS branch_code,
+        ${QUANTIDADE_COM_SINAL} AS quantidade
+      FROM transacoes t
+      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      ${OPERACAO_JOIN}
+      WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
+        AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+        AND t.status = 4
+        AND ${SALE_OPERATION_FILTER}
+        ${filtroProductCodeTi(productCodes)}
+    ) venda
+    WHERE 1 = 1
+      ${filtroBranch}
+  `;
+  return decimalToNumber(rows[0]?.quantidade);
+}
+
 // Giro do canal Atacado (channel-split real, so branch_code=2), mesmo padrao de
 // getVendasFabricaDividida/getDevolucoesFabricaDividida em vendas.service.ts
 async function getGiroAtacadoRows(dias: number, productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
@@ -654,9 +686,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroAtacadoRows,
     vendaMesesRows,
     vendaAtacadoMesesRows,
-    giroTt30Rows,
-    giroTt60Rows,
-    giroTt90Rows,
+    giroTt30Total,
+    giroTt60Total,
+    giroTt90Total,
     giroTt1Rows,
     giroTt3Rows,
     giroTt6Rows,
@@ -671,9 +703,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
     getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao),
     config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao) : Promise.resolve([]),
-    getGiroRows(30, productCodesFiltro, filtro.dataPosicao),
-    getGiroRows(60, productCodesFiltro, filtro.dataPosicao),
-    getGiroRows(90, productCodesFiltro, filtro.dataPosicao),
+    getGiroTotalDias(30, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
+    getGiroTotalDias(60, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
+    getGiroTotalDias(90, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
@@ -717,25 +749,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const vendaAtacadoMesesPorProductCode = new Map<number, number>();
   for (const r of vendaAtacadoMesesRows) vendaAtacadoMesesPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-
-  const giroTt30PorProductCode = new Map<number, Map<number, number>>();
-  for (const r of giroTt30Rows) {
-    const mapa = giroTt30PorProductCode.get(r.product_code) || new Map<number, number>();
-    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
-    giroTt30PorProductCode.set(r.product_code, mapa);
-  }
-  const giroTt60PorProductCode = new Map<number, Map<number, number>>();
-  for (const r of giroTt60Rows) {
-    const mapa = giroTt60PorProductCode.get(r.product_code) || new Map<number, number>();
-    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
-    giroTt60PorProductCode.set(r.product_code, mapa);
-  }
-  const giroTt90PorProductCode = new Map<number, Map<number, number>>();
-  for (const r of giroTt90Rows) {
-    const mapa = giroTt90PorProductCode.get(r.product_code) || new Map<number, number>();
-    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
-    giroTt90PorProductCode.set(r.product_code, mapa);
-  }
 
   // Giro TT por product_code x branch_code, permitindo filtrar por loja nos cards KPIs
   // (SKUs, Estoque Total, Giro TT 1/3/6).
@@ -825,9 +838,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
   let valorEstoqueAnoAnterior = 0;
-  let giroTt30Total = 0;
-  let giroTt60Total = 0;
-  let giroTt90Total = 0;
   let estVarejoTotal = 0;
   let estAtacadoTotal = 0;
   let vendaVarejoTotal = 0;
@@ -933,9 +943,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
-    const giroTt30 = productCode !== null ? somaMapaFiltrado(giroTt30PorProductCode.get(productCode), branchFiltroParaDados) : 0;
-    const giroTt60 = productCode !== null ? somaMapaFiltrado(giroTt60PorProductCode.get(productCode), branchFiltroParaDados) : 0;
-    const giroTt90 = productCode !== null ? somaMapaFiltrado(giroTt90PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
@@ -965,9 +972,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     valorEstoqueTotal += valorEstoqueSku;
     valorEstoqueAnoAnterior += valorEstoqueAnoAnteriorSku;
-    giroTt30Total += giroTt30;
-    giroTt60Total += giroTt60;
-    giroTt90Total += giroTt90;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
