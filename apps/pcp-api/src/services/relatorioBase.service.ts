@@ -46,6 +46,7 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
+  dataPosicao?: string;
   // Paginacao real por REFERENCIA (nao por SKU) - troca o antigo "rank" (Top 50/100/
   // 250/Todos) por pagina/tamanho de pagina, pedido do usuario ("nao ficar controlando
   // por rank... crie paginacoes"). pageSize grande (export) e um uso valido, nao um
@@ -208,8 +209,46 @@ interface EstoqueRow {
   quantidade_estoque: Decimal;
 }
 
+interface SaldoDiagnosticoTotalRow {
+  variante: string;
+  bruto: Decimal | null;
+  arredondado_no_total: Decimal | null;
+  arredondado_por_sku: Decimal | null;
+  diferenca_arredondamento: Decimal | null;
+  skus: bigint;
+  skus_fracionados: bigint;
+}
+
+interface SaldoDiagnosticoCodigoRow {
+  stock_code: number;
+  bruto: Decimal | null;
+  arredondado_no_total: Decimal | null;
+  arredondado_por_sku: Decimal | null;
+  diferenca_arredondamento: Decimal | null;
+  skus: bigint;
+  skus_fracionados: bigint;
+}
+
+interface SaldoDiagnosticoSkuRow {
+  product_sku: string;
+  saldo_1: Decimal | null;
+  saldo_5: Decimal | null;
+  saldo_8: Decimal | null;
+  saldo_1_5_8: Decimal | null;
+  captured_at: Date | null;
+}
+
 // Estoque atual por SKU x local. A filial 02 e desmembrada em DPA (fisico + segunda
 // qualidade) e ATACADO antes da agregacao, para nunca misturar os dois locais.
+function dataBaseSql(dataPosicao?: string): Prisma.Sql {
+  return dataPosicao ? Prisma.sql`${dataPosicao}::date` : Prisma.sql`CURRENT_DATE`;
+}
+
+function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql {
+  const base = dataBaseSql(dataPosicao);
+  return anosOffset === 0 ? base : Prisma.sql`(${base} + make_interval(years => ${anosOffset}::int))`;
+}
+
 async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[]> {
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
@@ -239,6 +278,189 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
     -- em uma linha por stock_code, e quem consome usa Map.set() (sobrescreve).
     GROUP BY 1, 2, 3
   `;
+}
+
+export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFiltro) {
+  const identidadeRows = await getIdentidadeRows(filtro);
+  const temFiltroClassificacao = !!(
+    filtro.categoria?.length || filtro.linha?.length || filtro.genero?.length || filtro.status?.length || filtro.search?.trim()
+  );
+  const productSkusFiltro = temFiltroClassificacao ? identidadeRows.map((r) => r.product_sku) : null;
+  const dataCorte = dataLimiteSuperiorSql(filtro.dataPosicao);
+  const skusPrint = [
+    '002 001 CST110',
+    '012 BB CST001C',
+    '006 BB CUE001C',
+    '018 BB CST004T',
+    '004 BB ACE002',
+    '016 BB CST295B',
+    '003 BB CST318',
+    '001 BB ACE469',
+    '014 BB MCL071',
+    '026 BB ACE508',
+    '026 BB ACE517',
+    '006 BB ACE520',
+    '009 BB TIA005',
+    'VOUCHER BB VCH001',
+    '021 BB BAZAR',
+    '021 BB BAZAR 003',
+    'SP 003 CNJ142',
+    'SP 003 CNJ149',
+    '010 BB BD192',
+  ];
+
+  const totais = await prisma.$queryRaw<SaldoDiagnosticoTotalRow[]>`
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (product_sku, branch_code, stock_code)
+        product_sku, product_code, branch_code, stock_code, stock, captured_at
+      FROM prd_saldo
+      WHERE (
+          stock_code = 1
+          OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+        )
+        ${filtroProductSku(productSkusFiltro)}
+        AND captured_at < ${dataCorte} + INTERVAL '1 day'
+      ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    ),
+    base AS (
+      SELECT
+        us.product_sku,
+        CASE
+          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+          ELSE us.branch_code
+        END::int AS branch_code,
+        COALESCE(us.stock, 0)::numeric AS stock
+      FROM ultimo_saldo us
+      JOIN produto_analitico a ON a.product_sku = us.product_sku
+      LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    ),
+    por_sku_branch AS (
+      SELECT product_sku, branch_code, SUM(stock) AS stock
+      FROM base
+      GROUP BY product_sku, branch_code
+    ),
+    variantes AS (
+      SELECT 'todas'::text AS variante, product_sku, SUM(stock) AS stock
+      FROM por_sku_branch
+      GROUP BY product_sku
+      UNION ALL
+      SELECT 'filial_02_dpa_atacado'::text AS variante, product_sku, SUM(stock) AS stock
+      FROM por_sku_branch
+      WHERE branch_code IN (${DPA_BRANCH_CODE}, ${ATACADO_BRANCH_CODE})
+      GROUP BY product_sku
+      UNION ALL
+      SELECT 'dpa_saldos_1_5'::text AS variante, product_sku, SUM(stock) AS stock
+      FROM por_sku_branch
+      WHERE branch_code = ${DPA_BRANCH_CODE}
+      GROUP BY product_sku
+      UNION ALL
+      SELECT 'atacado_saldo_8'::text AS variante, product_sku, SUM(stock) AS stock
+      FROM por_sku_branch
+      WHERE branch_code = ${ATACADO_BRANCH_CODE}
+      GROUP BY product_sku
+    )
+    SELECT
+      variante,
+      SUM(stock) AS bruto,
+      ROUND(SUM(stock), 0) AS arredondado_no_total,
+      SUM(ROUND(stock, 0)) AS arredondado_por_sku,
+      SUM(ROUND(stock, 0)) - ROUND(SUM(stock), 0) AS diferenca_arredondamento,
+      COUNT(*) AS skus,
+      COUNT(*) FILTER (WHERE stock <> ROUND(stock, 0)) AS skus_fracionados
+    FROM variantes
+    GROUP BY variante
+    ORDER BY variante
+  `;
+
+  const saldosFilial02 = await prisma.$queryRaw<SaldoDiagnosticoCodigoRow[]>`
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (product_sku, branch_code, stock_code)
+        product_sku, product_code, branch_code, stock_code, stock, captured_at
+      FROM prd_saldo
+      WHERE branch_code = ${FABRICA_BRANCH_CODE}
+        AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})
+        ${filtroProductSku(productSkusFiltro)}
+        AND captured_at < ${dataCorte} + INTERVAL '1 day'
+      ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    ),
+    base AS (
+      SELECT us.product_sku, us.stock_code, COALESCE(us.stock, 0)::numeric AS stock
+      FROM ultimo_saldo us
+      JOIN produto_analitico a ON a.product_sku = us.product_sku
+      LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+    )
+    SELECT
+      stock_code,
+      SUM(stock) AS bruto,
+      ROUND(SUM(stock), 0) AS arredondado_no_total,
+      SUM(ROUND(stock, 0)) AS arredondado_por_sku,
+      SUM(ROUND(stock, 0)) - ROUND(SUM(stock), 0) AS diferenca_arredondamento,
+      COUNT(*) AS skus,
+      COUNT(*) FILTER (WHERE stock <> ROUND(stock, 0)) AS skus_fracionados
+    FROM base
+    GROUP BY stock_code
+    ORDER BY stock_code
+  `;
+
+  const skus = await prisma.$queryRaw<SaldoDiagnosticoSkuRow[]>`
+    WITH ultimo_saldo AS (
+      SELECT DISTINCT ON (product_sku, branch_code, stock_code)
+        product_sku, product_code, branch_code, stock_code, stock, captured_at
+      FROM prd_saldo
+      WHERE branch_code = ${FABRICA_BRANCH_CODE}
+        AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})
+        AND product_sku IN (${Prisma.join(skusPrint)})
+        AND captured_at < ${dataCorte} + INTERVAL '1 day'
+      ORDER BY product_sku, branch_code, stock_code, captured_at DESC
+    )
+    SELECT
+      product_sku,
+      SUM(stock) FILTER (WHERE stock_code = 1) AS saldo_1,
+      SUM(stock) FILTER (WHERE stock_code = 5) AS saldo_5,
+      SUM(stock) FILTER (WHERE stock_code = 8) AS saldo_8,
+      SUM(stock) AS saldo_1_5_8,
+      MAX(captured_at) AS captured_at
+    FROM ultimo_saldo
+    GROUP BY product_sku
+    ORDER BY product_sku
+  `;
+
+  return {
+    dataPosicao: filtro.dataPosicao || new Date().toISOString().slice(0, 10),
+    totais: totais.map((row) => ({
+      variante: row.variante,
+      bruto: round(decimalToNumber(row.bruto), 3),
+      arredondadoNoTotal: round(decimalToNumber(row.arredondado_no_total), 0),
+      arredondadoPorSku: round(decimalToNumber(row.arredondado_por_sku), 0),
+      diferencaArredondamento: round(decimalToNumber(row.diferenca_arredondamento), 0),
+      skus: Number(row.skus),
+      skusFracionados: Number(row.skus_fracionados),
+    })),
+    filial02PorCodigoSaldo: saldosFilial02.map((row) => ({
+      stockCode: row.stock_code,
+      bruto: round(decimalToNumber(row.bruto), 3),
+      arredondadoNoTotal: round(decimalToNumber(row.arredondado_no_total), 0),
+      arredondadoPorSku: round(decimalToNumber(row.arredondado_por_sku), 0),
+      diferencaArredondamento: round(decimalToNumber(row.diferenca_arredondamento), 0),
+      skus: Number(row.skus),
+      skusFracionados: Number(row.skus_fracionados),
+    })),
+    skusPrint: skus.map((row) => ({
+      sku: row.product_sku,
+      saldo1: round(decimalToNumber(row.saldo_1), 3),
+      saldo5: round(decimalToNumber(row.saldo_5), 3),
+      saldo8: round(decimalToNumber(row.saldo_8), 3),
+      saldo158: round(decimalToNumber(row.saldo_1_5_8), 3),
+      capturedAt: row.captured_at?.toISOString() || null,
+    })),
+  };
 }
 
 interface ProductCodeAggRow {
@@ -800,6 +1022,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     skus: RelatorioBaseRow[];
   }
   const referenciaAgg = new Map<string, RefAgg>();
+  const kpisBrutos = { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: 0 };
 
   for (const identidade of identidadeRows) {
     const sku = identidade.product_sku;
@@ -873,14 +1096,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
-    // estoque negativo ou sem venda/giro recente. Isso evita divergencia entre o card
-    // Estoque Total e os totalizadores das tabelas.
-    const estAtacadoSku = branches[ATACADO_BRANCH_CODE]?.est ?? 0;
+    // estoque negativo ou sem venda/giro recente. Para os KPIs, soma o saldo bruto e
+    // arredonda somente no final; arredondar SKU a SKU distorce o total.
+    const estAtacadoSku = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
     let estVarejoSku = 0;
     let vendaVarejoSku = 0;
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
-      estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
+      estVarejoSku += estoqueDoSku.get(coluna.branchCode) || 0;
       vendaVarejoSku += (mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0) * config.coberturaMeses;
     }
     const vendaAtacadoSku = (mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0) * config.coberturaMeses;
@@ -957,6 +1180,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       branches,
     };
     skuRows.push(skuRow);
+    kpisBrutos.giroTt1 += giroTt1;
+    kpisBrutos.giroTt3 += giroTt3;
+    kpisBrutos.giroTt6 += giroTt6;
+    kpisBrutos.estTt += estTt;
+    kpisBrutos.skuCount += 1;
 
     const agg = referenciaAgg.get(referenceCode) || {
       referenceName,
@@ -976,15 +1204,19 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       skus: [],
     };
     agg.emProducao += skuRow.emProducao;
-    agg.estTt += skuRow.estTt;
-    agg.giroTt1 += skuRow.giroTt1;
-    agg.giroTt3 += skuRow.giroTt3;
-    agg.giroTt6 += skuRow.giroTt6;
+    agg.estTt += estTt;
+    agg.giroTt1 += giroTt1;
+    agg.giroTt3 += giroTt3;
+    agg.giroTt6 += giroTt6;
     if (ultimaEntrada && (!agg.ultimaEntrada || ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = ultimaEntrada;
     for (const coluna of colunasAtivas) {
       const acumulado = agg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
-      acumulado.est += branches[coluna.branchCode].est;
-      acumulado.giro += branches[coluna.branchCode].giro;
+      const giroBranch =
+        coluna.branchCode === ATACADO_BRANCH_CODE
+          ? productCode !== null ? giroAtacadoPorProductCode.get(productCode) || 0 : 0
+          : giroDoProduto?.get(coluna.branchCode) || 0;
+      acumulado.est += estoqueDoSku.get(coluna.branchCode) || 0;
+      acumulado.giro += giroBranch;
       acumulado.mediaMensalSum += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
       agg.branchesAgg.set(coluna.branchCode, acumulado);
     }
@@ -1061,16 +1293,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
 
-  const kpis = skuRows.reduce(
-    (acc, r) => {
-      acc.giroTt1 += r.giroTt1;
-      acc.giroTt3 += r.giroTt3;
-      acc.giroTt6 += r.giroTt6;
-      acc.estTt += r.estTt;
-      return acc;
-    },
-    { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: skuRows.length }
-  );
+  const kpis = kpisBrutos;
 
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.

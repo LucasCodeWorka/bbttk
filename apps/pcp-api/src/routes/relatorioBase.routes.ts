@@ -1,5 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { getRelatorioBase, getFiltrosRelatorioBase, RelatorioBaseFiltro } from '../services/relatorioBase.service.js';
+import {
+  getDiagnosticoSaldoRelatorioBase,
+  getFiltrosRelatorioBase,
+  getRelatorioBase,
+  RelatorioBaseFiltro,
+} from '../services/relatorioBase.service.js';
 
 const router = Router();
 
@@ -15,9 +20,32 @@ function parseBranchCodes(value: unknown): number[] | undefined {
   return parsed.length > 0 ? parsed : undefined;
 }
 
+function parseDate(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  return value;
+}
+
 router.get('/relatorio-base/filtros', async (_req: Request, res: Response) => {
   try {
     res.json(await getFiltrosRelatorioBase());
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.get('/relatorio-base/diagnostico-saldo', async (req: Request, res: Response) => {
+  try {
+    const filtro: RelatorioBaseFiltro = {
+      categoria: parseList(req.query.categoria),
+      linha: parseList(req.query.linha),
+      genero: parseList(req.query.genero),
+      status: parseList(req.query.status),
+      branches: parseBranchCodes(req.query.branches),
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      dataPosicao: parseDate(req.query.dataPosicao),
+    };
+
+    res.json(await getDiagnosticoSaldoRelatorioBase(filtro));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -35,6 +63,7 @@ router.get('/relatorio-base', async (req: Request, res: Response) => {
       status: parseList(req.query.status),
       branches: parseBranchCodes(req.query.branches),
       search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      dataPosicao: parseDate(req.query.dataPosicao),
       page: Number.isFinite(page) && page > 0 ? page : 1,
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 15,
     };
