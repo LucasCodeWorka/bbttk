@@ -276,6 +276,7 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
+  dataPosicao?: string;
   page?: number;
   pageSize?: number;
 }
@@ -404,6 +405,7 @@ export const relatorioBaseApi = {
   getRelatorioBase: (token: string, filtro: RelatorioBaseFiltro = {}) => {
     const params = new URLSearchParams();
     if (filtro.search) params.set('search', filtro.search);
+    if (filtro.dataPosicao) params.set('dataPosicao', filtro.dataPosicao);
     if (filtro.page) params.set('page', String(filtro.page));
     if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
     appendList(params, 'branches', filtro.branches);

@@ -47,6 +47,7 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
+  dataPosicao?: string;
   // Paginacao real por REFERENCIA (nao por SKU) - troca o antigo "rank" (Top 50/100/
   // 250/Todos) por pagina/tamanho de pagina, pedido do usuario ("nao ficar controlando
   // por rank... crie paginacoes"). pageSize grande (export) e um uso valido, nao um
@@ -213,10 +214,17 @@ interface EstoqueRow {
 
 // Estoque atual por SKU x local. A filial 02 e desmembrada em DPA (fisico + segunda
 // qualidade) e ATACADO antes da agregacao, para nunca misturar os dois locais.
-async function getEstoqueRows(productSkus: string[] | null, dataCorte?: 'same_date_last_year'): Promise<EstoqueRow[]> {
-  const corteSql = dataCorte === 'same_date_last_year'
-    ? Prisma.sql`AND captured_at < (CURRENT_DATE - INTERVAL '1 year')::date + INTERVAL '1 day'`
-    : Prisma.empty;
+function dataBaseSql(dataPosicao?: string): Prisma.Sql {
+  return dataPosicao ? Prisma.sql`${dataPosicao}::date` : Prisma.sql`CURRENT_DATE`;
+}
+
+function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql {
+  const base = dataBaseSql(dataPosicao);
+  return anosOffset === 0 ? base : Prisma.sql`(${base} + make_interval(years => ${anosOffset}::int))`;
+}
+
+async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string, anosOffset = 0): Promise<EstoqueRow[]> {
+  const dataCorte = dataLimiteSuperiorSql(dataPosicao, anosOffset);
 
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
@@ -228,7 +236,7 @@ async function getEstoqueRows(productSkus: string[] | null, dataCorte?: 'same_da
           OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
         )
         ${filtroProductSku(productSkus)}
-        ${corteSql}
+        AND captured_at < ${dataCorte} + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT us.product_sku, us.product_code,
@@ -260,7 +268,8 @@ interface ProductCodeAggRow {
 }
 
 // Giro (peca vendida, liquido de devolucao) por product_code x filial, ultimos `dias` dias
-async function getGiroRows(dias: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
+async function getGiroRows(dias: number, productCodes: number[] | null, dataPosicao?: string): Promise<ProductCodeAggRow[]> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code,
       CASE
@@ -272,7 +281,8 @@ async function getGiroRows(dias: number, productCodes: number[] | null): Promise
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(days => ${dias}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
@@ -284,13 +294,15 @@ async function getGiroRows(dias: number, productCodes: number[] | null): Promise
 
 // Giro do canal Atacado (channel-split real, so branch_code=2), mesmo padrao de
 // getVendasFabricaDividida/getDevolucoesFabricaDividida em vendas.service.ts
-async function getGiroAtacadoRows(dias: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getGiroAtacadoRows(dias: number, productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(days => ${dias}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
@@ -302,7 +314,8 @@ async function getGiroAtacadoRows(dias: number, productCodes: number[] | null): 
 
 // Total vendido por product_code x filial nos ultimos `meses` meses - denominador da
 // cobertura (media_mensal = total / meses).
-async function getVendaPorMesesRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
+async function getVendaPorMesesRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<ProductCodeAggRow[]> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code,
       CASE
@@ -314,7 +327,8 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
@@ -326,13 +340,15 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
 
 // Total vendido do canal Atacado nos ultimos `meses` meses - usado como denominador da
 // cobertura do Atacado quando atacadoCoberturaBase = 'atacado_only'.
-async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
@@ -344,7 +360,8 @@ async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[]
 
 // Giro TT por product_code x branch_code, nas janelas de 1/3/6 meses. Retorna detalhado
 // por filial pra permitir que os cards KPIs respeitem o filtro de loja selecionado.
-async function getGiroTtRows(meses: number, productCodes: number[] | null): Promise<ProductCodeAggRow[]> {
+async function getGiroTtRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<ProductCodeAggRow[]> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code,
       CASE
@@ -356,7 +373,8 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null): Prom
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
@@ -440,13 +458,15 @@ export async function getCustoProducaoRows(precoCustoBranchCode: number, product
 // pegar o max"). Devolucao (operation_mode='3') tambem e operations_type='E' mas ja e
 // tratada em separado no resto do sistema - aqui entra igual, pois fisicamente tambem
 // e uma entrada de mercadoria no estoque daquela filial.
-export async function getUltimaEntradaRows(productCodes: number[] | null): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
+export async function getUltimaEntradaRows(productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; ultima_entrada: Date }>> {
+  const dataBase = dataBaseSql(dataPosicao);
   return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada: Date }>>`
     SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
     WHERE t.status = 4 AND co.operations_type = 'E'
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
   `;
@@ -633,17 +653,17 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     custoUltimaCompraRows,
     emProducaoRows,
   ] = await Promise.all([
-    getEstoqueRows(productSkusFiltro),
-    getEstoqueRows(productSkusFiltro, 'same_date_last_year'),
-    getGiroRows(config.giroDias, productCodesFiltro),
-    getGiroAtacadoRows(config.giroDias, productCodesFiltro),
-    getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro),
-    config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro) : Promise.resolve([]),
-    getGiroTtRows(1, productCodesFiltro),
-    getGiroTtRows(3, productCodesFiltro),
-    getGiroTtRows(6, productCodesFiltro),
+    getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
+    getEstoqueRows(productSkusFiltro, filtro.dataPosicao, -1),
+    getGiroRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
+    getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
+    getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao),
+    config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao) : Promise.resolve([]),
+    getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
+    getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
+    getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
     getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
-    getUltimaEntradaRows(productCodesFiltro),
+    getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
     getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);

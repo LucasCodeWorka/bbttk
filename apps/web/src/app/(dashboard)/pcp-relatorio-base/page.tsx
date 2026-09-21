@@ -277,6 +277,7 @@ export default function PcpRelatorioBasePage() {
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [search, setSearch] = useState('');
+  const [dataPosicao, setDataPosicao] = useState('');
   const [pagina, setPagina] = useState(1);
   const [verPorLoja, setVerPorLoja] = useState(false);
   const [exportando, setExportando] = useState(false);
@@ -311,6 +312,7 @@ export default function PcpRelatorioBasePage() {
       status: produtoFiltro.status,
       branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
       search: search.trim() || undefined,
+      dataPosicao: dataPosicao || undefined,
       page: pagina,
       pageSize: PAGE_SIZE,
     };
@@ -357,13 +359,13 @@ export default function PcpRelatorioBasePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas, search, pagina]);
+  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina]);
 
   // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
   // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
   useEffect(() => {
     setPagina(1);
-  }, [produtoFiltro, filiaisSelecionadas, search]);
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
@@ -766,6 +768,13 @@ export default function PcpRelatorioBasePage() {
           onChange={(e) => setSearch(e.target.value)}
           className="w-52"
           placeholder="Ex: 7800..."
+        />
+        <Input
+          label="Data"
+          type="date"
+          value={dataPosicao}
+          onChange={(e) => setDataPosicao(e.target.value)}
+          className="w-40"
         />
         <Button onClick={() => { carregarDados(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
         <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
