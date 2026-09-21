@@ -148,6 +148,8 @@ export interface RelatorioBaseKpisExtra {
   coberturaAtacado: number | null;
   giroAnualizado: number;
   valorEstoqueTotal: number;
+  valorEstoqueAnoAnterior: number;
+  valorEstoqueVariacaoPercent: number | null;
   // "Estoque morto" = status TOTVS comecando com "FORA DE LINHA" (cobre todas as
   // variantes de campanha: "FORA DE LINHA BLACK FRIDAY 2024", "FORA DE LINHA PROMO JAN
   // 2025" etc, confirmado direto no banco - nao e um dia-sem-venda, e classificacao).
@@ -211,7 +213,11 @@ interface EstoqueRow {
 
 // Estoque atual por SKU x local. A filial 02 e desmembrada em DPA (fisico + segunda
 // qualidade) e ATACADO antes da agregacao, para nunca misturar os dois locais.
-async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[]> {
+async function getEstoqueRows(productSkus: string[] | null, dataCorte?: 'same_date_last_year'): Promise<EstoqueRow[]> {
+  const corteSql = dataCorte === 'same_date_last_year'
+    ? Prisma.sql`AND captured_at < (CURRENT_DATE - INTERVAL '1 year')::date + INTERVAL '1 day'`
+    : Prisma.empty;
+
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
@@ -222,6 +228,7 @@ async function getEstoqueRows(productSkus: string[] | null): Promise<EstoqueRow[
           OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
         )
         ${filtroProductSku(productSkus)}
+        ${corteSql}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT us.product_sku, us.product_code,
@@ -613,6 +620,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const [
     estoqueRows,
+    estoqueAnoAnteriorRows,
     giroRows,
     giroAtacadoRows,
     vendaMesesRows,
@@ -624,9 +632,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     ultimaEntradaRows,
     custoUltimaCompraRows,
     emProducaoRows,
-    venda12mRows,
   ] = await Promise.all([
     getEstoqueRows(productSkusFiltro),
+    getEstoqueRows(productSkusFiltro, 'same_date_last_year'),
     getGiroRows(config.giroDias, productCodesFiltro),
     getGiroAtacadoRows(config.giroDias, productCodesFiltro),
     getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro),
@@ -638,7 +646,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getUltimaEntradaRows(productCodesFiltro),
     getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
-    getVendaPorMesesRows(12, productCodesFiltro),
   ]);
 
   // Mapas auxiliares product_sku -> ... e product_code -> ...
@@ -647,6 +654,13 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const mapa = estoquePorSku.get(r.product_sku) || new Map<number, number>();
     mapa.set(r.branch_code, decimalToNumber(r.quantidade_estoque));
     estoquePorSku.set(r.product_sku, mapa);
+  }
+
+  const estoqueAnoAnteriorPorSku = new Map<string, Map<number, number>>();
+  for (const r of estoqueAnoAnteriorRows) {
+    const mapa = estoqueAnoAnteriorPorSku.get(r.product_sku) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade_estoque));
+    estoqueAnoAnteriorPorSku.set(r.product_sku, mapa);
   }
 
   const giroPorProductCode = new Map<number, Map<number, number>>(); // product_code -> branch_code -> giro
@@ -669,8 +683,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const vendaAtacadoMesesPorProductCode = new Map<number, number>();
   for (const r of vendaAtacadoMesesRows) vendaAtacadoMesesPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
 
-  // Giro TT por product_code x branch_code - estrutura igual a venda12mPorProductCode,
-  // permite filtrar por loja nos cards KPIs (SKUs, Estoque Total, Giro TT 1/3/6).
+  // Giro TT por product_code x branch_code, permitindo filtrar por loja nos cards KPIs
+  // (SKUs, Estoque Total, Giro TT 1/3/6).
   const giroTt1PorProductCode = new Map<number, Map<number, number>>();
   for (const r of giroTt1Rows) {
     const mapa = giroTt1PorProductCode.get(r.product_code) || new Map<number, number>();
@@ -707,19 +721,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const emProducaoPorProductCode = new Map<number, number>();
   for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
-
-  const venda12mPorProductCode = new Map<number, Map<number, number>>();
-  for (const r of venda12mRows) {
-    const mapa = venda12mPorProductCode.get(r.product_code) || new Map<number, number>();
-    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
-    venda12mPorProductCode.set(r.product_code, mapa);
-  }
-  function somaMapa(mapa: Map<number, number> | undefined): number {
-    if (!mapa) return 0;
-    let soma = 0;
-    for (const v of mapa.values()) soma += v;
-    return soma;
-  }
 
   // Soma valores de um mapa branch_code -> valor, respeitando o filtro de filiais.
   // Se branchFiltro for null (nenhum filtro), soma todas as filiais.
@@ -769,7 +770,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizGeneroAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
-  let venda12mTotal = 0;
+  let valorEstoqueAnoAnterior = 0;
   let estVarejoTotal = 0;
   let estAtacadoTotal = 0;
   let vendaVarejoTotal = 0;
@@ -810,6 +811,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const sku = identidade.product_sku;
     const productCode = identidade.product_code;
     const estoqueDoSku = estoquePorSku.get(sku) || new Map<number, number>();
+    const estoqueAnoAnteriorDoSku = estoqueAnoAnteriorPorSku.get(sku) || new Map<number, number>();
     const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
     const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
 
@@ -825,6 +827,15 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       }
     } else {
       for (const valor of estoqueDoSku.values()) estTt += valor;
+    }
+
+    let estTtAnoAnterior = 0;
+    if (branchFiltroParaDados) {
+      for (const [branchCode, valor] of estoqueAnoAnteriorDoSku) {
+        if (branchFiltroParaDados.has(branchCode)) estTtAnoAnterior += valor;
+      }
+    } else {
+      for (const valor of estoqueAnoAnteriorDoSku.values()) estTtAnoAnterior += valor;
     }
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
@@ -889,11 +900,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       vendaVarejoSku += (mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0) * config.coberturaMeses;
     }
     const vendaAtacadoSku = (mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0) * config.coberturaMeses;
-    const venda12mSku = productCode !== null ? somaMapa(venda12mPorProductCode.get(productCode)) : 0;
     const valorEstoqueSku = estTt * (custo ?? 0);
+    const valorEstoqueAnoAnteriorSku = estTtAnoAnterior * (custo ?? 0);
 
     valorEstoqueTotal += valorEstoqueSku;
-    venda12mTotal += venda12mSku;
+    valorEstoqueAnoAnterior += valorEstoqueAnoAnteriorSku;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
@@ -1132,12 +1143,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     }))
     .sort((a, b) => b.estTt - a.estTt);
 
+  // Giro anualizado em vezes/ano usando a velocidade dos ultimos 30 dias:
+  // cobertura em dias = (estoque / giro 30d) * 30; giros/ano = 365 / cobertura em dias.
+  const giroAnualizado =
+    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 365) / (30 * kpis.estTt), 2) : 0;
+  const valorEstoqueVariacaoPercent =
+    valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
+
   const kpisExtra: RelatorioBaseKpisExtra = {
     coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, (vendaVarejoTotal + vendaAtacadoTotal) / config.coberturaMeses),
     coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal / config.coberturaMeses),
     coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal / config.coberturaMeses),
-    giroAnualizado: valorEstoqueTotal > 0 ? round(venda12mTotal / valorEstoqueTotal, 2) : 0,
+    giroAnualizado,
     valorEstoqueTotal: round(valorEstoqueTotal, 2),
+    valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
+    valorEstoqueVariacaoPercent,
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
     estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,

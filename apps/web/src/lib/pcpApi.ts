@@ -372,6 +372,8 @@ export interface RelatorioBaseKpisExtra {
   coberturaAtacado: number | null;
   giroAnualizado: number;
   valorEstoqueTotal: number;
+  valorEstoqueAnoAnterior: number;
+  valorEstoqueVariacaoPercent: number | null;
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
   estoqueMortoPercent: number;

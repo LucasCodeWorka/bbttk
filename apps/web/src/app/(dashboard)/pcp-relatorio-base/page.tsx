@@ -782,7 +782,7 @@ export default function PcpRelatorioBasePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KPIMetaCard
           title="Cobertura geral"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaGeral?.toFixed(1) ?? '—'} meses`}
+          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaGeral?.toFixed(2) ?? '—'} meses`}
           meta={`${extras?.meta.metaCoberturaGeralMeses.toFixed(1) ?? '—'} meses`}
           gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
           invertido
@@ -790,7 +790,7 @@ export default function PcpRelatorioBasePage() {
         />
         <KPIMetaCard
           title="Giro anualizado"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(1)}x`}
+          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
           meta={`${extras?.meta.metaGiroAnualizado.toFixed(1) ?? '—'}x`}
           gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
           isLoading={isLoading || isLoadingExtras}
@@ -798,6 +798,8 @@ export default function PcpRelatorioBasePage() {
         <KPICard
           title="Valor em Estoque"
           value={isLoading || !data ? '—' : formatMoney(data.kpisExtra.valorEstoqueTotal)}
+          variation={data?.kpisExtra.valorEstoqueVariacaoPercent ?? undefined}
+          subtitle={data ? `Custo | AA: ${formatMoney(data.kpisExtra.valorEstoqueAnoAnterior)}` : undefined}
           color="blue"
           valueSize="md"
           isLoading={isLoading}
