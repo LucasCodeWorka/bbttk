@@ -21,10 +21,18 @@ import dashboardEstoqueRoutes from './routes/dashboardEstoque.routes.js';
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
 
-const corsOrigins = process.env.CORS_ORIGIN
-  ?.split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const DEFAULT_CORS_ORIGINS = [
+  'https://bebettk.onrender.com',
+  'https://bebetenkite-web.onrender.com',
+];
+
+const corsOrigins = [
+  ...(process.env.CORS_ORIGIN
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean) || []),
+  ...DEFAULT_CORS_ORIGINS,
+];
 
 const HEAVY_REPORT_PATHS = new Set([
   '/relatorio-base',
