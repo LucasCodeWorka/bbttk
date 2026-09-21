@@ -849,12 +849,35 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
     : RELATORIO_BASE_BRANCH_ORDER;
 
-  const skuRows: RelatorioBaseRow[] = [];
-
   // Agregacao por referencia, construida no mesmo loop dos SKUs pra nao duplicar os
   // lookups - cada referencia acumula est/giro por filial (pra recalcular cobertura
-  // certa, nao so somar a cobertura ja arredondada de cada SKU) e a lista completa de
-  // SKUs (usada no drill-down "abrir por SKU").
+  // certa, nao so somar a cobertura ja arredondada de cada SKU). Nao guardamos todos
+  // os SKUs detalhados na memoria; isso estourava heap no Render antes da paginacao.
+  interface ConsistencyState {
+    value: number | null | undefined;
+    inconsistent: boolean;
+  }
+  type ConsistencyKey = 'custo' | 'pdvAtual' | 'pdvRealVar' | 'markupVar' | 'pdvRealAta' | 'markupAta';
+  function emptyConsistency(): Record<ConsistencyKey, ConsistencyState> {
+    return {
+      custo: { value: undefined, inconsistent: false },
+      pdvAtual: { value: undefined, inconsistent: false },
+      pdvRealVar: { value: undefined, inconsistent: false },
+      markupVar: { value: undefined, inconsistent: false },
+      pdvRealAta: { value: undefined, inconsistent: false },
+      markupAta: { value: undefined, inconsistent: false },
+    };
+  }
+  function addConsistency(state: ConsistencyState, value: number | null) {
+    if (value === null || state.inconsistent) return;
+    if (state.value === undefined) state.value = value;
+    else if (state.value !== value) state.inconsistent = true;
+  }
+  function getConsistency(state: ConsistencyState): number | null {
+    if (state.inconsistent) return null;
+    return state.value ?? null;
+  }
+
   interface RefAgg {
     referenceName: string;
     categoria: string | null;
@@ -869,10 +892,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroTt1: number;
     giroTt3: number;
     giroTt6: number;
+    totalSkus: number;
+    consistency: Record<ConsistencyKey, ConsistencyState>;
     branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
-    skus: RelatorioBaseRow[];
   }
   const referenciaAgg = new Map<string, RefAgg>();
+  const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: 0 };
 
   for (const identidade of identidadeRows) {
     const sku = identidade.product_sku;
@@ -1005,41 +1030,19 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     // "referencia" de 1 SKU so.
     const referenceCode = identidade.reference_code || sku;
     const referenceName = identidade.reference_name || referenceCode;
-    const cor = identidade.color_name?.trim() || identidade.color_code?.trim() || 'SEM COR';
-    const tamanho = identidade.size?.trim() || 'SEM TAM';
+    const emProducaoRound = round(emProducao, 0);
+    const estTtRound = round(estTt, 0);
+    const giroTt1Round = round(giroTt1, 0);
+    const giroTt3Round = round(giroTt3, 0);
+    const giroTt6Round = round(giroTt6, 0);
+    const markupVar = markupPercentual(pdvRealVar, custoUltimaCompra);
+    const markupAta = markupPercentual(pdvRealAta, custoUltimaCompra);
 
-    const skuRow: RelatorioBaseRow = {
-      sku,
-      codigo: productCode,
-      referenceCode,
-      cor,
-      tamanho,
-      refCorTam: buildRefCorTam(referenceCode, cor, tamanho),
-      descricao: identidade.descricao || sku,
-      descricaoCompleta: identidade.descricao_completa || sku,
-      categoria: identidade.categoria,
-      linha: identidade.linha,
-      genero: identidade.genero,
-      modelo: identidade.modelo,
-      status: identidade.status,
-      lancamento: formatarLancamento(identidade.lancamento),
-      ultimaEntrada,
-      custo,
-      pdvAtual: pdvRealVar,
-      pdvRealVar,
-      markupVar: markupPercentual(pdvRealVar, custoUltimaCompra),
-      pdvRealAta,
-      markupAta: markupPercentual(pdvRealAta, custoUltimaCompra),
-      estDisponivel: null,
-      emProducao: round(emProducao, 0),
-      estPrevisto: null,
-      estTt: round(estTt, 0),
-      giroTt1: round(giroTt1, 0),
-      giroTt3: round(giroTt3, 0),
-      giroTt6: round(giroTt6, 0),
-      branches,
-    };
-    skuRows.push(skuRow);
+    kpis.giroTt1 += giroTt1Round;
+    kpis.giroTt3 += giroTt3Round;
+    kpis.giroTt6 += giroTt6Round;
+    kpis.estTt += estTtRound;
+    kpis.skuCount += 1;
 
     const agg = referenciaAgg.get(referenceCode) || {
       referenceName,
@@ -1055,14 +1058,22 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       giroTt1: 0,
       giroTt3: 0,
       giroTt6: 0,
+      totalSkus: 0,
+      consistency: emptyConsistency(),
       branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
-      skus: [],
     };
-    agg.emProducao += skuRow.emProducao;
-    agg.estTt += skuRow.estTt;
-    agg.giroTt1 += skuRow.giroTt1;
-    agg.giroTt3 += skuRow.giroTt3;
-    agg.giroTt6 += skuRow.giroTt6;
+    agg.emProducao += emProducaoRound;
+    agg.estTt += estTtRound;
+    agg.giroTt1 += giroTt1Round;
+    agg.giroTt3 += giroTt3Round;
+    agg.giroTt6 += giroTt6Round;
+    agg.totalSkus += 1;
+    addConsistency(agg.consistency.custo, custo);
+    addConsistency(agg.consistency.pdvAtual, pdvRealVar);
+    addConsistency(agg.consistency.pdvRealVar, pdvRealVar);
+    addConsistency(agg.consistency.markupVar, markupVar);
+    addConsistency(agg.consistency.pdvRealAta, pdvRealAta);
+    addConsistency(agg.consistency.markupAta, markupAta);
     if (ultimaEntrada && (!agg.ultimaEntrada || ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = ultimaEntrada;
     for (const coluna of colunasAtivas) {
       const acumulado = agg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
@@ -1071,25 +1082,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       acumulado.mediaMensalSum += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
       agg.branchesAgg.set(coluna.branchCode, acumulado);
     }
-    agg.skus.push(skuRow);
     referenciaAgg.set(referenceCode, agg);
-  }
-
-  // Custo/PDV/markup na referencia so aparecem quando TODOS os SKUs dela concordam no
-  // mesmo valor (ignora SKU sem esse dado, sem invalidar os outros) - caso comum no
-  // varejo, preco/custo e por referencia, nao por cor/tamanho. Se divergir, fica null.
-  function valorConsistente(
-    skus: RelatorioBaseRow[],
-    campo: 'custo' | 'pdvAtual' | 'pdvRealVar' | 'markupVar' | 'pdvRealAta' | 'markupAta'
-  ): number | null {
-    let valor: number | null | undefined;
-    for (const s of skus) {
-      const v = s[campo];
-      if (v === null) continue;
-      if (valor === undefined) valor = v;
-      else if (valor !== v) return null;
-    }
-    return valor ?? null;
   }
 
   const rows: RelatorioBaseReferenciaRow[] = [];
@@ -1105,7 +1098,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     rows.push({
       referenceCode,
       referenceName: agg.referenceName,
-      totalSkus: agg.skus.length,
+      totalSkus: agg.totalSkus,
       descricao: agg.referenceName,
       descricaoCompleta: agg.referenceName,
       categoria: agg.categoria,
@@ -1115,19 +1108,19 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       status: agg.status,
       lancamento: agg.lancamento,
       ultimaEntrada: agg.ultimaEntrada,
-      custo: valorConsistente(agg.skus, 'custo'),
-      pdvAtual: valorConsistente(agg.skus, 'pdvAtual'),
-      pdvRealVar: valorConsistente(agg.skus, 'pdvRealVar'),
-      markupVar: valorConsistente(agg.skus, 'markupVar'),
-      pdvRealAta: valorConsistente(agg.skus, 'pdvRealAta'),
-      markupAta: valorConsistente(agg.skus, 'markupAta'),
+      custo: getConsistency(agg.consistency.custo),
+      pdvAtual: getConsistency(agg.consistency.pdvAtual),
+      pdvRealVar: getConsistency(agg.consistency.pdvRealVar),
+      markupVar: getConsistency(agg.consistency.markupVar),
+      pdvRealAta: getConsistency(agg.consistency.pdvRealAta),
+      markupAta: getConsistency(agg.consistency.markupAta),
       emProducao: round(agg.emProducao, 0),
       estTt: round(agg.estTt, 0),
       giroTt1: round(agg.giroTt1, 0),
       giroTt3: round(agg.giroTt3, 0),
       giroTt6: round(agg.giroTt6, 0),
       branches,
-      skus: agg.skus.sort((a, b) => a.refCorTam.localeCompare(b.refCorTam, undefined, { numeric: true })),
+      skus: [],
     });
   }
 
@@ -1143,17 +1136,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
-
-  const kpis = skuRows.reduce(
-    (acc, r) => {
-      acc.giroTt1 += r.giroTt1;
-      acc.giroTt3 += r.giroTt3;
-      acc.giroTt6 += r.giroTt6;
-      acc.estTt += r.estTt;
-      return acc;
-    },
-    { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: skuRows.length }
-  );
 
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.
