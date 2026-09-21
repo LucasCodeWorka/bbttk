@@ -41,6 +41,13 @@ function gapDe(valor: number | null, meta: number): number {
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
+function giroSobreEstoque(giro: number | undefined, estoque: number | undefined): string {
+  if (!estoque || estoque <= 0) return 'Venda/estoque: —';
+  return `Venda/estoque: ${formatNumber(((giro || 0) / estoque) * 100, 1)}%`;
+}
+function formatMeses(value: number | null | undefined, decimals: number): string {
+  return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
+}
 
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
   return (
@@ -791,8 +798,8 @@ export default function PcpRelatorioBasePage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KPIMetaCard
           title="Cobertura geral"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaGeral?.toFixed(2) ?? '—'} meses`}
-          meta={`${extras?.meta.metaCoberturaGeralMeses.toFixed(1) ?? '—'} meses`}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
           gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
           invertido
           isLoading={isLoading || isLoadingExtras}
@@ -824,24 +831,24 @@ export default function PcpRelatorioBasePage() {
         />
         <KPIMetaCard
           title="Cobertura Básico"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaBasico?.toFixed(1) ?? '—'} meses`}
-          meta={`${extras?.meta.metaCoberturaBasicoMeses.toFixed(1) ?? '—'} meses`}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 1)}
+          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
           gap={gapDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
           title="Cobertura Básico Renovável"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaBasicoRenovavel?.toFixed(1) ?? '—'} meses`}
-          meta={`${extras?.meta.metaCoberturaBasicoMeses.toFixed(1) ?? '—'} meses`}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasicoRenovavel, 1)}
+          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
           gap={gapDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
           title="Cobertura Coleção"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.coberturaColecao?.toFixed(1) ?? '—'} meses`}
-          meta={`${extras?.meta.metaCoberturaColecaoMeses.toFixed(1) ?? '—'} meses`}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaColecao, 1)}
+          meta={formatMeses(extras?.meta.metaCoberturaColecaoMeses, 1)}
           gap={gapDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
           invertido
           isLoading={isLoading || isLoadingExtras}
@@ -858,9 +865,9 @@ export default function PcpRelatorioBasePage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <KPICard title="SKUs" value={formatNumber(data?.kpis.skuCount || 0)} color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Estoque Total" value={formatNumber(data?.kpis.estTt || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 1 mês" value={formatNumber(data?.kpis.giroTt1 || 0)} color="green" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 3 meses" value={formatNumber(data?.kpis.giroTt3 || 0)} color="yellow" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 6 meses" value={formatNumber(data?.kpis.giroTt6 || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Giro TT 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Giro TT 60 dias" value={formatNumber(data?.kpis.giroTt60 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt60, data?.kpis.estTt)} color="yellow" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Giro TT 90 dias" value={formatNumber(data?.kpis.giroTt90 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt90, data?.kpis.estTt)} color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

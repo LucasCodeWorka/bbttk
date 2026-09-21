@@ -355,7 +355,16 @@ export interface RelatorioBaseResponse {
     coberturaLimiteVerde: number;
     coberturaLimiteVermelho: number;
   };
-  kpis: { giroTt1: number; giroTt3: number; giroTt6: number; estTt: number; skuCount: number };
+  kpis: {
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    giroTt30: number;
+    giroTt60: number;
+    giroTt90: number;
+    estTt: number;
+    skuCount: number;
+  };
   kpisExtra: RelatorioBaseKpisExtra;
   matriz: {
     linha: RelatorioBaseMatrizLinha[];

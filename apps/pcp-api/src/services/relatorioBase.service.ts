@@ -185,7 +185,16 @@ export interface RelatorioBaseResponse {
     coberturaLimiteVerde: number;
     coberturaLimiteVermelho: number;
   };
-  kpis: { giroTt1: number; giroTt3: number; giroTt6: number; estTt: number; skuCount: number };
+  kpis: {
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    giroTt30: number;
+    giroTt60: number;
+    giroTt90: number;
+    estTt: number;
+    skuCount: number;
+  };
   kpisExtra: RelatorioBaseKpisExtra;
   matriz: {
     linha: RelatorioBaseMatrizLinha[];
@@ -645,6 +654,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroAtacadoRows,
     vendaMesesRows,
     vendaAtacadoMesesRows,
+    giroTt30Rows,
+    giroTt60Rows,
+    giroTt90Rows,
     giroTt1Rows,
     giroTt3Rows,
     giroTt6Rows,
@@ -659,6 +671,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
     getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao),
     config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao) : Promise.resolve([]),
+    getGiroRows(30, productCodesFiltro, filtro.dataPosicao),
+    getGiroRows(60, productCodesFiltro, filtro.dataPosicao),
+    getGiroRows(90, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
@@ -702,6 +717,25 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const vendaAtacadoMesesPorProductCode = new Map<number, number>();
   for (const r of vendaAtacadoMesesRows) vendaAtacadoMesesPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+
+  const giroTt30PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt30Rows) {
+    const mapa = giroTt30PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt30PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt60PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt60Rows) {
+    const mapa = giroTt60PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt60PorProductCode.set(r.product_code, mapa);
+  }
+  const giroTt90PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt90Rows) {
+    const mapa = giroTt90PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt90PorProductCode.set(r.product_code, mapa);
+  }
 
   // Giro TT por product_code x branch_code, permitindo filtrar por loja nos cards KPIs
   // (SKUs, Estoque Total, Giro TT 1/3/6).
@@ -791,6 +825,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
   let valorEstoqueAnoAnterior = 0;
+  let giroTt30Total = 0;
+  let giroTt60Total = 0;
+  let giroTt90Total = 0;
   let estVarejoTotal = 0;
   let estAtacadoTotal = 0;
   let vendaVarejoTotal = 0;
@@ -896,6 +933,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt30 = productCode !== null ? somaMapaFiltrado(giroTt30PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt60 = productCode !== null ? somaMapaFiltrado(giroTt60PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt90 = productCode !== null ? somaMapaFiltrado(giroTt90PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
@@ -925,6 +965,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     valorEstoqueTotal += valorEstoqueSku;
     valorEstoqueAnoAnterior += valorEstoqueAnoAnteriorSku;
+    giroTt30Total += giroTt30;
+    giroTt60Total += giroTt60;
+    giroTt90Total += giroTt90;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
@@ -1200,6 +1243,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       giroTt1: round(kpis.giroTt1, 0),
       giroTt3: round(kpis.giroTt3, 0),
       giroTt6: round(kpis.giroTt6, 0),
+      giroTt30: round(giroTt30Total, 0),
+      giroTt60: round(giroTt60Total, 0),
+      giroTt90: round(giroTt90Total, 0),
       estTt: round(kpis.estTt, 0),
       skuCount: kpis.skuCount,
     },
