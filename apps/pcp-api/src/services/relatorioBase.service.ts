@@ -565,10 +565,11 @@ async function getGiroAtacadoRows(dias: number, productCodes: number[] | null, d
   `;
 }
 
-// Total vendido por product_code x filial nos ultimos `meses` meses - denominador da
-// cobertura (media_mensal = total / meses).
+// Total vendido por product_code x filial na janela de cobertura. Para bater com os
+// cards "Giro TT 30/60/90 dias", 1 mes de cobertura equivale a 30 dias.
 async function getVendaPorMesesRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<ProductCodeAggRow[]> {
   const dataBase = dataBaseSql(dataPosicao);
+  const dias = meses * 30;
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code,
       CASE
@@ -580,7 +581,7 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
       AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
@@ -591,16 +592,17 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
   `;
 }
 
-// Total vendido do canal Atacado nos ultimos `meses` meses - usado como denominador da
+// Total vendido do canal Atacado na janela de cobertura - usado como denominador da
 // cobertura do Atacado quando atacadoCoberturaBase = 'atacado_only'.
 async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
   const dataBase = dataBaseSql(dataPosicao);
+  const dias = meses * 30;
   return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
     SELECT ti.product_code, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
       AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
@@ -611,10 +613,11 @@ async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[]
   `;
 }
 
-// Giro TT por product_code x branch_code, nas janelas de 1/3/6 meses. Retorna detalhado
+// Giro TT por product_code x branch_code, nas janelas de 30/90/180 dias. Retorna detalhado
 // por filial pra permitir que os cards KPIs respeitem o filtro de loja selecionado.
 async function getGiroTtRows(meses: number, productCodes: number[] | null, dataPosicao?: string): Promise<ProductCodeAggRow[]> {
   const dataBase = dataBaseSql(dataPosicao);
+  const dias = meses * 30;
   return prisma.$queryRaw<ProductCodeAggRow[]>`
     SELECT ti.product_code,
       CASE
@@ -626,7 +629,7 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null, dataP
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(months => ${meses}::int)
+    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
       AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
