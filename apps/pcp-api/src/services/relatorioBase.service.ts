@@ -151,18 +151,20 @@ export interface RelatorioBaseKpisExtra {
   valorEstoqueTotal: number;
   valorEstoqueAnoAnterior: number;
   valorEstoqueVariacaoPercent: number | null;
-  // "Estoque morto" = status TOTVS comecando com "FORA DE LINHA" (cobre todas as
-  // variantes de campanha: "FORA DE LINHA BLACK FRIDAY 2024", "FORA DE LINHA PROMO JAN
-  // 2025" etc, confirmado direto no banco - nao e um dia-sem-venda, e classificacao).
+  // Fora de linha cheio = status TOTVS exatamente "FORA DE LINHA".
+  // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
   estoqueMortoPercent: number;
+  estoquePromocaoQtd: number;
+  estoquePromocaoValor: number;
+  estoquePromocaoPercent: number;
   coberturaBasico: number | null;
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
-  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/INATIVO - "OUTROS" pega
-  // qualquer status novo/inesperado, nunca descarta silenciosamente).
+  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
+  // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
 }
 
@@ -1059,6 +1061,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   let vendaAtacadoTotal = 0;
   let estoqueMortoQtd = 0;
   let estoqueMortoValor = 0;
+  let estoquePromocaoQtd = 0;
+  let estoquePromocaoValor = 0;
 
   const colunasAtivas = branchFiltro
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
@@ -1217,9 +1221,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     vendaVarejoTotal += vendaVarejoSku;
     vendaAtacadoTotal += vendaAtacadoSku;
 
-    const statusTrim = identidade.status?.trim().toUpperCase() || null;
+    const statusTrim = identidade.status?.trim().replace(/\s+/g, ' ').toUpperCase() || null;
     let statusBucketKey: string;
-    if (statusTrim && statusTrim.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA';
+    if (statusTrim === 'FORA DE LINHA') statusBucketKey = 'FORA DE LINHA';
+    else if (statusTrim?.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA PROMOCAO';
     else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
@@ -1227,6 +1232,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     if (statusBucketKey === 'FORA DE LINHA') {
       estoqueMortoQtd += estTt;
       estoqueMortoValor += valorEstoqueSku;
+    } else if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+      estoquePromocaoQtd += estTt;
+      estoquePromocaoValor += valorEstoqueSku;
     }
 
     const bucketValores: BucketAcc = {
@@ -1425,6 +1433,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
     estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+    estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
+    estoquePromocaoValor: round(estoquePromocaoValor, 2),
+    estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
     coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
     coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
     coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),

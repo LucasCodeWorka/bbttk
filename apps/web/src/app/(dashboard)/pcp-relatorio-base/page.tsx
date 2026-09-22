@@ -826,8 +826,20 @@ export default function PcpRelatorioBasePage() {
           meta={`${extras?.meta.metaEstoqueMortoPercent.toFixed(1) ?? '—'}%`}
           gap={gapDe(data?.kpisExtra.estoqueMortoPercent ?? null, extras?.meta.metaEstoqueMortoPercent ?? 0)}
           invertido
-          subtitle={data ? `${formatMoney(data.kpisExtra.estoqueMortoValor)} parados` : undefined}
+          subtitle={data ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)}` : undefined}
           isLoading={isLoading || isLoadingExtras}
+        />
+        <KPICard
+          title="Fora de Linha em Promoção"
+          value={isLoading || !data ? '—' : `${data.kpisExtra.estoquePromocaoPercent.toFixed(1)}%`}
+          subtitle={
+            data
+              ? `${formatNumber(data.kpisExtra.estoquePromocaoQtd)} peças | ${formatMoney(data.kpisExtra.estoquePromocaoValor)}`
+              : undefined
+          }
+          color="yellow"
+          valueSize="md"
+          isLoading={isLoading}
         />
         <KPIMetaCard
           title="Cobertura Básico"
