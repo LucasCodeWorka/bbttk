@@ -829,6 +829,9 @@ export default function PcpRelatorioBasePage() {
           subtitle={data ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)}` : undefined}
           isLoading={isLoading || isLoadingExtras}
         />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KPICard
           title="Fora de Linha em Promoção"
           value={isLoading || !data ? '—' : `${data.kpisExtra.estoquePromocaoPercent.toFixed(1)}%`}
@@ -865,18 +868,12 @@ export default function PcpRelatorioBasePage() {
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
-        <KPICard
-          title="Referências com Estoque"
-          value={formatNumber(data?.kpisExtra.referenciasComEstoque || 0)}
-          color="purple"
-          valueSize="md"
-          isLoading={isLoading}
-        />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <KPICard title="SKUs" value={formatNumber(data?.kpis.skuCount || 0)} color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Estoque Total" value={formatNumber(data?.kpis.estTt || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Referências com Estoque" value={formatNumber(data?.kpisExtra.referenciasComEstoque || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro TT 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro TT 60 dias" value={formatNumber(data?.kpis.giroTt60 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt60, data?.kpis.estTt)} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro TT 90 dias" value={formatNumber(data?.kpis.giroTt90 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt90, data?.kpis.estTt)} color="purple" valueSize="sm" isLoading={isLoading} />
