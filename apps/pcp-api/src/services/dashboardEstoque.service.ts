@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
+import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
 import { FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
@@ -214,26 +214,34 @@ function buildProdutoFiltro(filtro: DashboardEstoqueFiltro): Prisma.Sql {
   return clauses.length ? Prisma.sql`${Prisma.join(clauses, ' ')}` : Prisma.empty;
 }
 
-function buildEstoqueLocalFiltro(branches?: number[], stockCodes?: number[]): Prisma.Sql {
+function buildEstoqueLocalFiltro(branches?: number[]): Prisma.Sql {
   if (!branches?.length) {
-    if (stockCodes?.length) return Prisma.empty;
-    return Prisma.sql`AND (ps.branch_code != ${FABRICA_BRANCH_CODE} OR ps.stock_code IN (${Prisma.join([DASHBOARD_DPA_STOCK_CODE, ATACADO_STOCK_CODE])}))`;
+    return Prisma.empty;
   }
 
   const normais = branches.filter((branch) => branch > 0);
   const condicoes: Prisma.Sql[] = [];
   if (normais.length) condicoes.push(Prisma.sql`ps.branch_code IN (${Prisma.join(normais)})`);
-  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${DASHBOARD_DPA_STOCK_CODE})`);
+  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
   if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${ATACADO_STOCK_CODE})`);
+  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+}
+
+function buildStockCodeFiltro(stockCodes?: number[]): Prisma.Sql {
+  const effectiveStockCodes = stockCodes?.length ? stockCodes : [1, DASHBOARD_DPA_STOCK_CODE, ATACADO_STOCK_CODE];
+
+  const condicoes: Prisma.Sql[] = [];
+  if (effectiveStockCodes.includes(1)) condicoes.push(Prisma.sql`ps.stock_code = 1`);
+  if (effectiveStockCodes.includes(DASHBOARD_DPA_STOCK_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${DASHBOARD_DPA_STOCK_CODE})`);
+  if (effectiveStockCodes.includes(ATACADO_STOCK_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${ATACADO_STOCK_CODE})`);
+
   return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
 }
 
 function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number): Prisma.Sql {
   const produtoFiltro = buildProdutoFiltro(filtro);
-  const localFiltro = buildEstoqueLocalFiltro(filtro.branches, filtro.stockCodes);
-  const stockCodeFiltro = filtro.stockCodes?.length
-    ? Prisma.sql`AND ps.stock_code IN (${Prisma.join(filtro.stockCodes)})`
-    : Prisma.empty;
+  const localFiltro = buildEstoqueLocalFiltro(filtro.branches);
+  const stockCodeFiltro = buildStockCodeFiltro(filtro.stockCodes);
 
   return Prisma.sql`
     WITH produtos_filtrados AS (
@@ -254,6 +262,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
       LEFT JOIN produtos p ON p.product_sku = a.product_sku
       WHERE a.product_code IS NOT NULL
         AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         ${produtoFiltro}
     ),
@@ -268,7 +277,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         ps.captured_at
       FROM prd_saldo ps
       JOIN produtos_filtrados pf ON pf.product_sku = ps.product_sku
-      WHERE ps.captured_at <= ${filtro.data}::date + INTERVAL '1 day'
+      WHERE ps.captured_at < ${filtro.data}::date + INTERVAL '1 day'
         ${localFiltro}
         ${stockCodeFiltro}
       ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
@@ -294,7 +303,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         pf.genero,
         pf.status,
         CASE
-          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${DASHBOARD_DPA_STOCK_CODE} THEN ${DPA_BRANCH_CODE}
+          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
           WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
           ELSE us.branch_code
         END::int AS branch_code,
@@ -389,10 +398,9 @@ async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro,
 function formatFilialBuckets(rows: BucketRow[], totalQuantidade: number): DashboardEstoqueBucket[] {
   return rows.map((row) => {
     const branchCode = Number(row.label);
-    const branchInfo = RELATORIO_BASE_BRANCH_ORDER.find((item) => item.branchCode === branchCode);
     const quantidade = decimalToNumber(row.quantidade);
     return {
-      label: branchInfo?.label || `Filial ${row.label}`,
+      label: FILIAIS[branchCode] || `Filial ${row.label}`,
       quantidade: round(quantidade, 0),
       valorCusto: round(decimalToNumber(row.valor_custo), 2),
       skus: Number(row.skus),

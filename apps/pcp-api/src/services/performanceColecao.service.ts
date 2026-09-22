@@ -2,16 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import {
-  FABRICA_BRANCH_CODE,
-  IS_DEVOLUCAO,
-  OPERACAO_JOIN,
-  QUANTIDADE_COM_SINAL,
-  SALE_OPERATION_FILTER,
-  PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
-  CUSTO_PRODUCAO_CODE,
-  markupPercentual,
-} from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 
@@ -37,16 +28,19 @@ export interface PerformanceColecaoFiltro {
   search?: string;
 }
 
-export interface PerformanceColecaoMetricas {
+export interface PerformanceColecaoRow {
+  grupo: string | null;
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
   custo: number | null;
   pdvVarejo: number | null;
   markupVarejo: number | null;
   pdvAtacado: number | null;
   markupAtacado: number | null;
-  qtdesLiberadas: number;
-  qtdeEntregue: number;
-  saldoAEntregar: number;
-  percentEntregue: number | null;
+  entrouDpa: string | null;
+  qtdeProduzida: number;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;
@@ -54,30 +48,11 @@ export interface PerformanceColecaoMetricas {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
-  giroPeriodo: number;
-  giroAteHoje: number | null;
+  giro: number | null;
   totalVendaValor: number;
   totalVendaCusto: number;
   totalEstoqueCusto: number;
   totalEstoqueVenda: number;
-}
-
-export interface PerformanceColecaoTamanho extends PerformanceColecaoMetricas {
-  tamanho: string;
-}
-
-export interface PerformanceColecaoCor extends PerformanceColecaoMetricas {
-  cor: string;
-  tamanhos: PerformanceColecaoTamanho[];
-}
-
-export interface PerformanceColecaoRow extends PerformanceColecaoMetricas {
-  colecao: string | null;
-  referenceCode: string;
-  descricao: string;
-  categoria: string | null;
-  linha: string | null;
-  cores: PerformanceColecaoCor[];
 }
 
 export interface PerformanceColecaoResumoMes {
@@ -118,10 +93,7 @@ export interface PerformanceColecaoResponse {
   };
   kpis: {
     referencias: number;
-    qtdesLiberadas: number;
-    qtdeEntregue: number;
-    saldoAEntregar: number;
-    percentEntregue: number | null;
+    qtdeProduzida: number;
     qtdeVendida: number;
     estoqueFinal: number;
     totalVendaValor: number;
@@ -129,8 +101,7 @@ export interface PerformanceColecaoResponse {
     totalEstoqueCusto: number;
     totalEstoqueVenda: number;
     participacaoColecaoPercent: number;
-    giroPeriodo: number;
-    giroAteHoje: number | null;
+    giroMedioPercent: number | null;
   };
   resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
@@ -191,20 +162,17 @@ async function getConfig() {
 }
 
 interface QueryRow {
-  colecao: string | null;
+  grupo: string | null;
   reference_code: string;
   descricao: string | null;
   categoria: string | null;
   linha: string | null;
-  cor: string;
-  tamanho: string;
   custo: Decimal | null;
   pdv_varejo: Decimal | null;
   pdv_atacado: Decimal | null;
-  qtdes_liberadas: Decimal | null;
-  qtde_entregue: Decimal | null;
+  entrou_dpa: Date | null;
+  qtde_produzida: Decimal | null;
   qtde_vendida: Decimal | null;
-  qtde_vendida_ate_hoje: Decimal | null;
   venda_mes_1: Decimal | null;
   venda_mes_2: Decimal | null;
   venda_mes_3: Decimal | null;
@@ -212,7 +180,6 @@ interface QueryRow {
   valor_mes_2: Decimal | null;
   valor_mes_3: Decimal | null;
   estoque_final: Decimal | null;
-  estoque_atual: Decimal | null;
   total_venda_valor: Decimal | null;
   total_venda_custo: Decimal | null;
   total_estoque_custo: Decimal | null;
@@ -345,11 +312,11 @@ async function getResumoMensal(
         pv.valor AS pdv_varejo,
         pa.valor AS pdv_atacado
       FROM (
-        SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode} AND cost_code = ${CUSTO_PRODUCAO_CODE}
+        SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode}
         UNION
         SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${config.precoCustoBranchCode}
       ) base
-      LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
+      LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${config.custoCode}
       LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${config.precoCustoBranchCode} AND pv.price_code = ${config.pdvVarejoCode}
       LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${config.precoCustoBranchCode} AND pa.price_code = ${config.pdvAtacadoCode}
     ),
@@ -373,8 +340,8 @@ async function getResumoMensal(
       SELECT
         us.mes_inicio,
         COALESCE(SUM(us.stock), 0) AS estoque_final,
-        COALESCE(SUM(us.stock * p.custo), 0) AS estoque_valor_custo,
-        COALESCE(SUM(us.stock * COALESCE(p.pdv_varejo, p.pdv_atacado)), 0) AS estoque_valor_venda
+        COALESCE(SUM(us.stock * COALESCE(p.custo, 0)), 0) AS estoque_valor_custo,
+        COALESCE(SUM(us.stock * COALESCE(p.pdv_varejo, p.pdv_atacado, 0)), 0) AS estoque_valor_venda
       FROM ultimo_saldo us
       LEFT JOIN precos p ON p.product_code = us.product_code
       GROUP BY us.mes_inicio
@@ -421,176 +388,6 @@ async function getResumoMensal(
   });
 }
 
-// Estrutura intermediaria (por SKU/tamanho, o grao da query) que carrega os brutos
-// necessarios pra recompor Cor/Referencia corretamente: somar os aditivos e RECALCULAR
-// as razoes (percentEntregue, giroAteHoje, markup) a partir da soma, nunca fazer media
-// de uma razao ja calculada - mesmo cuidado que ja era tomado no KPI agregado do topo.
-interface FlatMetrica {
-  colecao: string | null;
-  referenceCode: string;
-  descricao: string;
-  categoria: string | null;
-  linha: string | null;
-  cor: string;
-  tamanho: string;
-  custo: number | null;
-  pdvVarejo: number | null;
-  pdvAtacado: number | null;
-  qtdesLiberadas: number;
-  qtdeEntregue: number;
-  vendaMes1: number;
-  vendaMes2: number;
-  vendaMes3: number;
-  valorMes1: number;
-  valorMes2: number;
-  valorMes3: number;
-  estoqueFinal: number;
-  qtdeVendidaPeriodo: number;
-  qtdeVendidaAteHoje: number;
-  estoqueAtual: number;
-  totalVendaValor: number;
-  totalVendaCusto: number;
-  totalEstoqueCusto: number;
-  totalEstoqueVenda: number;
-}
-
-function toMetricas(f: FlatMetrica): PerformanceColecaoMetricas {
-  const qtdesLiberadas = round(f.qtdesLiberadas, 0);
-  const qtdeEntregue = round(f.qtdeEntregue, 0);
-  return {
-    custo: f.custo === null ? null : round(f.custo, 2),
-    pdvVarejo: f.pdvVarejo === null ? null : round(f.pdvVarejo, 2),
-    markupVarejo: markupPercentual(f.pdvVarejo, f.custo),
-    pdvAtacado: f.pdvAtacado === null ? null : round(f.pdvAtacado, 2),
-    markupAtacado: markupPercentual(f.pdvAtacado, f.custo),
-    qtdesLiberadas,
-    qtdeEntregue,
-    saldoAEntregar: Math.max(qtdesLiberadas - qtdeEntregue, 0),
-    percentEntregue: f.qtdesLiberadas > 0 ? round((f.qtdeEntregue / f.qtdesLiberadas) * 100, 1) : null,
-    vendaMes1: round(f.vendaMes1, 0),
-    vendaMes2: round(f.vendaMes2, 0),
-    vendaMes3: round(f.vendaMes3, 0),
-    valorMes1: round(f.valorMes1, 2),
-    valorMes2: round(f.valorMes2, 2),
-    valorMes3: round(f.valorMes3, 2),
-    estoqueFinal: round(f.estoqueFinal, 0),
-    giroPeriodo: round(f.qtdeVendidaPeriodo, 0),
-    giroAteHoje: f.estoqueAtual > 0 ? round(f.qtdeVendidaAteHoje / f.estoqueAtual, 2) : null,
-    totalVendaValor: round(f.totalVendaValor, 2),
-    totalVendaCusto: round(f.totalVendaCusto, 2),
-    totalEstoqueCusto: round(f.totalEstoqueCusto, 2),
-    totalEstoqueVenda: round(f.totalEstoqueVenda, 2),
-  };
-}
-
-// Agrega uma lista de linhas no grao SKU pra um nivel acima (Cor ou Referencia):
-// campos aditivos somam; custo/pdv fazem media ignorando nulos (mesmo criterio do
-// AVG(...) FILTER(...) que a query ja usava no nivel de referencia).
-function agregarFlat(itens: FlatMetrica[]): FlatMetrica {
-  const media = (valores: (number | null)[]): number | null => {
-    const validos = valores.filter((v): v is number => v !== null);
-    return validos.length ? validos.reduce((a, b) => a + b, 0) / validos.length : null;
-  };
-  const soma = (selecionar: (item: FlatMetrica) => number) => itens.reduce((acc, item) => acc + selecionar(item), 0);
-
-  return {
-    colecao: itens[0]?.colecao ?? null,
-    referenceCode: itens[0]?.referenceCode ?? '',
-    descricao: itens[0]?.descricao ?? '',
-    categoria: itens[0]?.categoria ?? null,
-    linha: itens[0]?.linha ?? null,
-    cor: itens[0]?.cor ?? '',
-    tamanho: itens[0]?.tamanho ?? '',
-    custo: media(itens.map((i) => i.custo)),
-    pdvVarejo: media(itens.map((i) => i.pdvVarejo)),
-    pdvAtacado: media(itens.map((i) => i.pdvAtacado)),
-    qtdesLiberadas: soma((i) => i.qtdesLiberadas),
-    qtdeEntregue: soma((i) => i.qtdeEntregue),
-    vendaMes1: soma((i) => i.vendaMes1),
-    vendaMes2: soma((i) => i.vendaMes2),
-    vendaMes3: soma((i) => i.vendaMes3),
-    valorMes1: soma((i) => i.valorMes1),
-    valorMes2: soma((i) => i.valorMes2),
-    valorMes3: soma((i) => i.valorMes3),
-    estoqueFinal: soma((i) => i.estoqueFinal),
-    qtdeVendidaPeriodo: soma((i) => i.qtdeVendidaPeriodo),
-    qtdeVendidaAteHoje: soma((i) => i.qtdeVendidaAteHoje),
-    estoqueAtual: soma((i) => i.estoqueAtual),
-    totalVendaValor: soma((i) => i.totalVendaValor),
-    totalVendaCusto: soma((i) => i.totalVendaCusto),
-    totalEstoqueCusto: soma((i) => i.totalEstoqueCusto),
-    totalEstoqueVenda: soma((i) => i.totalEstoqueVenda),
-  };
-}
-
-function agruparPor<T>(itens: T[], chave: (item: T) => string): Map<string, T[]> {
-  const mapa = new Map<string, T[]>();
-  for (const item of itens) {
-    const grupo = mapa.get(chave(item));
-    if (grupo) grupo.push(item);
-    else mapa.set(chave(item), [item]);
-  }
-  return mapa;
-}
-
-// Monta a arvore Referencia -> Cor -> Tamanho a partir das linhas planas (1 por SKU)
-// que a query ja devolve. Pedido do usuario: mesmo conjunto de colunas em qualquer
-// nivel, aberto por padrao mostrando so a Referencia, "+" abre Cor e depois Tamanho.
-function montarArvore(rows: QueryRow[]): PerformanceColecaoRow[] {
-  const flatRows: FlatMetrica[] = rows.map((row) => ({
-    colecao: row.colecao,
-    referenceCode: row.reference_code,
-    descricao: row.descricao || row.reference_code,
-    categoria: row.categoria,
-    linha: row.linha,
-    cor: row.cor,
-    tamanho: row.tamanho,
-    custo: row.custo === null ? null : decimalToNumber(row.custo),
-    pdvVarejo: row.pdv_varejo === null ? null : decimalToNumber(row.pdv_varejo),
-    pdvAtacado: row.pdv_atacado === null ? null : decimalToNumber(row.pdv_atacado),
-    qtdesLiberadas: decimalToNumber(row.qtdes_liberadas),
-    qtdeEntregue: decimalToNumber(row.qtde_entregue),
-    vendaMes1: decimalToNumber(row.venda_mes_1),
-    vendaMes2: decimalToNumber(row.venda_mes_2),
-    vendaMes3: decimalToNumber(row.venda_mes_3),
-    valorMes1: decimalToNumber(row.valor_mes_1),
-    valorMes2: decimalToNumber(row.valor_mes_2),
-    valorMes3: decimalToNumber(row.valor_mes_3),
-    estoqueFinal: decimalToNumber(row.estoque_final),
-    qtdeVendidaPeriodo: decimalToNumber(row.qtde_vendida),
-    qtdeVendidaAteHoje: decimalToNumber(row.qtde_vendida_ate_hoje),
-    estoqueAtual: decimalToNumber(row.estoque_atual),
-    totalVendaValor: decimalToNumber(row.total_venda_valor),
-    totalVendaCusto: decimalToNumber(row.total_venda_custo),
-    totalEstoqueCusto: decimalToNumber(row.total_estoque_custo),
-    totalEstoqueVenda: decimalToNumber(row.total_estoque_venda),
-  }));
-
-  const porReferencia = agruparPor(flatRows, (f) => f.referenceCode);
-
-  const referencias: PerformanceColecaoRow[] = [...porReferencia.entries()].map(([referenceCode, tamanhosDaReferencia]) => {
-    const porCor = agruparPor(tamanhosDaReferencia, (f) => f.cor);
-
-    const cores: PerformanceColecaoCor[] = [...porCor.entries()].map(([cor, tamanhosDaCor]) => {
-      const tamanhos: PerformanceColecaoTamanho[] = tamanhosDaCor.map((f) => ({ tamanho: f.tamanho, ...toMetricas(f) }));
-      return { cor, tamanhos, ...toMetricas(agregarFlat(tamanhosDaCor)) };
-    });
-
-    const agregadoReferencia = agregarFlat(tamanhosDaReferencia);
-    return {
-      colecao: agregadoReferencia.colecao,
-      referenceCode,
-      descricao: agregadoReferencia.descricao,
-      categoria: agregadoReferencia.categoria,
-      linha: agregadoReferencia.linha,
-      cores,
-      ...toMetricas(agregadoReferencia),
-    };
-  });
-
-  return referencias.sort((a, b) => b.totalVendaValor - a.totalVendaValor || a.referenceCode.localeCompare(b.referenceCode));
-}
-
 export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): Promise<PerformanceColecaoResponse> {
   const config = await getConfig();
   const produtoFiltro = buildProdutoFiltro(filtro, true);
@@ -605,11 +402,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           a.product_code,
           COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) AS reference_code,
           COALESCE(NULLIF(TRIM(a.reference_name), ''), NULLIF(TRIM(a.product_name), ''), a.product_sku) AS descricao,
-          NULLIF(TRIM(a.class_colecao), '') AS colecao,
+          NULLIF(TRIM(a.class_colecao), '') AS grupo,
           NULLIF(TRIM(a.class_categoria), '') AS categoria,
-          NULLIF(TRIM(a.class_linha), '') AS linha,
-          COALESCE(NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''), 'SEM COR') AS cor,
-          COALESCE(NULLIF(TRIM(a.size), ''), 'UN') AS tamanho
+          NULLIF(TRIM(a.class_linha), '') AS linha
         FROM produto_analitico a
         WHERE a.product_code IS NOT NULL
           ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
@@ -620,11 +415,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           product_code,
           MIN(reference_code) AS reference_code,
           MIN(descricao) AS descricao,
-          MIN(colecao) AS colecao,
+          MIN(grupo) AS grupo,
           MIN(categoria) AS categoria,
-          MIN(linha) AS linha,
-          MIN(cor) AS cor,
-          MIN(tamanho) AS tamanho
+          MIN(linha) AS linha
         FROM produtos_filtrados
         GROUP BY product_code
       ),
@@ -641,24 +434,6 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         )
         SELECT us.product_code, COALESCE(SUM(us.stock), 0) AS estoque_final
         FROM ultimo_saldo us
-        JOIN produto_ref pr ON pr.product_code = us.product_code
-        GROUP BY us.product_code
-      ),
-      -- Estoque ATUAL (sem corte de data - "de agora"), usado so pro giro "ate hoje"
-      -- (pedido do usuario: giro do periodo selecionado + giro ate hoje considerando
-      -- o estoque de verdade agora, nao o estoque congelado na data fim escolhida).
-      estoque_atual AS (
-        WITH ultimo_saldo_atual AS (
-          SELECT DISTINCT ON (product_sku, branch_code, stock_code)
-            product_sku, product_code, branch_code, stock, captured_at
-          FROM prd_saldo
-          WHERE 1=1
-            AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
-          ${estoqueBranchFiltro}
-          ORDER BY product_sku, branch_code, stock_code, captured_at DESC
-        )
-        SELECT us.product_code, COALESCE(SUM(us.stock), 0) AS estoque_atual
-        FROM ultimo_saldo_atual us
         JOIN produto_ref pr ON pr.product_code = us.product_code
         GROUP BY us.product_code
       ),
@@ -702,41 +477,22 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           ${vendaBranchFiltro}
         GROUP BY ti.product_code
       ),
-      -- Peca vendida do inicio do periodo ATE HOJE (nao ate a data fim escolhida) -
-      -- numerador do giro "ate hoje" pedido pelo usuario. Quando dataFim = hoje (o
-      -- default da tela), coincide com "vendas" acima.
-      vendas_ate_hoje AS (
+      entradas AS (
         SELECT
           ti.product_code,
-          COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS qtde_vendida_ate_hoje
+          MIN(t.transaction_date) AS entrou_dpa,
+          COALESCE(SUM(ABS(COALESCE(ti.quantity, 0))), 0) AS qtde_produzida
         FROM transacoes t
-        JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+        JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
         JOIN produto_ref pr ON pr.product_code = ti.product_code
         ${OPERACAO_JOIN}
         WHERE t.transaction_date >= ${filtro.dataInicio}::date
-          AND t.transaction_date <= CURRENT_DATE
+          AND t.transaction_date <= ${filtro.dataFim}::date
           AND t.status = 4
-          AND ${SALE_OPERATION_FILTER}
+          AND co.operations_type = 'E'
+          AND NOT ${IS_DEVOLUCAO}
           ${vendaBranchFiltro}
         GROUP BY ti.product_code
-      ),
-      -- Producao de verdade (nao documento fiscal de entrada) - mesma tabela que
-      -- relatorioBase.service.ts usa pra "Em Producao" (ops_em_producao, sincronizada
-      -- via totvs.service.ts syncEmProducao). qtdes_liberadas = quantidade_op (tudo
-      -- que foi aberto de OP), qtde_entregue = quantidade_finalizada (o que ja
-      -- finalizou/entrou no DPA de fato). Filtra pela data de ABERTURA da OP
-      -- (<=dataFim) pra decidir quais OPs entram na conta da colecao/periodo - mas as
-      -- quantidades em si sao sempre o estado ATUAL (ops_em_producao e um snapshot
-      -- regravado por inteiro a cada sync, sem historico por data).
-      producao AS (
-        SELECT
-          op.product_code,
-          SUM(op.quantidade_op) AS qtdes_liberadas,
-          SUM(op.quantidade_finalizada) AS qtde_entregue
-        FROM ops_em_producao op
-        JOIN produto_ref pr ON pr.product_code = op.product_code
-        WHERE op.dt_inicio IS NULL OR op.dt_inicio <= ${filtro.dataFim}::date
-        GROUP BY op.product_code
       ),
       precos AS (
         SELECT
@@ -745,11 +501,11 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           pv.valor AS pdv_varejo,
           pa.valor AS pdv_atacado
         FROM (
-          SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode} AND cost_code = ${CUSTO_PRODUCAO_CODE}
+          SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode}
           UNION
           SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${config.precoCustoBranchCode}
         ) base
-        LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
+        LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${config.custoCode}
         LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${config.precoCustoBranchCode} AND pv.price_code = ${config.pdvVarejoCode}
         LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${config.precoCustoBranchCode} AND pa.price_code = ${config.pdvAtacadoCode}
       ),
@@ -759,10 +515,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           p.custo,
           p.pdv_varejo,
           p.pdv_atacado,
-          COALESCE(op.qtdes_liberadas, 0) AS qtdes_liberadas,
-          COALESCE(op.qtde_entregue, 0) AS qtde_entregue,
+          e.entrou_dpa,
+          COALESCE(e.qtde_produzida, 0) AS qtde_produzida,
           COALESCE(v.qtde_vendida, 0) AS qtde_vendida,
-          COALESCE(vah.qtde_vendida_ate_hoje, 0) AS qtde_vendida_ate_hoje,
           COALESCE(v.venda_mes_1, 0) AS venda_mes_1,
           COALESCE(v.venda_mes_2, 0) AS venda_mes_2,
           COALESCE(v.venda_mes_3, 0) AS venda_mes_3,
@@ -770,34 +525,28 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           COALESCE(v.valor_mes_2, 0) AS valor_mes_2,
           COALESCE(v.valor_mes_3, 0) AS valor_mes_3,
           COALESCE(es.estoque_final, 0) AS estoque_final,
-          COALESCE(ea.estoque_atual, 0) AS estoque_atual,
           COALESCE(v.total_venda_valor, 0) AS total_venda_valor,
-          COALESCE(v.qtde_vendida, 0) * p.custo AS total_venda_custo,
-          COALESCE(es.estoque_final, 0) * p.custo AS total_estoque_custo,
-          COALESCE(es.estoque_final, 0) * COALESCE(p.pdv_varejo, p.pdv_atacado) AS total_estoque_venda
+          COALESCE(v.qtde_vendida, 0) * COALESCE(p.custo, 0) AS total_venda_custo,
+          COALESCE(es.estoque_final, 0) * COALESCE(p.custo, 0) AS total_estoque_custo,
+          COALESCE(es.estoque_final, 0) * COALESCE(p.pdv_varejo, p.pdv_atacado, 0) AS total_estoque_venda
         FROM produto_ref pr
         LEFT JOIN vendas v ON v.product_code = pr.product_code
-        LEFT JOIN vendas_ate_hoje vah ON vah.product_code = pr.product_code
-        LEFT JOIN producao op ON op.product_code = pr.product_code
+        LEFT JOIN entradas e ON e.product_code = pr.product_code
         LEFT JOIN estoque es ON es.product_code = pr.product_code
-        LEFT JOIN estoque_atual ea ON ea.product_code = pr.product_code
         LEFT JOIN precos p ON p.product_code = pr.product_code
       )
       SELECT
-        colecao,
+        grupo,
         reference_code,
-        cor,
-        tamanho,
         MIN(descricao) AS descricao,
         MIN(categoria) AS categoria,
         MIN(linha) AS linha,
         AVG(custo) FILTER (WHERE custo IS NOT NULL) AS custo,
         AVG(pdv_varejo) FILTER (WHERE pdv_varejo IS NOT NULL) AS pdv_varejo,
         AVG(pdv_atacado) FILTER (WHERE pdv_atacado IS NOT NULL) AS pdv_atacado,
-        SUM(qtdes_liberadas) AS qtdes_liberadas,
-        SUM(qtde_entregue) AS qtde_entregue,
+        MIN(entrou_dpa) AS entrou_dpa,
+        SUM(qtde_produzida) AS qtde_produzida,
         SUM(qtde_vendida) AS qtde_vendida,
-        SUM(qtde_vendida_ate_hoje) AS qtde_vendida_ate_hoje,
         SUM(venda_mes_1) AS venda_mes_1,
         SUM(venda_mes_2) AS venda_mes_2,
         SUM(venda_mes_3) AS venda_mes_3,
@@ -805,28 +554,58 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         SUM(valor_mes_2) AS valor_mes_2,
         SUM(valor_mes_3) AS valor_mes_3,
         SUM(estoque_final) AS estoque_final,
-        SUM(estoque_atual) AS estoque_atual,
         SUM(total_venda_valor) AS total_venda_valor,
         SUM(total_venda_custo) AS total_venda_custo,
         SUM(total_estoque_custo) AS total_estoque_custo,
         SUM(total_estoque_venda) AS total_estoque_venda,
-        SUM(qtde_entregue * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
-        SUM(qtde_entregue * COALESCE(custo, 0)) AS total_producao_custo
+        SUM(qtde_produzida * COALESCE(pdv_varejo, 0)) AS total_producao_valor,
+        SUM(qtde_produzida * COALESCE(custo, 0)) AS total_producao_custo
       FROM por_produto
-      WHERE qtdes_liberadas <> 0 OR qtde_entregue <> 0 OR qtde_vendida <> 0 OR estoque_final <> 0
-      GROUP BY colecao, reference_code, cor, tamanho
-      ORDER BY reference_code ASC, cor ASC, tamanho ASC
+      WHERE qtde_produzida <> 0 OR qtde_vendida <> 0 OR estoque_final <> 0
+      GROUP BY grupo, reference_code
+      ORDER BY SUM(total_venda_valor) DESC, reference_code ASC
     `,
     getVendaPeriodoTotal(filtro),
     getResumoMensal(filtro, config),
   ]);
 
-  const mappedRows = montarArvore(rows);
+  const mappedRows: PerformanceColecaoRow[] = rows.map((row) => {
+    const custo = row.custo === null ? null : decimalToNumber(row.custo);
+    const pdvVarejo = row.pdv_varejo === null ? null : decimalToNumber(row.pdv_varejo);
+    const pdvAtacado = row.pdv_atacado === null ? null : decimalToNumber(row.pdv_atacado);
+    const qtdeProduzida = decimalToNumber(row.qtde_produzida);
+    const qtdeVendida = decimalToNumber(row.qtde_vendida);
+    return {
+      grupo: row.grupo,
+      referenceCode: row.reference_code,
+      descricao: row.descricao || row.reference_code,
+      categoria: row.categoria,
+      linha: row.linha,
+      custo: custo === null ? null : round(custo, 2),
+      pdvVarejo: pdvVarejo === null ? null : round(pdvVarejo, 2),
+      markupVarejo: custo && custo > 0 && pdvVarejo !== null ? round(pdvVarejo / custo, 2) : null,
+      pdvAtacado: pdvAtacado === null ? null : round(pdvAtacado, 2),
+      markupAtacado: custo && custo > 0 && pdvAtacado !== null ? round(pdvAtacado / custo, 2) : null,
+      entrouDpa: row.entrou_dpa ? row.entrou_dpa.toISOString().slice(0, 10) : null,
+      qtdeProduzida: round(qtdeProduzida, 0),
+      vendaMes1: round(decimalToNumber(row.venda_mes_1), 0),
+      vendaMes2: round(decimalToNumber(row.venda_mes_2), 0),
+      vendaMes3: round(decimalToNumber(row.venda_mes_3), 0),
+      valorMes1: round(decimalToNumber(row.valor_mes_1), 2),
+      valorMes2: round(decimalToNumber(row.valor_mes_2), 2),
+      valorMes3: round(decimalToNumber(row.valor_mes_3), 2),
+      estoqueFinal: round(decimalToNumber(row.estoque_final), 0),
+      giro: qtdeProduzida > 0 ? round(qtdeVendida / qtdeProduzida, 2) : null,
+      totalVendaValor: round(decimalToNumber(row.total_venda_valor), 2),
+      totalVendaCusto: round(decimalToNumber(row.total_venda_custo), 2),
+      totalEstoqueCusto: round(decimalToNumber(row.total_estoque_custo), 2),
+      totalEstoqueVenda: round(decimalToNumber(row.total_estoque_venda), 2),
+    };
+  });
 
   const totals = mappedRows.reduce(
     (acc, row) => {
-      acc.qtdesLiberadas += row.qtdesLiberadas;
-      acc.qtdeEntregue += row.qtdeEntregue;
+      acc.qtdeProduzida += row.qtdeProduzida;
       acc.qtdeVendida += row.vendaMes1 + row.vendaMes2 + row.vendaMes3;
       acc.estoqueFinal += row.estoqueFinal;
       acc.totalVendaValor += row.totalVendaValor;
@@ -835,14 +614,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       acc.totalEstoqueVenda += row.totalEstoqueVenda;
       return acc;
     },
-    { qtdesLiberadas: 0, qtdeEntregue: 0, qtdeVendida: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
+    { qtdeProduzida: 0, qtdeVendida: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
   );
 
-  // Giro ate hoje agregado: soma bruta (venda ate hoje / estoque atual), nao media dos
-  // giros por linha - dividir depois de somar evita distorcao de referencia com
-  // estoque pequeno puxando a media pra cima/baixo desproporcionalmente.
-  const somaVendaAteHoje = rows.reduce((s, r) => s + decimalToNumber(r.qtde_vendida_ate_hoje), 0);
-  const somaEstoqueAtual = rows.reduce((s, r) => s + decimalToNumber(r.estoque_atual), 0);
   const totalProducaoValor = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_valor), 0);
   const totalProducaoCusto = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_custo), 0);
 
@@ -867,10 +641,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
     },
     kpis: {
       referencias: mappedRows.length,
-      qtdesLiberadas: round(totals.qtdesLiberadas, 0),
-      qtdeEntregue: round(totals.qtdeEntregue, 0),
-      saldoAEntregar: round(Math.max(totals.qtdesLiberadas - totals.qtdeEntregue, 0), 0),
-      percentEntregue: totals.qtdesLiberadas > 0 ? round((totals.qtdeEntregue / totals.qtdesLiberadas) * 100, 1) : null,
+      qtdeProduzida: round(totals.qtdeProduzida, 0),
       qtdeVendida: round(totals.qtdeVendida, 0),
       estoqueFinal: round(totals.estoqueFinal, 0),
       totalVendaValor: round(totals.totalVendaValor, 2),
@@ -878,16 +649,15 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       totalEstoqueCusto: round(totals.totalEstoqueCusto, 2),
       totalEstoqueVenda: round(totals.totalEstoqueVenda, 2),
       participacaoColecaoPercent: vendaPeriodoTotal > 0 ? round((totals.totalVendaValor / vendaPeriodoTotal) * 100, 1) : 0,
-      giroPeriodo: round(totals.qtdeVendida, 0),
-      giroAteHoje: somaEstoqueAtual > 0 ? round(somaVendaAteHoje / somaEstoqueAtual, 2) : null,
+      giroMedioPercent: totals.qtdeProduzida > 0 ? round(totals.qtdeVendida / totals.qtdeProduzida, 2) : null,
     },
     resumoProducao: {
       valorTotal: round(totalProducaoValor, 2),
       custoTotal: round(totalProducaoCusto, 2),
       markup: totalProducaoCusto > 0 ? round(totalProducaoValor / totalProducaoCusto, 2) : null,
-      pecas: round(totals.qtdeEntregue, 0),
-      precoVendaMedio: totals.qtdeEntregue > 0 ? round(totalProducaoValor / totals.qtdeEntregue, 2) : null,
-      precoCustoMedio: totals.qtdeEntregue > 0 ? round(totalProducaoCusto / totals.qtdeEntregue, 2) : null,
+      pecas: round(totals.qtdeProduzida, 0),
+      precoVendaMedio: totals.qtdeProduzida > 0 ? round(totalProducaoValor / totals.qtdeProduzida, 2) : null,
+      precoCustoMedio: totals.qtdeProduzida > 0 ? round(totalProducaoCusto / totals.qtdeProduzida, 2) : null,
     },
     resumoMensal,
     rows: mappedRows,

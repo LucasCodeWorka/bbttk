@@ -276,6 +276,7 @@ export interface RelatorioBaseFiltro {
   status?: string[];
   branches?: number[];
   search?: string;
+  dataPosicao?: string;
   page?: number;
   pageSize?: number;
 }
@@ -354,7 +355,16 @@ export interface RelatorioBaseResponse {
     coberturaLimiteVerde: number;
     coberturaLimiteVermelho: number;
   };
-  kpis: { giroTt1: number; giroTt3: number; giroTt6: number; estTt: number; skuCount: number };
+  kpis: {
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    giroTt30: number;
+    giroTt60: number;
+    giroTt90: number;
+    estTt: number;
+    skuCount: number;
+  };
   kpisExtra: RelatorioBaseKpisExtra;
   matriz: {
     linha: RelatorioBaseMatrizLinha[];
@@ -372,6 +382,8 @@ export interface RelatorioBaseKpisExtra {
   coberturaAtacado: number | null;
   giroAnualizado: number;
   valorEstoqueTotal: number;
+  valorEstoqueAnoAnterior: number;
+  valorEstoqueVariacaoPercent: number | null;
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
   estoqueMortoPercent: number;
@@ -402,6 +414,7 @@ export const relatorioBaseApi = {
   getRelatorioBase: (token: string, filtro: RelatorioBaseFiltro = {}) => {
     const params = new URLSearchParams();
     if (filtro.search) params.set('search', filtro.search);
+    if (filtro.dataPosicao) params.set('dataPosicao', filtro.dataPosicao);
     if (filtro.page) params.set('page', String(filtro.page));
     if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
     appendList(params, 'branches', filtro.branches);
@@ -841,16 +854,19 @@ export interface PerformanceColecaoFiltro {
   search?: string;
 }
 
-export interface PerformanceColecaoMetricas {
+export interface PerformanceColecaoRow {
+  grupo: string | null;
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
   custo: number | null;
   pdvVarejo: number | null;
   markupVarejo: number | null;
   pdvAtacado: number | null;
   markupAtacado: number | null;
-  qtdesLiberadas: number;
-  qtdeEntregue: number;
-  saldoAEntregar: number;
-  percentEntregue: number | null;
+  entrouDpa: string | null;
+  qtdeProduzida: number;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;
@@ -858,30 +874,11 @@ export interface PerformanceColecaoMetricas {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
-  giroPeriodo: number;
-  giroAteHoje: number | null;
+  giro: number | null;
   totalVendaValor: number;
   totalVendaCusto: number;
   totalEstoqueCusto: number;
   totalEstoqueVenda: number;
-}
-
-export interface PerformanceColecaoTamanho extends PerformanceColecaoMetricas {
-  tamanho: string;
-}
-
-export interface PerformanceColecaoCor extends PerformanceColecaoMetricas {
-  cor: string;
-  tamanhos: PerformanceColecaoTamanho[];
-}
-
-export interface PerformanceColecaoRow extends PerformanceColecaoMetricas {
-  colecao: string | null;
-  referenceCode: string;
-  descricao: string;
-  categoria: string | null;
-  linha: string | null;
-  cores: PerformanceColecaoCor[];
 }
 
 export interface PerformanceColecaoResumoMes {
@@ -918,10 +915,7 @@ export interface PerformanceColecaoResponse {
   periodo: { dataInicio: string; dataFim: string; meses: string[] };
   kpis: {
     referencias: number;
-    qtdesLiberadas: number;
-    qtdeEntregue: number;
-    saldoAEntregar: number;
-    percentEntregue: number | null;
+    qtdeProduzida: number;
     qtdeVendida: number;
     estoqueFinal: number;
     totalVendaValor: number;
@@ -929,8 +923,7 @@ export interface PerformanceColecaoResponse {
     totalEstoqueCusto: number;
     totalEstoqueVenda: number;
     participacaoColecaoPercent: number;
-    giroPeriodo: number;
-    giroAteHoje: number | null;
+    giroMedioPercent: number | null;
   };
   resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
