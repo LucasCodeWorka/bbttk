@@ -387,6 +387,9 @@ export interface RelatorioBaseKpisExtra {
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
   estoqueMortoPercent: number;
+  estoquePromocaoQtd: number;
+  estoquePromocaoValor: number;
+  estoquePromocaoPercent: number;
   coberturaBasico: number | null;
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;

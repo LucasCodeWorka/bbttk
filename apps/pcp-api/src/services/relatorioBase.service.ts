@@ -151,18 +151,20 @@ export interface RelatorioBaseKpisExtra {
   valorEstoqueTotal: number;
   valorEstoqueAnoAnterior: number;
   valorEstoqueVariacaoPercent: number | null;
-  // "Estoque morto" = status TOTVS comecando com "FORA DE LINHA" (cobre todas as
-  // variantes de campanha: "FORA DE LINHA BLACK FRIDAY 2024", "FORA DE LINHA PROMO JAN
-  // 2025" etc, confirmado direto no banco - nao e um dia-sem-venda, e classificacao).
+  // Fora de linha cheio = status TOTVS exatamente "FORA DE LINHA".
+  // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
   estoqueMortoPercent: number;
+  estoquePromocaoQtd: number;
+  estoquePromocaoValor: number;
+  estoquePromocaoPercent: number;
   coberturaBasico: number | null;
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
-  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/INATIVO - "OUTROS" pega
-  // qualquer status novo/inesperado, nunca descarta silenciosamente).
+  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
+  // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
 }
 
@@ -683,12 +685,16 @@ export function markupPercentual(preco: number | null, custo: number | null): nu
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 export const CUSTO_ULTIMA_COMPRA_CODE = 2;
 
-export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoRows(precoCustoBranchCode: number, custoCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
-    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
+    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${custoCode}
       ${filtroProductCode(productCodes)}
   `;
+}
+
+export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+  return getCustoRows(precoCustoBranchCode, CUSTO_ULTIMA_COMPRA_CODE, productCodes);
 }
 
 // Custo de PRODUCAO (costCode=1, fixo) - achado na investigacao do Performance Colecao
@@ -909,7 +915,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroTt6Rows,
     custoPrecoRows,
     ultimaEntradaRows,
-    custoUltimaCompraRows,
+    custoSelecionadoRows,
     emProducaoRows,
   ] = await Promise.all([
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
@@ -926,7 +932,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
     getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
-    getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
+    getCustoRows(config.precoCustoBranchCode, config.custoCode, productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
 
@@ -998,8 +1004,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const ultimaEntradaPorProductCode = new Map<number, Date>();
   for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
 
-  const custoUltimaCompraPorProductCode = new Map<number, number>();
-  for (const r of custoUltimaCompraRows) custoUltimaCompraPorProductCode.set(r.product_code, decimalToNumber(r.valor));
+  const custoSelecionadoPorProductCode = new Map<number, number>();
+  for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
 
   const emProducaoPorProductCode = new Map<number, number>();
   for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
@@ -1059,6 +1065,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   let vendaAtacadoTotal = 0;
   let estoqueMortoQtd = 0;
   let estoqueMortoValor = 0;
+  let estoquePromocaoQtd = 0;
+  let estoquePromocaoValor = 0;
 
   const colunasAtivas = branchFiltro
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
@@ -1192,7 +1200,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
 
-    const custoUltimaCompra = productCode !== null ? custoUltimaCompraPorProductCode.get(productCode) ?? null : null;
+    const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
     const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
@@ -1217,9 +1225,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     vendaVarejoTotal += vendaVarejoSku;
     vendaAtacadoTotal += vendaAtacadoSku;
 
-    const statusTrim = identidade.status?.trim().toUpperCase() || null;
+    const statusTrim = identidade.status?.trim().replace(/\s+/g, ' ').toUpperCase() || null;
     let statusBucketKey: string;
-    if (statusTrim && statusTrim.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA';
+    if (statusTrim === 'FORA DE LINHA') statusBucketKey = 'FORA DE LINHA';
+    else if (statusTrim?.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA PROMOCAO';
     else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
@@ -1227,6 +1236,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     if (statusBucketKey === 'FORA DE LINHA') {
       estoqueMortoQtd += estTt;
       estoqueMortoValor += valorEstoqueSku;
+    } else if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+      estoquePromocaoQtd += estTt;
+      estoquePromocaoValor += valorEstoqueSku;
     }
 
     const bucketValores: BucketAcc = {
@@ -1250,8 +1262,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1Round = round(giroTt1, 0);
     const giroTt3Round = round(giroTt3, 0);
     const giroTt6Round = round(giroTt6, 0);
-    const markupVar = markupPercentual(pdvRealVar, custoUltimaCompra);
-    const markupAta = markupPercentual(pdvRealAta, custoUltimaCompra);
+    const markupVar = markupPercentual(pdvRealVar, custoSelecionado);
+    const markupAta = markupPercentual(pdvRealAta, custoSelecionado);
 
     kpis.giroTt1 += giroTt1Round;
     kpis.giroTt3 += giroTt3Round;
@@ -1425,6 +1437,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
     estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+    estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
+    estoquePromocaoValor: round(estoquePromocaoValor, 2),
+    estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
     coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
     coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
     coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
