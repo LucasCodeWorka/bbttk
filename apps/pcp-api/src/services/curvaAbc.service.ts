@@ -9,7 +9,7 @@ import {
   linhaBucket,
   formatarLancamento,
   getConfig as getRelatorioBaseConfig,
-  getCustoUltimaCompraRows,
+  getCustoRows,
   getUltimaEntradaRows,
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
 } from './relatorioBase.service.js';
@@ -265,7 +265,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     getVendaPorProductCodeMesesFechados(mesesJanela * 2, mesesJanela),
     getEstoqueCanalPorSku(),
     getVenda30DiasPorCanal(),
-    getCustoUltimaCompraRows(relatorioBaseConfig.precoCustoBranchCode, null),
+    getCustoRows(relatorioBaseConfig.precoCustoBranchCode, relatorioBaseConfig.custoCode, null),
     getUltimaEntradaRows(null),
   ]);
 
@@ -277,7 +277,7 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
     estoquePorSku.set(row.product_sku, atual);
   }
 
-  // Custo (ultima compra, mesma fonte/loja de referencia do Relatorio Base) e ultima
+  // Custo configurado no Relatorio Base e ultima
   // entrada de estoque, por product_code - usados abaixo pra calcular o valor de
   // estoque a custo e a coluna "ultima entrada" por referencia.
   const custoPorProductCode = new Map<number, number>();

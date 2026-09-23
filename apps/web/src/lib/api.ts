@@ -237,7 +237,7 @@ export const agrupamentosApi = {
 };
 
 // Configurador PCP (dias de giro, meses de cobertura, cobertura ideal por loja, e qual
-// codigo de custo/preco do TOTVS usar em cada contexto do Relatorio Base)
+// codigo de custo/preco do TOTVS usar como padrao nas analises PCP)
 export interface PcpRelatorioConfig {
   relatorio: string;
   giroDias: number;

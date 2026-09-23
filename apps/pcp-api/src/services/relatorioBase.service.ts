@@ -685,12 +685,16 @@ export function markupPercentual(preco: number | null, custo: number | null): nu
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 export const CUSTO_ULTIMA_COMPRA_CODE = 2;
 
-export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoRows(precoCustoBranchCode: number, custoCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
-    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
+    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${custoCode}
       ${filtroProductCode(productCodes)}
   `;
+}
+
+export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+  return getCustoRows(precoCustoBranchCode, CUSTO_ULTIMA_COMPRA_CODE, productCodes);
 }
 
 // Custo de PRODUCAO (costCode=1, fixo) - achado na investigacao do Performance Colecao
@@ -911,7 +915,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroTt6Rows,
     custoPrecoRows,
     ultimaEntradaRows,
-    custoUltimaCompraRows,
+    custoSelecionadoRows,
     emProducaoRows,
   ] = await Promise.all([
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
@@ -928,7 +932,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
     getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
-    getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
+    getCustoRows(config.precoCustoBranchCode, config.custoCode, productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
 
@@ -1000,8 +1004,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const ultimaEntradaPorProductCode = new Map<number, Date>();
   for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
 
-  const custoUltimaCompraPorProductCode = new Map<number, number>();
-  for (const r of custoUltimaCompraRows) custoUltimaCompraPorProductCode.set(r.product_code, decimalToNumber(r.valor));
+  const custoSelecionadoPorProductCode = new Map<number, number>();
+  for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
 
   const emProducaoPorProductCode = new Map<number, number>();
   for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
@@ -1196,7 +1200,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
 
-    const custoUltimaCompra = productCode !== null ? custoUltimaCompraPorProductCode.get(productCode) ?? null : null;
+    const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
     const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
@@ -1258,8 +1262,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1Round = round(giroTt1, 0);
     const giroTt3Round = round(giroTt3, 0);
     const giroTt6Round = round(giroTt6, 0);
-    const markupVar = markupPercentual(pdvRealVar, custoUltimaCompra);
-    const markupAta = markupPercentual(pdvRealAta, custoUltimaCompra);
+    const markupVar = markupPercentual(pdvRealVar, custoSelecionado);
+    const markupAta = markupPercentual(pdvRealAta, custoSelecionado);
 
     kpis.giroTt1 += giroTt1Round;
     kpis.giroTt3 += giroTt3Round;

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL } from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, getConfig as getRelatorioBaseConfig } from './relatorioBase.service.js';
 
 // Relatório 5: Venda e Desconto por Classificação
 // Relatório 5.1: Resumo da Promoção por Loja
@@ -147,6 +147,7 @@ function buildClassificacaoFilter(
 
 export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<VendaDescontoResponse> {
   const { dataInicio, dataFim, branches, classificacao, itensClassificacao } = filtro;
+  const relatorioBaseConfig = await getRelatorioBaseConfig();
 
   const branchFilter = buildBranchFilter(branches);
   const branchFilterPs = buildBranchFilter(branches, 'ps');
@@ -274,7 +275,8 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
         pc.product_code,
         pc.valor AS custo
       FROM produto_custos pc
-      WHERE pc.cost_code = 2
+      WHERE pc.branch_code = ${relatorioBaseConfig.precoCustoBranchCode}
+        AND pc.cost_code = ${relatorioBaseConfig.custoCode}
       ORDER BY pc.product_code, pc.synced_at DESC
     ),
     custos AS (

@@ -638,7 +638,7 @@ export default function ConfiguracoesPcpPage() {
               </Button>
             </CardHeader>
             <p className="text-sm text-gray-500 -mt-2 mb-2">
-              O TOTVS tem varios tipos de custo e preco cadastrados por produto - escolha qual usar em cada coluna do Relatorio Base.
+              O tipo de custo selecionado aqui sera usado como padrao nas analises PCP que consultam custo. Os precos continuam alimentando as colunas de PDV do Relatorio Base.
               {codigos.custos.length === 0 && ' Sincronize pelo menos uma vez para liberar os selects.'}
             </p>
             {sincronizando && (
@@ -651,7 +651,7 @@ export default function ConfiguracoesPcpPage() {
             )}
             <div className="flex flex-wrap gap-4 items-end">
               <Select
-                label="Custo"
+                label="Tipo de custo PCP"
                 options={codigos.custos.map((c) => ({ value: c.code, label: c.name }))}
                 value={custoCode}
                 onChange={(e) => setCustoCode(e.target.value)}
