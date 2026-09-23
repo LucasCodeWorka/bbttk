@@ -43,6 +43,7 @@ router.get('/estoque-sem-giro', async (req: Request, res: Response) => {
       produtoFiltro,
       branchCodes: parseBranchCodes(req.query.branches),
       limit: limit === null ? null : Number.isFinite(limit) ? limit : 10,
+      agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
     }));
   } catch (error) {
     res.status(500).json({ error: String(error) });

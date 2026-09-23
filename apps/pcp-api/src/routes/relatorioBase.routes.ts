@@ -43,6 +43,7 @@ router.get('/relatorio-base', async (req: Request, res: Response) => {
       dataPosicao: parseDate(req.query.dataPosicao),
       page: Number.isFinite(page) && page > 0 ? page : 1,
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 15,
+      agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
     };
 
     res.json(await getRelatorioBase(filtro));

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN, COR_AGRUPADA_SELECT } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
 const RELATORIO_BASE_CONFIG_KEY = 'relatorio_base';
@@ -29,6 +29,9 @@ export interface AnaliseGradeFiltro {
   status?: string[];
   cor?: string[];
   branches?: number[];
+  // Quando true, a grade por cor/tamanho soma numa celula so as cores originais que
+  // foram unificadas no Agrupamento de Cores.
+  agruparPorCorSalva?: boolean;
 }
 
 interface GradeRawRow {
@@ -37,6 +40,7 @@ interface GradeRawRow {
   reference_name: string | null;
   color_code: string | null;
   color_name: string | null;
+  cor_agrupada: string | null;
   size: string;
   product_code: number | null;
   estoque: Decimal;
@@ -140,12 +144,14 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[]
       a.reference_name,
       a.color_code,
       a.color_name,
+      ${COR_AGRUPADA_SELECT} AS cor_agrupada,
       a.size,
       a.product_code,
       COALESCE(es.estoque, 0) AS estoque
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     LEFT JOIN estoque_sku es ON es.product_sku = a.product_sku
+    ${AGRUPAMENTO_COR_JOIN}
     WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
@@ -296,10 +302,17 @@ async function getCurvaConfig() {
 type CurvaLetra = 'A' | 'B' | 'C';
 type StatusReferencia = 'saudavel' | 'atencao' | 'critica';
 
-function buildRefCorTam(row: GradeRawRow): string {
-  const cor = row.color_name?.trim() || row.color_code?.trim() || 'SEM COR';
+// Cor que a grade mostra: no modo agrupado usa o nome do grupo do Agrupamento de Cores
+// (quando aquela cor foi agrupada); senao sempre a cor original do TOTVS.
+function corExibicao(row: GradeRawRow, agruparPorCorSalva: boolean): string {
+  const corOriginal = row.color_name?.trim() || row.color_code?.trim() || 'SEM COR';
+  if (!agruparPorCorSalva) return corOriginal;
+  return row.cor_agrupada?.trim() || corOriginal;
+}
+
+function buildRefCorTam(row: GradeRawRow, agruparPorCorSalva = false): string {
   const tamanho = row.size?.trim() || 'SEM TAM';
-  return [row.reference_code, cor, tamanho].join(' - ');
+  return [row.reference_code, corExibicao(row, agruparPorCorSalva), tamanho].join(' - ');
 }
 
 function getStatus(percentRisco: number, skusRisco: number): StatusReferencia {
@@ -350,6 +363,7 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
   // aparecem).
   const productSkusFiltro = await getSkusFiltrados(filtro);
   const rawRows = await getGradeRawRows(filtro, productSkusFiltro);
+  const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
   const temFiltroClassificacao = productSkusFiltro !== null;
   const productCodesFiltro = temFiltroClassificacao
     ? [...new Set(rawRows.map((r) => r.product_code).filter((c): c is number => c !== null))]
@@ -420,17 +434,31 @@ export async function getGrade(filtro: AnaliseGradeFiltro = {}) {
     atual.valorMes1 += decimalToNumber(venda?.valor_mes_1);
     atual.valorMes2 += decimalToNumber(venda?.valor_mes_2);
     atual.valorMes3 += decimalToNumber(venda?.valor_mes_3);
-    atual.skus.set(row.product_sku, {
-      sku: row.product_sku,
-      refCorTam: buildRefCorTam(row),
-      cor: row.color_name?.trim() || row.color_code?.trim() || 'SEM COR',
-      tamanho: row.size,
-      estoque,
-      emProducao,
-      vendaMes1,
-      vendaMes2,
-      vendaMes3,
-    });
+
+    const cor = corExibicao(row, agruparPorCorSalva);
+    // No modo agrupado a celula da grade deixa de ser um SKU e passa a ser
+    // cor-do-grupo+tamanho: varias cores originais somam no mesmo ponto da grade.
+    const chaveSku = agruparPorCorSalva ? `${cor}|${row.size}` : row.product_sku;
+    const skuExistente = atual.skus.get(chaveSku);
+    if (skuExistente) {
+      skuExistente.estoque += estoque;
+      skuExistente.emProducao += emProducao;
+      skuExistente.vendaMes1 += vendaMes1;
+      skuExistente.vendaMes2 += vendaMes2;
+      skuExistente.vendaMes3 += vendaMes3;
+    } else {
+      atual.skus.set(chaveSku, {
+        sku: chaveSku,
+        refCorTam: buildRefCorTam(row, agruparPorCorSalva),
+        cor,
+        tamanho: row.size,
+        estoque,
+        emProducao,
+        vendaMes1,
+        vendaMes2,
+        vendaMes3,
+      });
+    }
     refs.set(row.reference_code, atual);
   }
 

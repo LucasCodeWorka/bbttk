@@ -17,6 +17,7 @@ import sugestaoProducaoRoutes from './routes/sugestaoProducao.routes.js';
 import pesosGradesRoutes from './routes/pesosGrades.routes.js';
 import vendaDescontoRoutes from './routes/vendaDesconto.routes.js';
 import dashboardEstoqueRoutes from './routes/dashboardEstoque.routes.js';
+import agrupamentoCoresCoberturaRoutes from './routes/agrupamentoCoresCobertura.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -32,6 +33,9 @@ const corsOrigins = [
     .map((origin) => origin.trim())
     .filter(Boolean) || []),
   ...DEFAULT_CORS_ORIGINS,
+  ...(process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+    : []),
 ];
 
 const HEAVY_REPORT_PATHS = new Set([
@@ -128,6 +132,7 @@ app.use('/api/pcp', vendaDiaRoutes);
 app.use('/api/pcp', sugestaoProducaoRoutes);
 app.use('/api/pcp', pesosGradesRoutes);
 app.use('/api/pcp', vendaDescontoRoutes);
+app.use('/api/pcp', agrupamentoCoresCoberturaRoutes);
 
 async function start() {
   try {

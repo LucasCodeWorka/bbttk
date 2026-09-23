@@ -11,13 +11,14 @@ import { Modal } from '@/components/ui/Modal';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   PcpClassificacaoDimensao,
   RelatorioBaseFiltro,
   RelatorioBaseResponse,
-  RelatorioBaseRow,
+  RelatorioBaseCorRow,
   RelatorioBaseReferenciaRow,
   RelatorioBaseMatrizLinha,
   VisaoGeralExtrasResponse,
@@ -130,6 +131,7 @@ const PAGE_SIZE = 15;
 // Largura fixa em px de cada coluna "de identidade" (nao-filial) - tabela e larga
 // demais pra usar %, precisa de largura fixa + scroll horizontal.
 const SKU_WIDTH = 100;
+const COR_WIDTH = 140;
 const DESCRICAO_WIDTH = 200;
 
 interface ColunaFixa<T> {
@@ -182,19 +184,23 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
   { key: 'giroTt6', label: 'GIRO TT 6', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt6) },
 ];
 
-// Colunas do drill-down por SKU (abre ao clicar na referencia) - a identidade em
-// destaque aqui e Cor/Tamanho, nao o codigo do SKU (que fica pequeno/secundario
-// embaixo) - pedido explicito do usuario, mesmo padrao ja usado na Curva ABC "por SKU".
-const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
+// Colunas do drill-down por COR (abre ao clicar na referencia). Antes era por SKU
+// (cor x tamanho), mas o detalhamento por SKU foi tirado do payload por consumo de
+// memoria - por cor e ~1 ordem de grandeza mais leve e, com o Agrupamento de Cores
+// ligado, fica menor ainda. Quem precisa da grade por tamanho usa a Analise de Grade.
+const COLUNAS_COR_DETALHE: ColunaFixa<RelatorioBaseCorRow>[] = [
   {
-    key: 'sku',
-    label: 'COR / TAMANHO',
-    width: SKU_WIDTH + 40,
+    key: 'cor',
+    label: 'COR',
+    width: COR_WIDTH,
     sticky: 'sku',
     render: (r) => (
       <span className="block">
-        <span className="font-medium block">{r.cor} - {r.tamanho}</span>
-        <span className="text-[9px] text-gray-400">{r.sku}</span>
+        <span className="font-medium block">{r.cor}</span>
+        <span className="text-[9px] text-gray-400">
+          {r.totalSkus} {r.totalSkus === 1 ? 'SKU' : 'SKUs'}
+          {r.coresOriginais > 1 ? ` · ${r.coresOriginais} cores agrupadas` : ''}
+        </span>
       </span>
     ),
   },
@@ -203,22 +209,18 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
     label: 'DESCRIÇÃO',
     width: DESCRICAO_WIDTH,
     sticky: 'descricao',
-    render: (r) => (
-      <span className="truncate block" title={r.descricaoCompleta}>
-        {r.descricao}
-      </span>
-    ),
+    render: () => <span className="text-gray-400">—</span>,
   },
-  { key: 'status', label: 'STATUS', width: 90, render: (r) => r.status || '-' },
-  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: (r) => r.codigo ?? '-' },
-  { key: 'categoria', label: 'CATEGORIA', width: 110, render: (r) => r.categoria || '-' },
-  { key: 'linha', label: 'LINHA', width: 100, render: (r) => r.linha || '-' },
-  { key: 'genero', label: 'GÊNERO', width: 90, render: (r) => r.genero || '-' },
-  { key: 'modelo', label: 'MODELO', width: 100, render: (r) => r.modelo || '-' },
-  { key: 'lancamento', label: 'LANÇ', width: 70, align: 'center', render: (r) => r.lancamento || '—' },
-  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 100, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '—') },
+  { key: 'status', label: 'STATUS', width: 90, render: () => '—' },
+  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: () => '—' },
+  { key: 'categoria', label: 'CATEGORIA', width: 110, render: () => '—' },
+  { key: 'linha', label: 'LINHA', width: 100, render: () => '—' },
+  { key: 'genero', label: 'GÊNERO', width: 90, render: () => '—' },
+  { key: 'modelo', label: 'MODELO', width: 100, render: () => '—' },
+  { key: 'lancamento', label: 'LANÇ', width: 70, align: 'center', render: () => '—' },
+  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 100, align: 'center', render: () => '—' },
   { key: 'custo', label: 'CUSTO', width: 80, align: 'right', render: (r) => (r.custo === null ? '—' : formatMoney(r.custo)) },
-  { key: 'pdvAtual', label: 'PDV ATUAL', width: 90, align: 'right', render: (r) => (r.pdvAtual === null ? '—' : formatMoney(r.pdvAtual)) },
+  { key: 'pdvAtual', label: 'PDV ATUAL', width: 90, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
   { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 100, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
   {
     key: 'markupVar',
@@ -254,9 +256,9 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
 
 const BRANCH_SUBCOL_WIDTH = 56;
 
-function stickyStyleFor(sticky?: 'sku' | 'descricao') {
+function stickyStyleFor(sticky?: 'sku' | 'descricao', primeiraColunaWidth = SKU_WIDTH) {
   if (sticky === 'sku') return { left: 0 };
-  if (sticky === 'descricao') return { left: SKU_WIDTH };
+  if (sticky === 'descricao') return { left: primeiraColunaWidth };
   return undefined;
 }
 
@@ -283,11 +285,28 @@ export default function PcpRelatorioBasePage() {
 
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  // Busca com debounce: "search" e o valor APLICADO (dispara a consulta) e
+  // "searchInput" e o que o usuario esta digitando. Sem isso, cada tecla disparava um
+  // relatorio completo (18-26s) e a fila do pcp-api processa um por vez - digitar uma
+  // referencia inteira enfileirava mais de dez consultas.
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [dataPosicao, setDataPosicao] = useState('');
   const [pagina, setPagina] = useState(1);
   const [verPorLoja, setVerPorLoja] = useState(false);
   const [exportando, setExportando] = useState(false);
+  // Granularidade da tabela principal. "referencia" = 1 linha por referencia (o
+  // detalhe por cor abre clicando na linha); "cor"/"cor-agrupada" = a tabela em si
+  // passa a ter 1 linha por referencia+cor. Antes isso era so um checkbox que mudava
+  // exclusivamente o detalhe expandido - a tabela principal ficava identica, e por
+  // isso parecia que o agrupamento "nao funcionava".
+  const [visaoLinha, setVisaoLinha] = useState<'referencia' | 'cor' | 'cor-agrupada'>('referencia');
+  // Derivado: so o modo "cor-agrupada" pede o agrupamento ao backend. Trocar entre
+  // "referencia" e "cor" usa a MESMA resposta (muda so a renderizacao), evitando um
+  // recarregamento de 18-26s pra algo que o cliente ja tem em maos.
+  const agruparPorCorSalva = visaoLinha === 'cor-agrupada';
+  const porCor = visaoLinha !== 'referencia';
+  const requisicaoAtual = useRef(0);
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
   const [sortKey, setSortKey] = useState<string | null>('giroTt3');
@@ -311,6 +330,8 @@ export default function PcpRelatorioBasePage() {
 
   const carregarDados = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
+    setErro(null);
 
     const filtro: RelatorioBaseFiltro = {
       categoria: produtoFiltro.categoria,
@@ -322,9 +343,11 @@ export default function PcpRelatorioBasePage() {
       dataPosicao: dataPosicao || undefined,
       page: pagina,
       pageSize: PAGE_SIZE,
+      agruparPorCorSalva,
     };
 
-    // Gerar chave de cache baseada nos filtros
+    // Gerar chave de cache baseada nos filtros (o agruparPorCorSalva entra aqui junto,
+    // senao o modo agrupado reaproveitaria a resposta do modo normal)
     const cacheKey = `visao-geral-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
@@ -349,6 +372,7 @@ export default function PcpRelatorioBasePage() {
     setErro(null);
     try {
       const response = await relatorioBaseApi.getRelatorioBase(token, filtro);
+      if (requisicao !== requisicaoAtual.current) return;
       setData(response);
 
       // Salvar no cache
@@ -361,12 +385,14 @@ export default function PcpRelatorioBasePage() {
         // Ignorar erros ao salvar cache (ex: quota excedida)
       }
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
       setErro(error instanceof Error ? error.message : 'Erro ao carregar o Relatorio Base');
       console.error(error);
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina]);
+  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, agruparPorCorSalva]);
 
   // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
   // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
@@ -437,6 +463,13 @@ export default function PcpRelatorioBasePage() {
       })
       .catch((error) => console.error('Erro ao carregar filtros do Relatorio Base:', error));
   }, [token]);
+
+  // Aplica a busca so depois de meio segundo sem digitacao (ver comentario em
+  // searchInput) - o setState fica dentro do timeout, nao no corpo do effect.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput), 500);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     carregarDados();
@@ -588,9 +621,41 @@ export default function PcpRelatorioBasePage() {
   // as colunas de filial nem entram no colgroup/header/corpo da tabela.
   const colunas = verPorLoja ? data?.colunas || [] : [];
 
+  // Nos modos por cor, achata cada referencia nas suas linhas de cor. A linha achatada
+  // tem o MESMO shape da linha de referencia (identidade herdada da referencia,
+  // metricas e colunas por filial vindas da cor), entao COLUNAS_REFERENCIA,
+  // getSortValue e a renderizacao da tabela continuam valendo sem duplicacao - mesmo
+  // principio do ItemCurva na Curva ABC e da heranca que o export Excel ja fazia.
+  const linhasBase = useMemo<RelatorioBaseReferenciaRow[]>(() => {
+    const refs = data?.rows || [];
+    if (!porCor) return refs;
+
+    return refs.flatMap((ref) =>
+      ref.cores.map((cor) => ({
+        ...ref,
+        referenceCode: cor.coresOriginais > 1 ? `${cor.refCor} (${cor.coresOriginais} cores)` : cor.refCor,
+        totalSkus: cor.totalSkus,
+        custo: cor.custo,
+        pdvAtual: cor.pdvRealVar,
+        pdvRealVar: cor.pdvRealVar,
+        markupVar: cor.markupVar,
+        pdvRealAta: cor.pdvRealAta,
+        markupAta: cor.markupAta,
+        emProducao: cor.emProducao,
+        estTt: cor.estTt,
+        giroTt1: cor.giroTt1,
+        giroTt3: cor.giroTt3,
+        giroTt6: cor.giroTt6,
+        branches: cor.branches,
+        // Ja estamos no grao de cor: nao existe mais detalhe pra expandir nesta linha.
+        cores: [],
+      }))
+    );
+  }, [data, porCor]);
+
   const sortedRows = useMemo(() => {
-    if (!data || !sortKey) return data?.rows || [];
-    const rows = [...data.rows];
+    if (!sortKey) return linhasBase;
+    const rows = [...linhasBase];
 
     return rows.sort((a, b) => {
       const aVal = getSortValue(a, sortKey);
@@ -605,7 +670,8 @@ export default function PcpRelatorioBasePage() {
 
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [data, sortKey, sortDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhasBase, sortKey, sortDir]);
   const totalColunas = COLUNAS_REFERENCIA.length + colunas.length * 3;
 
   // Cobertura fora da faixa saudavel (mesmos limites configurados no Configurador,
@@ -636,20 +702,23 @@ export default function PcpRelatorioBasePage() {
         status: produtoFiltro.status,
         branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
         search: search.trim() || undefined,
+        dataPosicao: dataPosicao || undefined,
         page: 1,
         pageSize: 100000,
+        agruparPorCorSalva,
       });
       const colunasExport = completo.colunas;
-      const skuRows = completo.rows.flatMap((r) => r.skus);
 
-      // Montar colunas para Excel
+      // Exporta no grao referencia+cor (o detalhamento por SKU nao existe mais no
+      // payload). A identidade da referencia e repetida em cada linha de cor pra
+      // planilha ficar filtravel/pivotavel sem depender de celula mesclada.
       const colunas: ExcelColumn[] = [
-        { key: 'sku', header: 'SKU', width: 20, type: 'text' },
-        { key: 'cor', header: 'COR', width: 15, type: 'text' },
-        { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' },
+        { key: 'referenceCode', header: 'REFERÊNCIA', width: 18, type: 'text' },
+        { key: 'cor', header: 'COR', width: 18, type: 'text' },
+        { key: 'coresOriginais', header: 'CORES AGRUPADAS', width: 16, type: 'number' },
+        { key: 'totalSkus', header: 'SKUS', width: 8, type: 'number' },
         { key: 'descricao', header: 'DESCRIÇÃO', width: 35, type: 'text' },
         { key: 'status', header: 'STATUS', width: 12, type: 'text' },
-        { key: 'codigo', header: 'CÓDIGO', width: 10, type: 'number' },
         { key: 'categoria', header: 'CATEGORIA', width: 15, type: 'text' },
         { key: 'linha', header: 'LINHA', width: 12, type: 'text' },
         { key: 'genero', header: 'GÊNERO', width: 12, type: 'text' },
@@ -657,7 +726,6 @@ export default function PcpRelatorioBasePage() {
         { key: 'lancamento', header: 'LANÇ', width: 10, type: 'text' },
         { key: 'ultimaEntrada', header: 'ÚLT. ENTRADA', width: 14, type: 'text' },
         { key: 'custo', header: 'CUSTO', width: 12, type: 'number' },
-        { key: 'pdvAtual', header: 'PDV ATUAL', width: 12, type: 'number' },
         { key: 'pdvRealVar', header: 'PDV REAL VAR', width: 14, type: 'number' },
         { key: 'markupVar', header: 'MKUP VAR', width: 12, type: 'number' },
         { key: 'pdvRealAta', header: 'PDV REAL ATA', width: 14, type: 'number' },
@@ -679,48 +747,49 @@ export default function PcpRelatorioBasePage() {
       }
 
       // Montar dados
-      const dados = skuRows.map((r) => {
-        const row: Record<string, unknown> = {
-          sku: r.sku,
-          cor: r.cor,
-          tamanho: r.tamanho,
-          descricao: r.descricao,
-          status: r.status || '',
-          codigo: r.codigo ?? '',
-          categoria: r.categoria || '',
-          linha: r.linha || '',
-          genero: r.genero || '',
-          modelo: r.modelo || '',
-          lancamento: r.lancamento || '',
-          ultimaEntrada: r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '',
-          custo: r.custo ?? '',
-          pdvAtual: r.pdvAtual ?? '',
-          pdvRealVar: r.pdvRealVar ?? '',
-          markupVar: r.markupVar ?? '',
-          pdvRealAta: r.pdvRealAta ?? '',
-          markupAta: r.markupAta ?? '',
-          estTt: r.estTt,
-          emProducao: r.emProducao,
-          giroTt1: r.giroTt1,
-          giroTt3: r.giroTt3,
-          giroTt6: r.giroTt6,
-        };
+      const dados = completo.rows.flatMap((ref) =>
+        ref.cores.map((cor) => {
+          const row: Record<string, unknown> = {
+            referenceCode: ref.referenceCode,
+            cor: cor.cor,
+            coresOriginais: cor.coresOriginais,
+            totalSkus: cor.totalSkus,
+            descricao: ref.descricao,
+            status: ref.status || '',
+            categoria: ref.categoria || '',
+            linha: ref.linha || '',
+            genero: ref.genero || '',
+            modelo: ref.modelo || '',
+            lancamento: ref.lancamento || '',
+            ultimaEntrada: ref.ultimaEntrada ? formatDate(ref.ultimaEntrada) : '',
+            custo: cor.custo ?? '',
+            pdvRealVar: cor.pdvRealVar ?? '',
+            markupVar: cor.markupVar ?? '',
+            pdvRealAta: cor.pdvRealAta ?? '',
+            markupAta: cor.markupAta ?? '',
+            estTt: cor.estTt,
+            emProducao: cor.emProducao,
+            giroTt1: cor.giroTt1,
+            giroTt3: cor.giroTt3,
+            giroTt6: cor.giroTt6,
+          };
 
-        for (const c of colunasExport) {
-          const dados = r.branches[c.branchCode];
-          row[`giro_${c.branchCode}`] = dados?.giro ?? 0;
-          row[`est_${c.branchCode}`] = dados?.est ?? 0;
-          row[`cob_${c.branchCode}`] = dados?.cob ?? '';
-        }
+          for (const c of colunasExport) {
+            const dadosFilial = cor.branches[c.branchCode];
+            row[`giro_${c.branchCode}`] = dadosFilial?.giro ?? 0;
+            row[`est_${c.branchCode}`] = dadosFilial?.est ?? 0;
+            row[`cob_${c.branchCode}`] = dadosFilial?.cob ?? '';
+          }
 
-        return row;
-      });
+          return row;
+        })
+      );
 
       const dataHoje = new Date().toISOString().split('T')[0];
       exportToExcel({
         filename: `RelatorioBase_${dataHoje}`,
         sheetName: 'Relatório Base',
-        title: 'Relatório Base PCP - Estoque e Giro por SKU',
+        title: `Relatório Base PCP - Estoque e Giro por Referência/Cor${agruparPorCorSalva ? ' (com Agrupamento de Cores)' : ''}`,
         columns: colunas,
         data: dados,
       });
@@ -770,9 +839,9 @@ export default function PcpRelatorioBasePage() {
           className="w-52"
         />
         <Input
-          label="Buscar SKU/descrição"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          label="Buscar referência/SKU/descrição"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           className="w-52"
           placeholder="Ex: 7800..."
         />
@@ -783,8 +852,38 @@ export default function PcpRelatorioBasePage() {
           onChange={(e) => setDataPosicao(e.target.value)}
           className="w-40"
         />
+        {/* Granularidade da tabela. POR COR AGRUPADA é o único modo que recarrega
+            (pede o agrupamento ao backend); POR REFERÊNCIA ↔ POR COR usam a mesma
+            resposta e trocam na hora. */}
+        <div className="pb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Detalhar</label>
+          <div className="inline-grid grid-cols-3 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+            {([
+              { value: 'referencia', label: 'POR REFERÊNCIA', title: 'Uma linha por referência (clique na linha para ver as cores)' },
+              { value: 'cor', label: 'POR COR', title: 'Uma linha por referência + cor original do TOTVS' },
+              { value: 'cor-agrupada', label: 'POR COR AGRUPADA', title: 'Uma linha por referência + cor, juntando as cores unificadas no Agrupamento de Cores' },
+            ] as const).map((opcao) => (
+              <button
+                key={opcao.value}
+                type="button"
+                title={opcao.title}
+                disabled={isLoading}
+                onClick={() => setVisaoLinha(opcao.value)}
+                className={cn(
+                  'min-w-32 px-3 py-2 text-xs font-bold',
+                  opcao.value === visaoLinha
+                    ? 'bg-[var(--bbtk-red)] text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                  isLoading && 'cursor-not-allowed opacity-60'
+                )}
+              >
+                {opcao.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Button onClick={() => { carregarDados(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
-        <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
+        <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={isLoading || !data || data.rows.length === 0}>
           Exportar Excel
         </Button>
       </div>
@@ -926,9 +1025,10 @@ export default function PcpRelatorioBasePage() {
         )}
       </Card>
 
+      <LoadingOverlay active={isLoading}>
       <Card>
         <CardHeader>
-          <CardTitle>SKU x Loja</CardTitle>
+          <CardTitle>{porCor ? 'Referência + Cor x Loja' : 'SKU x Loja'}</CardTitle>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer select-none">
               <input
@@ -951,6 +1051,7 @@ export default function PcpRelatorioBasePage() {
                 </Button>
                 <span className="whitespace-nowrap">
                   Página {data.pagination.page} de {data.pagination.totalPages} · {formatNumber(data.pagination.totalReferencias)} referências
+                  {porCor && ` · ${formatNumber(sortedRows.length)} linhas de cor nesta página`}
                 </span>
                 <Button
                   variant="secondary"
@@ -1056,7 +1157,9 @@ export default function PcpRelatorioBasePage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {isLoading ? (
+            {/* Primeiro load (sem nada na tela) avisa no corpo; recarregamento fica
+                sob o LoadingOverlay, preservando a linha expandida na tela. */}
+            {isLoading && sortedRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={totalColunas} align="center" className="py-10 text-gray-500">
                   Carregando...
@@ -1070,12 +1173,14 @@ export default function PcpRelatorioBasePage() {
               </TableRow>
             ) : (
               sortedRows.map((row) => {
-                const expandida = referenciaExpandida === row.referenceCode;
+                // Nos modos por cor a tabela ja esta no grao de cor: nao ha detalhe
+                // pra abrir, entao a linha nao e clicavel nem mostra a seta.
+                const expandida = !porCor && referenciaExpandida === row.referenceCode;
                 return (
                   <Fragment key={row.referenceCode}>
                     <TableRow
-                      className="cursor-pointer hover:bg-gray-50"
-                      onClick={() => setReferenciaExpandida(expandida ? null : row.referenceCode)}
+                      className={porCor ? undefined : 'cursor-pointer hover:bg-gray-50'}
+                      onClick={porCor ? undefined : () => setReferenciaExpandida(expandida ? null : row.referenceCode)}
                     >
                       {COLUNAS_REFERENCIA.map((c, idx) => (
                         <TableCell
@@ -1084,7 +1189,7 @@ export default function PcpRelatorioBasePage() {
                           className={cn('!px-2.5 !py-2', zonaBg(c.key) || (c.sticky ? 'bg-white' : ''), c.sticky && 'sticky z-10')}
                           style={stickyStyleFor(c.sticky)}
                         >
-                          {idx === 0 && <span className="mr-1 text-gray-400">{expandida ? '▼' : '▶'}</span>}
+                          {idx === 0 && !porCor && <span className="mr-1 text-gray-400">{expandida ? '▼' : '▶'}</span>}
                           {c.render(row)}
                         </TableCell>
                       ))}
@@ -1111,7 +1216,7 @@ export default function PcpRelatorioBasePage() {
                           <div className="p-2">
                             <Table tableClassName="table-fixed text-xs">
                               <colgroup>
-                                {COLUNAS_SKU_DETALHE.map((c) => (
+                                {COLUNAS_COR_DETALHE.map((c) => (
                                   <col key={c.key} style={{ width: `${c.width}px` }} />
                                 ))}
                                 {colunas.flatMap((c) => [
@@ -1122,13 +1227,13 @@ export default function PcpRelatorioBasePage() {
                               </colgroup>
                               <TableHead>
                                 <TableRow>
-                                  {COLUNAS_SKU_DETALHE.map((c) => (
+                                  {COLUNAS_COR_DETALHE.map((c) => (
                                     <TableCell
                                       key={c.key}
                                       isHeader
                                       align={c.align}
                                       className={cn('!px-2.5 !py-2 whitespace-nowrap', zonaBg(c.key) || 'bg-gray-100', c.sticky && 'sticky z-20')}
-                                      style={stickyStyleFor(c.sticky)}
+                                      style={stickyStyleFor(c.sticky, COR_WIDTH)}
                                     >
                                       {c.label}
                                     </TableCell>
@@ -1147,20 +1252,20 @@ export default function PcpRelatorioBasePage() {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {row.skus.map((sku) => (
-                                  <TableRow key={sku.sku}>
-                                    {COLUNAS_SKU_DETALHE.map((c) => (
+                                {row.cores.map((cor) => (
+                                  <TableRow key={cor.cor}>
+                                    {COLUNAS_COR_DETALHE.map((c) => (
                                       <TableCell
                                         key={c.key}
                                         align={c.align}
                                         className={cn('!px-2.5 !py-2', zonaBg(c.key) || (c.sticky ? 'bg-white' : ''), c.sticky && 'sticky z-10')}
-                                        style={stickyStyleFor(c.sticky)}
+                                        style={stickyStyleFor(c.sticky, COR_WIDTH)}
                                       >
-                                        {c.render(sku)}
+                                        {c.render(cor)}
                                       </TableCell>
                                     ))}
                                     {colunas.map((c) => {
-                                      const dados = sku.branches[c.branchCode];
+                                      const dados = cor.branches[c.branchCode];
                                       return (
                                         <Fragment key={c.branchCode}>
                                           <TableCell align="right" className={cn('!px-1.5 !py-2', corGiro(dados?.giro, dados?.est))}>
@@ -1191,6 +1296,7 @@ export default function PcpRelatorioBasePage() {
         </Table>
         </div>
       </Card>
+      </LoadingOverlay>
 
       <Modal isOpen={metaModalAberto} onClose={() => setMetaModalAberto(false)} title="Editar metas da Visão Geral" size="md">
         {meta && (

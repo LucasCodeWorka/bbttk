@@ -2,7 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 const STOCK_CODE_LABELS: Record<number, string> = {
@@ -52,6 +52,10 @@ export interface DashboardEstoqueFiltro {
   status?: string[];
   motorPromocional?: string[];
   campanha?: string[];
+  // Quando true, "cor" passa a ser o nome do grupo do Agrupamento de Cores (quando
+  // aquela cor foi agrupada). Como toda a query deriva a cor da CTE base, a grade
+  // cor x tamanho ja soma as cores unificadas sozinha.
+  agruparPorCorSalva?: boolean;
 }
 
 export interface DashboardEstoqueBucket {
@@ -243,6 +247,13 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
   const localFiltro = buildEstoqueLocalFiltro(filtro.branches);
   const stockCodeFiltro = buildStockCodeFiltro(filtro.stockCodes);
 
+  // No modo agrupado a cor vira o nome do grupo do Agrupamento de Cores (com fallback
+  // pra cor original quando aquela cor ainda nao foi agrupada). Trocar aqui basta: a
+  // grade cor x tamanho e os buckets todos derivam desta CTE.
+  const corSelect = filtro.agruparPorCorSalva
+    ? Prisma.sql`COALESCE(NULLIF(TRIM(ag.nome), ''), NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''))`
+    : Prisma.sql`COALESCE(NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''))`;
+
   return Prisma.sql`
     WITH produtos_filtrados AS (
       SELECT
@@ -250,7 +261,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         a.product_code,
         COALESCE(NULLIF(TRIM(a.reference_code), ''), a.product_sku) AS referencia,
         COALESCE(NULLIF(TRIM(a.reference_name), ''), NULLIF(TRIM(a.product_name), ''), a.product_sku) AS descricao,
-        COALESCE(NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), '')) AS cor,
+        ${corSelect} AS cor,
         NULLIF(TRIM(a.size), '') AS tamanho,
         NULLIF(TRIM(a.class_colecao), '') AS colecao,
         NULLIF(TRIM(a.class_linha), '') AS linha,
@@ -260,6 +271,7 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
         NULLIF(TRIM(a.class_status), '') AS status
       FROM produto_analitico a
       LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      ${AGRUPAMENTO_COR_JOIN}
       WHERE a.product_code IS NOT NULL
         AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
         AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
@@ -445,6 +457,9 @@ function dashboardEstoqueCacheKey(filtro: DashboardEstoqueFiltro) {
     status: normalizeList(filtro.status),
     motorPromocional: normalizeList(filtro.motorPromocional),
     campanha: normalizeList(filtro.campanha),
+    // Precisa entrar na chave: o modo agrupado muda a cor de cada linha, entao
+    // reaproveitar o cache do modo normal devolveria a grade errada.
+    agruparPorCorSalva: filtro.agruparPorCorSalva ?? false,
   });
 }
 

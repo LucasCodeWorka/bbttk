@@ -1,16 +1,16 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardValue } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   EstoqueSemGiroResponse,
-  EstoqueSemGiroSku,
   PcpClassificacaoDimensao,
   PcpLojaFiltro,
   pcpApi,
@@ -94,33 +94,6 @@ function formatDateTime(value: string | null) {
   });
 }
 
-function ThSortPcp({
-  label,
-  sortKeyName,
-  sortKey,
-  sortDir,
-  onSort,
-  align = 'left',
-  className,
-  title,
-}: {
-  label: string;
-  sortKeyName: string;
-  sortKey: string | null;
-  sortDir: 'asc' | 'desc';
-  onSort: (key: string) => void;
-  align?: 'left' | 'center' | 'right';
-  className?: string;
-  title?: string;
-}) {
-  const active = sortKey === sortKeyName;
-  return (
-    <TableCell isHeader align={align} className={className} title={title} onClick={() => onSort(sortKeyName)}>
-      {label}
-      {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
-    </TableCell>
-  );
-}
 
 function faixaDiasLabel(dias: number) {
   if (dias <= 30) return 'Ate 30 dias';
@@ -150,10 +123,10 @@ export default function PcpNovoPage() {
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [lojasFiltro, setLojasFiltro] = useState<PcpLojaFiltro[]>([]);
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
+  const [agruparPorCorSalva, setAgruparPorCorSalva] = useState(false);
+  const requisicaoAtual = useRef(0);
   const [data, setData] = useState<EstoqueSemGiroResponse | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Estado de expansao para o layout hierarquico REF > Cor > Tamanho
   const [expandedRefs, setExpandedRefs] = useState<Set<string>>(new Set());
@@ -161,6 +134,7 @@ export default function PcpNovoPage() {
 
   const carregarDados = useCallback(async () => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
 
     setIsLoading(true);
     setErro(null);
@@ -173,15 +147,19 @@ export default function PcpNovoPage() {
         linha: produtoFiltro.linha,
         genero: produtoFiltro.genero,
         limit: rankingLimit === 'all' ? 'all' : Number(rankingLimit),
+        agruparPorCorSalva,
       });
+      if (requisicao !== requisicaoAtual.current) return;
       setData(response);
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
       setErro(error instanceof Error ? error.message : 'Erro ao carregar estoque sem giro');
       console.error(error);
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
-  }, [cobertura, diasSelecionado, filiaisSelecionadas, produtoFiltro, rankingLimit, token]);
+  }, [agruparPorCorSalva, cobertura, diasSelecionado, filiaisSelecionadas, produtoFiltro, rankingLimit, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -215,45 +193,6 @@ export default function PcpNovoPage() {
   const totalColunasTabela = 6 + Math.max(lojasTabela.length, 1);
   const lojaColumnWidth = lojasTabela.length > 0 ? 49 / lojasTabela.length : 49;
 
-  function handleSort(key: string) {
-    if (sortKey === key) {
-      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir('desc');
-    }
-  }
-
-  function getSortValue(item: EstoqueSemGiroSku, key: string): number | string {
-    if (key === 'descricao') return item.descricao || '';
-    if (key === 'grade') return item.grade || '';
-    if (key === 'cor_de_para') return item.cor_de_para || '';
-    if (key === 'dias_sem_giro') return item.dias_sem_giro;
-    if (key === 'quantidade') return item.quantidade;
-    if (key === 'valor') return item.valor;
-    if (key.startsWith('loja-')) {
-      const branchCode = Number(key.slice('loja-'.length));
-      return item.lojas.find((loja) => loja.branch_code === branchCode)?.quantidade || 0;
-    }
-    return 0;
-  }
-
-  const skusOrdenados = useMemo(() => {
-    const base = data?.top_skus || [];
-    if (!sortKey) return base;
-    const arr = [...base];
-    arr.sort((a, b) => {
-      const va = getSortValue(a, sortKey);
-      const vb = getSortValue(b, sortKey);
-      if (typeof va === 'string' || typeof vb === 'string') {
-        return String(va).localeCompare(String(vb)) * (sortDir === 'asc' ? 1 : -1);
-      }
-      return (va - vb) * (sortDir === 'asc' ? 1 : -1);
-    });
-    return arr;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, sortKey, sortDir]);
-
   // Agrupa SKUs por REF > Cor > Tamanho
   const gruposHierarquicos = useMemo((): GrupoRef[] => {
     const skus = data?.top_skus || [];
@@ -262,7 +201,7 @@ export default function PcpNovoPage() {
     for (const sku of skus) {
       // Extrair tamanho do grade (ultimo elemento geralmente)
       const tamanho = sku.grade?.split(' ').pop() || 'UNICO';
-      const cor = sku.cor_de_para || 'SEM COR';
+      const cor = sku.cor;
 
       if (!refMap.has(sku.referencia)) {
         refMap.set(sku.referencia, {
@@ -449,7 +388,7 @@ export default function PcpNovoPage() {
         descricao: sku.descricao,
         sku: sku.sku,
         grade: sku.grade,
-        cor: sku.cor_de_para || '',
+        cor: sku.cor,
         quantidade: sku.quantidade,
         valor: sku.valor,
         dias_sem_giro: sku.dias_sem_giro >= 9999 ? '' : sku.dias_sem_giro,
@@ -537,6 +476,7 @@ export default function PcpNovoPage() {
         </div>
       </Card>
 
+      <LoadingOverlay active={isLoading}>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {(data?.resumo || DIAS_OPTIONS.map((option) => ({
           dias: option.value,
@@ -577,6 +517,7 @@ export default function PcpNovoPage() {
           );
         })}
       </div>
+      </LoadingOverlay>
 
       <div className="flex flex-wrap items-end gap-3">
         {classificacoes.map((dim) => (
@@ -603,10 +544,36 @@ export default function PcpNovoPage() {
           options={COBERTURA_OPTIONS}
           className="w-52"
         />
+        <div className="pb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Cores</label>
+          <div
+            className="inline-grid grid-cols-2 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm"
+            title="AGRUPADAS junta na mesma linha os SKUs cuja cor original foi unificada no Agrupamento de Cores"
+          >
+            {([{ value: false, label: 'ORIGINAIS' }, { value: true, label: 'AGRUPADAS' }] as const).map((opcao) => (
+              <button
+                key={String(opcao.value)}
+                type="button"
+                disabled={isLoading}
+                onClick={() => setAgruparPorCorSalva(opcao.value)}
+                className={cn(
+                  'min-w-24 px-3 py-2 text-xs font-bold',
+                  opcao.value === agruparPorCorSalva
+                    ? 'bg-[var(--bbtk-red)] text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                  isLoading && 'cursor-not-allowed opacity-60'
+                )}
+              >
+                {opcao.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
         {data && data.top_skus.length > 0 && (
           <button
             onClick={handleExportExcel}
+            disabled={isLoading}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -817,6 +784,7 @@ export default function PcpNovoPage() {
         </div>
       </Card>
 
+      <LoadingOverlay active={isLoading}>
       {data && data.resumo_lojas?.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-gray-600 mb-3">
@@ -842,6 +810,7 @@ export default function PcpNovoPage() {
           </div>
         </div>
       )}
+      </LoadingOverlay>
     </div>
   );
 }

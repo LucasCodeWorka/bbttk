@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
@@ -311,8 +311,14 @@ export default function PcpAnaliseGradePage() {
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
+  // Busca com debounce: o valor digitado (*Input) fica separado do valor APLICADO,
+  // que e o que dispara a consulta. Sem isso cada tecla enfileirava um relatorio
+  // pesado no pcp-api (que processa um por vez).
+  const [referenciaBuscaInput, setReferenciaBuscaInput] = useState('');
   const [referenciaBusca, setReferenciaBusca] = useState('');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
+  const [agruparPorCorSalva, setAgruparPorCorSalva] = useState(false);
+  const requisicaoAtual = useRef(0);
   const [heatmapLimit, setHeatmapLimit] = useState(15);
   const [sortKey, setSortKey] = useState<string | null>('percentGradeEmRisco');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -386,6 +392,7 @@ export default function PcpAnaliseGradePage() {
 
   const carregarDados = useCallback(async () => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
     setIsLoading(true);
     try {
       const filtro = {
@@ -395,17 +402,26 @@ export default function PcpAnaliseGradePage() {
         genero: produtoFiltro.genero,
         status: produtoFiltro.status,
         branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+        agruparPorCorSalva,
       };
       const gradeRes = await analiseGradeApi.getGrade(token, filtro);
+      if (requisicao !== requisicaoAtual.current) return;
       setData(gradeRes);
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
       showToast('Erro ao carregar Analise de Grade', 'error');
       console.error(error);
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, produtoFiltro, filiaisSelecionadas, referenciaBusca]);
+  }, [token, produtoFiltro, filiaisSelecionadas, referenciaBusca, agruparPorCorSalva]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setReferenciaBusca(referenciaBuscaInput), 500);
+    return () => clearTimeout(timer);
+  }, [referenciaBuscaInput]);
 
   useEffect(() => {
     carregarDados();
@@ -600,15 +616,41 @@ export default function PcpAnaliseGradePage() {
         />
         <Input
           label="Buscar referencia"
-          value={referenciaBusca}
-          onChange={(e) => setReferenciaBusca(e.target.value)}
+          value={referenciaBuscaInput}
+          onChange={(e) => setReferenciaBuscaInput(e.target.value)}
           className="w-48"
           placeholder="Codigo da referencia"
         />
+        <div className="pb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Cores</label>
+          <div
+            className="inline-grid grid-cols-2 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm"
+            title="AGRUPADAS soma na mesma celula da grade as cores originais que foram unificadas no Agrupamento de Cores"
+          >
+            {([{ value: false, label: 'ORIGINAIS' }, { value: true, label: 'AGRUPADAS' }] as const).map((opcao) => (
+              <button
+                key={String(opcao.value)}
+                type="button"
+                disabled={isLoading}
+                onClick={() => setAgruparPorCorSalva(opcao.value)}
+                className={cn(
+                  'min-w-24 px-3 py-2 text-xs font-bold',
+                  opcao.value === agruparPorCorSalva
+                    ? 'bg-[var(--bbtk-red)] text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                  isLoading && 'cursor-not-allowed opacity-60'
+                )}
+              >
+                {opcao.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
         {data && data.referencias.length > 0 && (
           <button
             onClick={handleExportExcel}
+            disabled={isLoading}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

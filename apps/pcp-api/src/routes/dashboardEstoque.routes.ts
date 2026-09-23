@@ -62,6 +62,7 @@ router.get('/dashboard-estoque', async (req: Request, res: Response) => {
       status: parseList(req.query.status),
       motorPromocional: parseList(req.query.motorPromocional),
       campanha: parseList(req.query.campanha),
+      agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
     };
 
     const resultado = await getDashboardEstoque(filtro, { refresh: req.query.refresh === '1' });

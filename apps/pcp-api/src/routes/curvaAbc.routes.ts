@@ -15,6 +15,7 @@ function parseFiltro(req: Request): CurvaAbcFiltro {
     genero: parseList(req.query.genero),
     status: parseList(req.query.status),
     familia: parseList(req.query.familia),
+    agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
   };
 }
 

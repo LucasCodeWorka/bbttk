@@ -8,6 +8,7 @@ import { KPICard } from '@/components/dashboard/KPICard';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
@@ -223,13 +224,20 @@ export default function DashboardEstoquePage() {
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
   const [data, setData] = useState<DashboardEstoqueResponse | null>(null);
   const [referenciasAbertas, setReferenciasAbertas] = useState<Set<string>>(new Set());
+  const [agruparPorCorSalva, setAgruparPorCorSalva] = useState(false);
+  const requisicaoAtual = useRef(0);
   const [sortKey, setSortKey] = useState<SortKey>('quantidade');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  const carregarDados = useCallback(async (refresh = false) => {
+  const carregarDados = useCallback(async (opcoes: {
+    refresh?: boolean;
+    agruparPorCorSalva?: boolean;
+    preservarExpansao?: boolean;
+  } = {}) => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
     setIsLoading(true);
     setErro(null);
     try {
@@ -250,16 +258,20 @@ export default function DashboardEstoquePage() {
         status: produtoFiltro.status,
         motorPromocional: produtoFiltro.motorPromocional,
         campanha: produtoFiltro.campanha,
-        refresh,
+        agruparPorCorSalva: opcoes.agruparPorCorSalva ?? agruparPorCorSalva,
+        refresh: opcoes.refresh ?? false,
       });
+      if (requisicao !== requisicaoAtual.current) return;
       setData(response);
-      setReferenciasAbertas(new Set());
+      if (!opcoes.preservarExpansao) setReferenciasAbertas(new Set());
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
       setErro(error instanceof Error ? error.message : 'Erro ao carregar analise de estoque');
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
-  }, [dataCorte, filiaisSelecionadas, produtoFiltro, produtosSelecionados, tiposEstoqueSelecionados, token]);
+  }, [agruparPorCorSalva, dataCorte, filiaisSelecionadas, produtoFiltro, produtosSelecionados, tiposEstoqueSelecionados, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -363,10 +375,24 @@ export default function DashboardEstoquePage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Data do estoque</label>
             <Input type="date" value={dataCorte} onChange={(e) => setDataCorte(e.target.value)} />
           </div>
+          <label className="flex items-center gap-2 cursor-pointer pb-2 text-sm text-gray-700" title="Na grade cor x tamanho, soma na mesma celula as cores originais que foram unificadas no Agrupamento de Cores">
+            <input
+              type="checkbox"
+              checked={agruparPorCorSalva}
+              disabled={isLoading}
+              onChange={(event) => {
+                const agrupar = event.target.checked;
+                setAgruparPorCorSalva(agrupar);
+                void carregarDados({ agruparPorCorSalva: agrupar, preservarExpansao: true });
+              }}
+              className="h-4 w-4 rounded border-gray-300 text-[var(--bbtk-purple)] focus:ring-[var(--bbtk-purple)]"
+            />
+            Agrupar por Agrupamento de Cores
+          </label>
           <Button variant="secondary" onClick={limparFiltros} disabled={filtrosAtivos === 0}>
             Limpar filtros
           </Button>
-          <Button onClick={() => carregarDados(true)} disabled={isLoading}>
+          <Button onClick={() => carregarDados({ refresh: true })} isLoading={isLoading}>
             Atualizar
           </Button>
         </div>
@@ -424,6 +450,7 @@ export default function DashboardEstoquePage() {
         <KPICard title="Filiais/locais" value={formatNumber(total?.filiais || 0)} color="yellow" isLoading={isLoading} />
       </div>
 
+      <LoadingOverlay active={isLoading}>
       <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-4">
         {GRAFICOS.map((grafico) => (
           <ChartCard
@@ -434,6 +461,7 @@ export default function DashboardEstoquePage() {
           />
         ))}
       </div>
+      </LoadingOverlay>
 
       <Card>
         <CardHeader>

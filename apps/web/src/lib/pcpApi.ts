@@ -50,6 +50,7 @@ export interface EstoqueSemGiroFiltro {
   linha?: string[];
   genero?: string[];
   limit?: number | 'all';
+  agruparPorCorSalva?: boolean;
 }
 
 export interface EstoqueSemGiroResumoItem {
@@ -77,7 +78,9 @@ export interface EstoqueSemGiroSku {
   descricao: string;
   colecao: string | null;
   grade: string | null;
+  cor: string;
   cor_de_para: string | null;
+  skus_agrupados: number;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;
@@ -130,6 +133,7 @@ export interface DashboardEstoqueFiltro {
   motorPromocional?: string[];
   campanha?: string[];
   refresh?: boolean;
+  agruparPorCorSalva?: boolean;
 }
 
 export interface DashboardEstoqueBucket {
@@ -222,6 +226,7 @@ export const pcpApi = {
     if (filtro.dias) params.set('dias', String(filtro.dias));
     if (filtro.cobertura) params.set('cobertura', filtro.cobertura);
     if (filtro.limit) params.set('limit', String(filtro.limit));
+    if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);
@@ -253,6 +258,7 @@ export const pcpApi = {
     appendList(params, 'status', filtro.status);
     appendList(params, 'motorPromocional', filtro.motorPromocional);
     appendList(params, 'campanha', filtro.campanha);
+    if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
     if (filtro.refresh) params.set('refresh', '1');
 
     return fetchPcpApi<DashboardEstoqueResponse>(`/api/pcp/dashboard-estoque?${params.toString()}`, { token });
@@ -279,6 +285,7 @@ export interface RelatorioBaseFiltro {
   dataPosicao?: string;
   page?: number;
   pageSize?: number;
+  agruparPorCorSalva?: boolean;
 }
 
 export interface RelatorioBaseColunaFilial {
@@ -287,31 +294,20 @@ export interface RelatorioBaseColunaFilial {
   cob: number | null;
 }
 
-export interface RelatorioBaseRow {
-  sku: string;
-  codigo: number | null;
-  referenceCode: string;
+// Drill-down da referencia: 1 linha por COR (o detalhamento por SKU foi removido do
+// payload por consumo de memoria). coresOriginais > 1 = varias cores do TOTVS unificadas
+// pelo Agrupamento de Cores nessa linha.
+export interface RelatorioBaseCorRow {
   cor: string;
-  tamanho: string;
-  refCorTam: string;
-  descricao: string;
-  descricaoCompleta: string;
-  categoria: string | null;
-  linha: string | null;
-  genero: string | null;
-  modelo: string | null;
-  status: string | null;
-  lancamento: string | null;
-  ultimaEntrada: string | null;
+  refCor: string;
+  coresOriginais: number;
+  totalSkus: number;
   custo: number | null;
-  pdvAtual: number | null;
   pdvRealVar: number | null;
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
-  estDisponivel: null;
   emProducao: number;
-  estPrevisto: null;
   estTt: number;
   giroTt1: number;
   giroTt3: number;
@@ -344,7 +340,7 @@ export interface RelatorioBaseReferenciaRow {
   giroTt3: number;
   giroTt6: number;
   branches: Record<number, RelatorioBaseColunaFilial>;
-  skus: RelatorioBaseRow[];
+  cores: RelatorioBaseCorRow[];
 }
 
 export interface RelatorioBaseResponse {
@@ -417,6 +413,7 @@ export const relatorioBaseApi = {
     if (filtro.dataPosicao) params.set('dataPosicao', filtro.dataPosicao);
     if (filtro.page) params.set('page', String(filtro.page));
     if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
+    if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);
@@ -536,6 +533,7 @@ export interface AnaliseGradeFiltro {
   status?: string[];
   cor?: string[];
   branches?: number[];
+  agruparPorCorSalva?: boolean;
 }
 
 // ---- Curva ABC (produto) ----
@@ -677,6 +675,7 @@ export interface CurvaAbcFiltro {
   genero?: string[];
   status?: string[];
   familia?: string[];
+  agruparPorCorSalva?: boolean;
 }
 
 export const visaoGeralApi = {
@@ -702,6 +701,7 @@ export const analiseGradeApi = {
     appendList(params, 'status', filtro.status);
     appendList(params, 'cor', filtro.cor);
     appendList(params, 'branches', filtro.branches);
+    if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
     const query = params.toString();
     return fetchPcpApi<AnaliseGradeResponse>(`/api/pcp/analise-grade${query ? `?${query}` : ''}`, { token });
   },
@@ -724,6 +724,7 @@ function appendCurvaAbcFiltro(params: URLSearchParams, filtro: CurvaAbcFiltro) {
   appendList(params, 'genero', filtro.genero);
   appendList(params, 'status', filtro.status);
   appendList(params, 'familia', filtro.familia);
+  if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
 }
 
 export const curvaAbcApi = {
@@ -854,19 +855,16 @@ export interface PerformanceColecaoFiltro {
   search?: string;
 }
 
-export interface PerformanceColecaoRow {
-  grupo: string | null;
-  referenceCode: string;
-  descricao: string;
-  categoria: string | null;
-  linha: string | null;
+export interface PerformanceColecaoMetricas {
   custo: number | null;
   pdvVarejo: number | null;
   markupVarejo: number | null;
   pdvAtacado: number | null;
   markupAtacado: number | null;
-  entrouDpa: string | null;
-  qtdeProduzida: number;
+  qtdesLiberadas: number;
+  qtdeEntregue: number;
+  saldoAEntregar: number;
+  percentEntregue: number | null;
   vendaMes1: number;
   vendaMes2: number;
   vendaMes3: number;
@@ -874,11 +872,30 @@ export interface PerformanceColecaoRow {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
-  giro: number | null;
+  giroPeriodo: number;
+  giroAteHoje: number | null;
   totalVendaValor: number;
   totalVendaCusto: number;
   totalEstoqueCusto: number;
   totalEstoqueVenda: number;
+}
+
+export interface PerformanceColecaoTamanho extends PerformanceColecaoMetricas {
+  tamanho: string;
+}
+
+export interface PerformanceColecaoCor extends PerformanceColecaoMetricas {
+  cor: string;
+  tamanhos: PerformanceColecaoTamanho[];
+}
+
+export interface PerformanceColecaoRow extends PerformanceColecaoMetricas {
+  colecao: string | null;
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  cores: PerformanceColecaoCor[];
 }
 
 export interface PerformanceColecaoResumoMes {
@@ -915,7 +932,10 @@ export interface PerformanceColecaoResponse {
   periodo: { dataInicio: string; dataFim: string; meses: string[] };
   kpis: {
     referencias: number;
-    qtdeProduzida: number;
+    qtdesLiberadas: number;
+    qtdeEntregue: number;
+    saldoAEntregar: number;
+    percentEntregue: number | null;
     qtdeVendida: number;
     estoqueFinal: number;
     totalVendaValor: number;
@@ -923,7 +943,8 @@ export interface PerformanceColecaoResponse {
     totalEstoqueCusto: number;
     totalEstoqueVenda: number;
     participacaoColecaoPercent: number;
-    giroMedioPercent: number | null;
+    giroPeriodo: number;
+    giroAteHoje: number | null;
   };
   resumoProducao: PerformanceColecaoResumoProducao;
   resumoMensal: PerformanceColecaoResumoMes[];
@@ -1584,4 +1605,33 @@ export const resumoPromocaoApi = {
     appendList(params, 'statusPromo', filtro.statusPromo);
     return fetchPcpApi<ResumoPromocaoResponse>(`/api/pcp/resumo-promocao?${params.toString()}`, { token });
   },
+};
+
+// ---- Cobertura do Agrupamento de Cores ----
+
+export interface AgrupamentoCoberturaStats {
+  totalGrupos: number;
+  totalCoresAgrupadas: number;
+  totalReferenciasAtingidas: number;
+}
+
+export interface AgrupamentoCoberturaLinha {
+  referenceCode: string;
+  descricao: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  colecao: string | null;
+  corOriginal: string;
+  corAgrupada: string;
+  qtdSkus: number;
+}
+
+export interface AgrupamentoCoberturaResponse {
+  stats: AgrupamentoCoberturaStats;
+  linhas: AgrupamentoCoberturaLinha[];
+}
+
+export const agrupamentoCoberturaApi = {
+  getCobertura: (token: string) => fetchPcpApi<AgrupamentoCoberturaResponse>('/api/pcp/agrupamento-cores/cobertura', { token }),
 };

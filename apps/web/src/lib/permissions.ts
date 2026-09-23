@@ -9,6 +9,7 @@ export const ROUTE_MODULES: { prefix: string; module: string }[] = [
   { prefix: '/pcp-relatorio-base', module: 'pcp_servico' },
   { prefix: '/pcp-analise-grade', module: 'pcp_servico' },
   { prefix: '/pcp-curva-abc', module: 'pcp_servico' },
+  { prefix: '/pcp-agrupamento-cobertura', module: 'pcp_servico' },
   { prefix: '/relatorios', module: 'pcp_servico' },
   { prefix: '/pcp/configuracoes', module: 'pcp_servico' },
   { prefix: '/pcp', module: 'pcp' },

@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
@@ -41,6 +42,15 @@ const RESUMO_GRUPO_LABEL: Record<VendaEstoqueResumoLinha['grupo'], string> = {
   SEM_VENDA: 'Itens sem venda',
   TOTAL: 'Total',
 };
+
+// A visao por SKU passa de 30 mil linhas; renderizar tudo travava o navegador. O
+// default mostra as 100 primeiras (ja ordenadas pelo criterio escolhido) e "Todos"
+// continua disponivel pra quem aceitar esperar.
+const LIMITE_OPTIONS = [
+  { value: '100', label: 'Top 100' },
+  { value: '500', label: 'Top 500' },
+  { value: 'todos', label: 'Todos' },
+];
 
 const SORT_OPTIONS = [
   { value: 'rankValor', label: 'Rank Valor' },
@@ -320,11 +330,18 @@ export default function PcpCurvaAbcPage() {
   const [data, setData] = useState<CurvaAbcResumoResponse | null>(null);
   const [dataSku, setDataSku] = useState<CurvaAbcResumoSkuResponse | null>(null);
   const [visao, setVisao] = useState<'referencia' | 'sku'>('referencia');
+  const [agruparPorCorSalva, setAgruparPorCorSalva] = useState(false);
+  const requisicaoAtual = useRef(0);
 
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
 
   const [curvaSelecionada, setCurvaSelecionada] = useState<CurvaLetra | 'todas'>('todas');
+  // Quantas linhas a tabela renderiza. A visao por SKU tem ~37 mil itens e renderizar
+  // todos de uma vez travava o navegador (13 celulas por linha, sem virtualizacao) -
+  // o travamento na troca de visao era isso, nao carregamento. Os totais continuam
+  // sendo calculados sobre o filtro inteiro (ver totaisFiltrados).
+  const [limiteLinhas, setLimiteLinhas] = useState<'100' | '500' | 'todos'>('100');
   const [busca, setBusca] = useState('');
   const [ordenarPor, setOrdenarPor] = useState<'rankQtd' | 'rankValor' | 'mediaPorSku' | 'qtdVendida' | 'representatividadeValor' | 'valorMedioMensal'>('rankValor');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -354,6 +371,7 @@ export default function PcpCurvaAbcPage() {
   // Carrega AMBAS as tabelas (REF e SKU) ao mesmo tempo para nao ter delay ao trocar visao
   const carregarDados = useCallback(async () => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
     setIsLoading(true);
     try {
       const filtro = {
@@ -362,21 +380,26 @@ export default function PcpCurvaAbcPage() {
         genero: produtoFiltro.genero,
         status: produtoFiltro.status,
       };
-      // Carrega ambas as visoes em paralelo
+      // Carrega ambas as visoes em paralelo. O agrupamento por cor so muda a visao por
+      // SKU (a por referencia ja soma todas as cores da referencia de qualquer forma).
       const [refData, skuData] = await Promise.all([
         curvaAbcApi.getResumo(token, filtro),
-        curvaAbcApi.getResumoPorSku(token, filtro),
+        curvaAbcApi.getResumoPorSku(token, { ...filtro, agruparPorCorSalva }),
       ]);
+      if (requisicao !== requisicaoAtual.current) return;
       setData(refData);
       setDataSku(skuData);
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
+      setDataSku(null);
       showToast('Erro ao carregar Curva ABC', 'error');
       console.error(error);
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, produtoFiltro]);
+  }, [token, produtoFiltro, agruparPorCorSalva]);
 
   useEffect(() => {
     carregarDados();
@@ -459,6 +482,43 @@ export default function PcpCurvaAbcPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [visao, data, dataSku, curvaSelecionada, busca, ordenarPor, sortDir]);
+
+  // A tabela mostra so as primeiras N linhas; a linha de TOTAL abaixo continua somando
+  // o filtro INTEIRO (nao a fatia exibida), senao o rodape mentiria sobre o resultado.
+  const itensExibidos = useMemo(
+    () => (limiteLinhas === 'todos' ? itensFiltrados : itensFiltrados.slice(0, Number(limiteLinhas))),
+    [itensFiltrados, limiteLinhas]
+  );
+
+  const totaisFiltrados = useMemo(() => {
+    return itensFiltrados.reduce(
+      (acc, r) => {
+        acc.qtdVendida += r.qtdVendida;
+        acc.mediaMensal += r.mediaMensal;
+        acc.valorReais += r.valorReais;
+        acc.valorMedioMensal += r.valorMedioMensal;
+        acc.representatividadeValor += r.representatividadeValor;
+        acc.estoqueVarejo += r.estoqueVarejo;
+        acc.estoqueAtacado += r.estoqueAtacado;
+        acc.estoqueTotal += r.estoqueTotal;
+        acc.valorEstoqueCusto += r.valorEstoqueCusto;
+        acc.totalSkus += r.totalSkus ?? 0;
+        return acc;
+      },
+      {
+        qtdVendida: 0,
+        mediaMensal: 0,
+        valorReais: 0,
+        valorMedioMensal: 0,
+        representatividadeValor: 0,
+        estoqueVarejo: 0,
+        estoqueAtacado: 0,
+        estoqueTotal: 0,
+        valorEstoqueCusto: 0,
+        totalSkus: 0,
+      }
+    );
+  }, [itensFiltrados]);
 
   // Função para exportar para Excel
   const handleExportExcel = useCallback(() => {
@@ -679,6 +739,13 @@ export default function PcpCurvaAbcPage() {
           options={visao === 'sku' ? SORT_OPTIONS.filter((o) => o.value !== 'mediaPorSku') : SORT_OPTIONS}
           className="w-48"
         />
+        <Select
+          label="Mostrar"
+          value={limiteLinhas}
+          onChange={(e) => setLimiteLinhas(e.target.value as typeof limiteLinhas)}
+          options={LIMITE_OPTIONS}
+          className="w-40"
+        />
         {classificacoes
           .filter((d) => d.chave === 'categoria' || d.chave === 'linha' || d.chave === 'genero' || d.chave === 'status')
           .map((dim) => (
@@ -691,10 +758,35 @@ export default function PcpCurvaAbcPage() {
               className="w-44"
             />
           ))}
+        {visao === 'sku' && (
+          <div
+            className="inline-grid grid-cols-2 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm"
+            title="AGRUPADAS soma numa linha so os SKUs cuja cor original foi unificada no Agrupamento de Cores (mesma referencia e tamanho)"
+          >
+            {([{ value: false, label: 'CORES ORIGINAIS' }, { value: true, label: 'AGRUPADAS' }] as const).map((opcao) => (
+              <button
+                key={String(opcao.value)}
+                type="button"
+                disabled={isLoading}
+                onClick={() => setAgruparPorCorSalva(opcao.value)}
+                className={cn(
+                  'min-w-28 px-3 py-2 text-xs font-bold',
+                  opcao.value === agruparPorCorSalva
+                    ? 'bg-[var(--bbtk-red)] text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                  isLoading && 'cursor-not-allowed opacity-60'
+                )}
+              >
+                {opcao.label}
+              </button>
+            ))}
+          </div>
+        )}
         <Button onClick={carregarDados} isLoading={isLoading}>Atualizar</Button>
         {itensFiltrados.length > 0 && (
           <button
             onClick={handleExportExcel}
+            disabled={isLoading}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -705,14 +797,20 @@ export default function PcpCurvaAbcPage() {
         )}
       </div>
 
+      <LoadingOverlay active={isLoading}>
       <Card>
         <CardHeader>
-          <CardTitle>{itensFiltrados.length} {visao === 'referencia' ? 'referencias' : 'SKUs'}</CardTitle>
+          <CardTitle>{formatNumber(itensFiltrados.length)} {visao === 'referencia' ? 'referencias' : 'SKUs'}</CardTitle>
+          {itensExibidos.length < itensFiltrados.length && (
+            <p className="text-xs text-gray-500">
+              Mostrando as {formatNumber(itensExibidos.length)} primeiras linhas de {formatNumber(itensFiltrados.length)} (o TOTAL abaixo considera todas). Use &quot;Mostrar&quot; para ampliar.
+            </p>
+          )}
         </CardHeader>
         <Table
           className={cn(
             'overflow-x-auto',
-            itensFiltrados.length > 10 && 'max-h-[560px] overflow-y-auto'
+            itensExibidos.length > 10 && 'max-h-[560px] overflow-y-auto'
           )}
           tableClassName="text-[10px] lg:text-xs"
         >
@@ -751,7 +849,10 @@ export default function PcpCurvaAbcPage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {isLoading ? (
+            {/* Só troca o corpo por "Carregando..." no primeiro load (tabela ainda
+                vazia). Num recarregamento o LoadingOverlay cobre a tabela mantendo as
+                linhas anteriores visíveis, em vez de piscar pra uma linha só. */}
+            {isLoading && itensFiltrados.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={visao === 'referencia' ? 21 : 13} align="center" className="py-8 text-gray-500">Carregando...</TableCell>
               </TableRow>
@@ -761,7 +862,7 @@ export default function PcpCurvaAbcPage() {
               </TableRow>
             ) : (
               <>
-                {itensFiltrados.map((r) => (
+                {itensExibidos.map((r) => (
                   <TableRow key={r.key} onClick={visao === 'referencia' ? () => abrirSkus(r.key, r.labelSecundaria) : undefined}>
                     <TableCell className="!px-2 !py-2">
                       <span className="font-medium text-gray-800">{r.labelPrincipal}</span>
@@ -804,24 +905,25 @@ export default function PcpCurvaAbcPage() {
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatMoney(itensFiltrados.reduce((sum, r) => sum + r.valorMedioMensal, 0))}</TableCell>
-                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatMoney(itensFiltrados.reduce((sum, r) => sum + r.valorReais, 0))}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatMoney(totaisFiltrados.valorMedioMensal)}</TableCell>
+                  <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatMoney(totaisFiltrados.valorReais)}</TableCell>
                   <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>
-                  {visao === 'referencia' && <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + (r.totalSkus || 0), 0))}</TableCell>}
+                  {visao === 'referencia' && <TableCell align="right" className="!px-1.5 !py-2 font-bold">{formatNumber(totaisFiltrados.totalSkus)}</TableCell>}
                   {visao === 'referencia' && <TableCell align="right" className="!px-1.5 !py-2 font-bold">-</TableCell>}
-                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.qtdVendida, 0))}</TableCell>
-                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.mediaMensal, 0))}</TableCell>
+                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(totaisFiltrados.qtdVendida)}</TableCell>
+                  <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">{formatNumber(totaisFiltrados.mediaMensal)}</TableCell>
                   <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">-</TableCell>
                   <TableCell align="right" className="bg-purple-50 !px-1.5 !py-2 font-bold">-</TableCell>
-                  <TableCell align="right" className="bg-blue-50 font-semibold !px-1.5 !py-2">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueTotal, 0))}</TableCell>
-                  <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueVarejo, 0))}</TableCell>
-                  <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(itensFiltrados.reduce((sum, r) => sum + r.estoqueAtacado, 0))}</TableCell>
+                  <TableCell align="right" className="bg-blue-50 font-semibold !px-1.5 !py-2">{formatNumber(totaisFiltrados.estoqueTotal)}</TableCell>
+                  <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(totaisFiltrados.estoqueVarejo)}</TableCell>
+                  <TableCell align="right" className="bg-blue-50 !px-1.5 !py-2 font-bold">{formatNumber(totaisFiltrados.estoqueAtacado)}</TableCell>
                 </TableRow>
               </>
             )}
           </TableBody>
         </Table>
       </Card>
+      </LoadingOverlay>
 
       <Modal isOpen={!!skusModal} onClose={() => { setSkusModal(null); setSkusData(null); }} title={skusModal ? `${skusModal.referencia} - ${skusModal.nome}` : ''} size="lg">
         {skusLoading ? (

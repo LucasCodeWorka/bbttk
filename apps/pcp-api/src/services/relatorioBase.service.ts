@@ -54,6 +54,9 @@ export interface RelatorioBaseFiltro {
   // caso especial - so significa "1 pagina com tudo".
   page?: number;
   pageSize?: number;
+  // Quando true, o drill-down por cor usa o nome do grupo do Agrupamento de Cores
+  // (cores originais unificadas viram uma linha so).
+  agruparPorCorSalva?: boolean;
 }
 
 export interface RelatorioBaseColunaFilial {
@@ -104,6 +107,32 @@ export interface RelatorioBaseRow {
   branches: Record<number, RelatorioBaseColunaFilial>;
 }
 
+// Drill-down da referencia: 1 linha por COR (nao por SKU). O detalhamento por SKU
+// (cor x tamanho) foi removido do payload por consumo de memoria - uma referencia com 15
+// cores e 8 tamanhos gerava 120 linhas. Por cor sao ~5 linhas, e com o Agrupamento de
+// Cores ligado cai mais ainda (varias cores originais viram um grupo so), que e
+// exatamente pra isso que o agrupamento existe. Tamanho nao aparece aqui de proposito -
+// quem precisa de grade por tamanho usa a Analise de Grade.
+export interface RelatorioBaseCorRow {
+  cor: string;
+  refCor: string;
+  // Quantas cores originais do TOTVS esta linha representa: 1 no modo normal; >1 quando
+  // o Agrupamento de Cores unificou varias cores nesse grupo.
+  coresOriginais: number;
+  totalSkus: number;
+  custo: number | null;
+  pdvRealVar: number | null;
+  markupVar: number | null;
+  pdvRealAta: number | null;
+  markupAta: number | null;
+  emProducao: number;
+  estTt: number;
+  giroTt1: number;
+  giroTt3: number;
+  giroTt6: number;
+  branches: Record<number, RelatorioBaseColunaFilial>;
+}
+
 // Linha principal da tabela - 1 por REFERENCIA (agregando todos os SKUs dela: cores e
 // tamanhos somados). Campos de identidade (categoria/linha/genero/modelo/status/
 // lancamento) vem do primeiro SKU encontrado - sao classificacao da referencia como um
@@ -136,7 +165,7 @@ export interface RelatorioBaseReferenciaRow {
   giroTt3: number;
   giroTt6: number;
   branches: Record<number, RelatorioBaseColunaFilial>;
-  skus: RelatorioBaseRow[];
+  cores: RelatorioBaseCorRow[];
 }
 
 // KPIs executivos calculados sobre o MESMO universo de SKUs/filtros da tabela
@@ -533,6 +562,7 @@ interface IdentidadeRow {
   reference_name: string | null;
   color_code: string | null;
   color_name: string | null;
+  cor_agrupada: string | null;
   size: string | null;
   descricao: string | null;
   descricao_completa: string | null;
@@ -578,7 +608,7 @@ function buildIdentidadeFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
   if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(filtro.status)})`);
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
-    condicoes.push(Prisma.sql`(a.product_sku ILIKE ${termo} OR a.reference_name ILIKE ${termo} OR a.product_name ILIKE ${termo})`);
+    condicoes.push(Prisma.sql`(a.reference_code ILIKE ${termo} OR a.product_sku ILIKE ${termo} OR a.reference_name ILIKE ${termo} OR a.product_name ILIKE ${termo})`);
   }
   if (condicoes.length === 0) return Prisma.empty;
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
@@ -622,6 +652,38 @@ export const PCP_ESTOQUE_LIQUIDO_SKU_FILTER = Prisma.sql`
   )
 `;
 
+// Agrupamento de Cores (tabelas agrupamento_grupos/agrupamento_membros, configurado na
+// tela /pcp/agrupamento-cores): junta variacoes de cor de uma referencia num grupo
+// logico, sem alterar dado do TOTVS. Um membro = um par (reference_code, cor) apontando
+// pra um grupo; a chave de casamento e color_code, com fallback pra color_name
+// (colorMatchKeyOf no apps/api). Espera alias "a" pra produto_analitico e devolve o
+// nome do grupo em ag.nome - use com COR_AGRUPADA_SELECT.
+// Padrao ja usado por estoque.service.ts (cor_de_para) e raioX.service.ts (cor_agrupada);
+// extraido aqui pra nao repetir o par de LEFT JOIN em cada relatorio novo.
+export const AGRUPAMENTO_COR_JOIN = Prisma.sql`
+  LEFT JOIN agrupamento_membros am
+    ON am.tipo = 'cor_produto'
+    AND am.reference_code = a.reference_code
+    AND am.color_match_key = COALESCE(NULLIF(TRIM(a.color_code), ''), NULLIF(TRIM(a.color_name), ''))
+  LEFT JOIN agrupamento_grupos ag
+    ON ag.id = am.grupo_id
+    AND ag.tipo = am.tipo
+`;
+
+// Nome do grupo de cor (NULL quando aquela cor nao foi agrupada ainda).
+export const COR_AGRUPADA_SELECT = Prisma.sql`NULLIF(TRIM(ag.nome), '')`;
+
+// Cor "de exibicao": o grupo quando existe, senao a cor original. Usar no GROUP BY
+// quando o relatorio estiver no modo "agrupar por Agrupamento de Cores".
+export const COR_EXIBICAO_SELECT = Prisma.sql`
+  COALESCE(
+    NULLIF(TRIM(ag.nome), ''),
+    NULLIF(TRIM(a.color_name), ''),
+    NULLIF(TRIM(a.color_code), ''),
+    'SEM COR'
+  )
+`;
+
 async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<IdentidadeRow[]> {
   const filtroSql = buildIdentidadeFiltro(filtro);
 
@@ -633,6 +695,7 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
       a.reference_name,
       a.color_code,
       a.color_name,
+      ${COR_AGRUPADA_SELECT} as cor_agrupada,
       a.size,
       COALESCE(NULLIF(TRIM(a.product_name), ''), NULLIF(TRIM(a.reference_name), ''), a.product_sku) as descricao,
       COALESCE(NULLIF(TRIM(a.description), ''), NULLIF(TRIM(a.product_name), ''), NULLIF(TRIM(a.reference_name), ''), a.product_sku) as descricao_completa,
@@ -644,6 +707,7 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
       NULLIF(TRIM(a.class_lancamento), '') as lancamento
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    ${AGRUPAMENTO_COR_JOIN}
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${filtroSql}
@@ -679,36 +743,27 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     : null;
   const productSkusFiltro = temFiltroClassificacao ? identidadeRows.map((r) => r.product_sku) : null;
 
-  const [
-    estoqueRows,
-    estoqueAnoAnteriorRows,
-    giroRows,
-    giroAtacadoRows,
-    vendaMesesRows,
-    vendaAtacadoMesesRows,
-    giroTt30Total,
-    giroTt60Total,
-    giroTt90Total,
-    giroTt1Rows,
-    giroTt3Rows,
-    giroTt6Rows,
-    custoPrecoRows,
-    ultimaEntradaRows,
-    custoUltimaCompraRows,
-    emProducaoRows,
-  ] = await Promise.all([
+  // Limita as consultas simultaneas: disparar as 16 de uma vez esgotava o pool
+  // enquanto as consultas mais longas ainda estavam rodando (Prisma P2024).
+  const [estoqueRows, estoqueAnoAnteriorRows, giroRows, giroAtacadoRows] = await Promise.all([
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao, -1),
     getGiroRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
     getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
+  ]);
+  const [vendaMesesRows, vendaAtacadoMesesRows, giroTt30Total, giroTt60Total] = await Promise.all([
     getVendaPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao),
     config.atacadoCoberturaBase === 'atacado_only' ? getVendaAtacadoPorMesesRows(config.coberturaMeses, productCodesFiltro, filtro.dataPosicao) : Promise.resolve([]),
     getGiroTotalDias(30, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTotalDias(60, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
+  ]);
+  const [giroTt90Total, giroTt1Rows, giroTt3Rows, giroTt6Rows] = await Promise.all([
     getGiroTotalDias(90, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
+  ]);
+  const [custoPrecoRows, ultimaEntradaRows, custoUltimaCompraRows, emProducaoRows] = await Promise.all([
     getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
     getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
@@ -878,6 +933,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     return state.value ?? null;
   }
 
+  // Acumulado de uma COR dentro da referencia (drill-down leve, no lugar do antigo por
+  // SKU). coresOriginais e um Set pra saber quantas cores do TOTVS viraram essa linha
+  // quando o Agrupamento de Cores esta ligado.
+  interface CorAcumulado {
+    coresOriginais: Set<string>;
+    totalSkus: number;
+    emProducao: number;
+    estTt: number;
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    consistency: Record<ConsistencyKey, ConsistencyState>;
+    branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+  }
+
   interface RefAgg {
     referenceName: string;
     categoria: string | null;
@@ -895,9 +965,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     totalSkus: number;
     consistency: Record<ConsistencyKey, ConsistencyState>;
     branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+    coresAgg: Map<string, CorAcumulado>;
   }
   const referenciaAgg = new Map<string, RefAgg>();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, estTt: 0, skuCount: 0 };
+  const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
 
   for (const identidade of identidadeRows) {
     const sku = identidade.product_sku;
@@ -1061,7 +1133,45 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       totalSkus: 0,
       consistency: emptyConsistency(),
       branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+      coresAgg: new Map<string, CorAcumulado>(),
     };
+
+    // Drill-down por COR (substitui o antigo por SKU, que foi removido por memoria): a
+    // cor e o nome do grupo do Agrupamento de Cores quando o toggle esta ligado e
+    // aquela cor foi agrupada, senao a cor original do TOTVS.
+    const corOriginal = identidade.color_name?.trim() || identidade.color_code?.trim() || 'SEM COR';
+    const corExibicao = agruparPorCorSalva ? (identidade.cor_agrupada?.trim() || corOriginal) : corOriginal;
+    const corAgg = agg.coresAgg.get(corExibicao) || {
+      coresOriginais: new Set<string>(),
+      totalSkus: 0,
+      emProducao: 0,
+      estTt: 0,
+      giroTt1: 0,
+      giroTt3: 0,
+      giroTt6: 0,
+      consistency: emptyConsistency(),
+      branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+    };
+    corAgg.coresOriginais.add(corOriginal);
+    corAgg.totalSkus += 1;
+    corAgg.emProducao += emProducaoRound;
+    corAgg.estTt += estTtRound;
+    corAgg.giroTt1 += giroTt1Round;
+    corAgg.giroTt3 += giroTt3Round;
+    corAgg.giroTt6 += giroTt6Round;
+    addConsistency(corAgg.consistency.custo, custo);
+    addConsistency(corAgg.consistency.pdvRealVar, pdvRealVar);
+    addConsistency(corAgg.consistency.markupVar, markupVar);
+    addConsistency(corAgg.consistency.pdvRealAta, pdvRealAta);
+    addConsistency(corAgg.consistency.markupAta, markupAta);
+    for (const coluna of colunasAtivas) {
+      const acumulado = corAgg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+      acumulado.est += branches[coluna.branchCode].est;
+      acumulado.giro += branches[coluna.branchCode].giro;
+      acumulado.mediaMensalSum += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
+      corAgg.branchesAgg.set(coluna.branchCode, acumulado);
+    }
+    agg.coresAgg.set(corExibicao, corAgg);
     agg.emProducao += emProducaoRound;
     agg.estTt += estTtRound;
     agg.giroTt1 += giroTt1Round;
@@ -1085,7 +1195,43 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     referenciaAgg.set(referenceCode, agg);
   }
 
+  // Materializa as linhas de cor de uma referencia. Chamado so pras referencias da
+  // pagina atual (ver mais abaixo) - o mapa de acumulados existe pra todas, mas virar
+  // objeto no payload so pra ~15 referencias mantem a resposta pequena.
+  function materializarCores(agg: RefAgg, referenceCode: string): RelatorioBaseCorRow[] {
+    return [...agg.coresAgg.entries()]
+      .map(([cor, corAgg]) => {
+        const branchesCor: Record<number, RelatorioBaseColunaFilial> = {};
+        for (const [branchCode, valores] of corAgg.branchesAgg) {
+          branchesCor[branchCode] = {
+            est: round(valores.est, 0),
+            giro: round(valores.giro, 0),
+            cob: coberturaDe(valores.est, valores.mediaMensalSum),
+          };
+        }
+        return {
+          cor,
+          refCor: `${referenceCode} - ${cor}`,
+          coresOriginais: corAgg.coresOriginais.size,
+          totalSkus: corAgg.totalSkus,
+          custo: getConsistency(corAgg.consistency.custo),
+          pdvRealVar: getConsistency(corAgg.consistency.pdvRealVar),
+          markupVar: getConsistency(corAgg.consistency.markupVar),
+          pdvRealAta: getConsistency(corAgg.consistency.pdvRealAta),
+          markupAta: getConsistency(corAgg.consistency.markupAta),
+          emProducao: round(corAgg.emProducao, 0),
+          estTt: round(corAgg.estTt, 0),
+          giroTt1: round(corAgg.giroTt1, 0),
+          giroTt3: round(corAgg.giroTt3, 0),
+          giroTt6: round(corAgg.giroTt6, 0),
+          branches: branchesCor,
+        };
+      })
+      .sort((a, b) => b.giroTt3 - a.giroTt3 || a.cor.localeCompare(b.cor, 'pt-BR'));
+  }
+
   const rows: RelatorioBaseReferenciaRow[] = [];
+  const aggPorReferencia = new Map<string, RefAgg>();
   for (const [referenceCode, agg] of referenciaAgg) {
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
     for (const [branchCode, valores] of agg.branchesAgg) {
@@ -1095,6 +1241,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
         cob: coberturaDe(valores.est, valores.mediaMensalSum),
       };
     }
+    aggPorReferencia.set(referenceCode, agg);
     rows.push({
       referenceCode,
       referenceName: agg.referenceName,
@@ -1120,7 +1267,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       giroTt3: round(agg.giroTt3, 0),
       giroTt6: round(agg.giroTt6, 0),
       branches,
-      skus: [],
+      cores: [],
     });
   }
 
@@ -1136,6 +1283,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+
+  // Drill-down por cor entra so nas referencias que vao de fato na resposta - foi por
+  // isso que o detalhamento por SKU foi removido (payload/heap). Por cor ja e ~1 ordem
+  // de grandeza menor, e limitar a pagina mantem o custo baixo mesmo em export grande.
+  for (const row of rowsPaginadas) {
+    const agg = aggPorReferencia.get(row.referenceCode);
+    if (agg) row.cores = materializarCores(agg, row.referenceCode);
+  }
 
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.

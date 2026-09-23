@@ -24,6 +24,7 @@ function parseFiltro(req: Request): AnaliseGradeFiltro {
     status: parseList(req.query.status),
     cor: parseList(req.query.cor),
     branches: parseBranchCodes(req.query.branches),
+    agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
   };
 }
 

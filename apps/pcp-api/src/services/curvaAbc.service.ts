@@ -12,6 +12,8 @@ import {
   getCustoUltimaCompraRows,
   getUltimaEntradaRows,
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
+  AGRUPAMENTO_COR_JOIN,
+  COR_AGRUPADA_SELECT,
 } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
@@ -51,6 +53,9 @@ export interface CurvaAbcFiltro {
   genero?: string[];
   status?: string[];
   familia?: string[];
+  // Quando true, a visao por SKU passa a somar numa linha so os SKUs cuja cor original
+  // foi unificada no Agrupamento de Cores (mesma referencia + mesmo tamanho).
+  agruparPorCorSalva?: boolean;
 }
 
 interface IdentidadeRow {
@@ -60,6 +65,7 @@ interface IdentidadeRow {
   reference_name: string | null;
   color_code: string | null;
   color_name: string | null;
+  cor_agrupada: string | null;
   size: string | null;
   categoria: string | null;
   linha: string | null;
@@ -85,6 +91,7 @@ async function getIdentidadeRows(filtro: CurvaAbcFiltro): Promise<IdentidadeRow[
   const filtroSql = buildFiltroSql(filtro);
   return prisma.$queryRaw<IdentidadeRow[]>`
     SELECT a.product_sku, a.product_code, a.reference_code, a.reference_name, a.color_code, a.color_name, a.size,
+      ${COR_AGRUPADA_SELECT} as cor_agrupada,
       NULLIF(TRIM(a.class_categoria), '') as categoria,
       NULLIF(TRIM(a.class_linha), '') as linha,
       NULLIF(TRIM(a.class_genero), '') as genero,
@@ -92,6 +99,7 @@ async function getIdentidadeRows(filtro: CurvaAbcFiltro): Promise<IdentidadeRow[
       NULLIF(TRIM(a.class_lancamento), '') as lancamento
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    ${AGRUPAMENTO_COR_JOIN}
     WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
       AND a.reference_code IS NOT NULL
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
@@ -585,18 +593,40 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
     giro30dVarejo: number; giro30dAtacado: number;
   }> = [];
 
+  const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
+  const brutosPorChave = new Map<string, (typeof brutos)[number]>();
+
   for (const row of identidadeRows) {
     const venda = row.product_code !== null ? vendaAtual.get(row.product_code) : undefined;
     const estoque = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
     const giro = row.product_code !== null ? venda30d.get(row.product_code) || { varejo: 0, atacado: 0 } : { varejo: 0, atacado: 0 };
     const referenceCode = row.reference_code || row.product_sku;
-    brutos.push({
-      sku: row.product_sku,
-      refCorTam: buildRefCorTam(row),
+    const cor = corExibicao(row, agruparPorCorSalva);
+    const tamanho = row.size?.trim() || 'SEM TAM';
+    // No modo agrupado a "unidade de analise" deixa de ser o SKU e passa a ser
+    // referencia+cor-do-grupo+tamanho: a chave composta virou o identificador, e a
+    // curva/rank/representatividade abaixo sao recalculados sobre essas linhas
+    // somadas (nao e so troca de rotulo - e outra unidade de analise mesmo).
+    const chave = agruparPorCorSalva ? `${referenceCode}|${cor}|${tamanho}` : row.product_sku;
+    const existente = brutosPorChave.get(chave);
+
+    if (existente) {
+      existente.qtdVendida += venda?.quantidade || 0;
+      existente.valorReais += venda?.valor || 0;
+      existente.estoqueVarejo += estoque.varejo;
+      existente.estoqueAtacado += estoque.atacado;
+      existente.giro30dVarejo += giro.varejo;
+      existente.giro30dAtacado += giro.atacado;
+      continue;
+    }
+
+    const novo = {
+      sku: chave,
+      refCorTam: buildRefCorTam(row, agruparPorCorSalva),
       referenceCode,
       referenceName: row.reference_name || referenceCode,
-      cor: row.color_name?.trim() || row.color_code?.trim() || 'SEM COR',
-      tamanho: row.size?.trim() || 'SEM TAM',
+      cor,
+      tamanho,
       linha: row.linha,
       qtdVendida: venda?.quantidade || 0,
       valorReais: venda?.valor || 0,
@@ -604,7 +634,9 @@ export async function getCurvaAbcResumoPorSku(filtro: CurvaAbcFiltro = {}) {
       estoqueAtacado: estoque.atacado,
       giro30dVarejo: giro.varejo,
       giro30dAtacado: giro.atacado,
-    });
+    };
+    brutosPorChave.set(chave, novo);
+    brutos.push(novo);
   }
 
   const totalAnalisadas = brutos.length;
@@ -710,10 +742,17 @@ export interface CurvaAbcSkuFiltro extends CurvaAbcFiltro {
   pageSize: number;
 }
 
-function buildRefCorTam(row: IdentidadeRow): string {
-  const cor = row.color_name?.trim() || row.color_code?.trim() || 'SEM COR';
+// Cor que o relatorio mostra: no modo agrupado usa o nome do grupo do Agrupamento de
+// Cores (quando aquela cor foi agrupada); senao sempre a cor original do TOTVS.
+function corExibicao(row: IdentidadeRow, agruparPorCorSalva: boolean): string {
+  const corOriginal = row.color_name?.trim() || row.color_code?.trim() || 'SEM COR';
+  if (!agruparPorCorSalva) return corOriginal;
+  return row.cor_agrupada?.trim() || corOriginal;
+}
+
+function buildRefCorTam(row: IdentidadeRow, agruparPorCorSalva = false): string {
   const tamanho = row.size?.trim() || 'SEM TAM';
-  return [row.reference_code || row.product_sku, cor, tamanho].join(' - ');
+  return [row.reference_code || row.product_sku, corExibicao(row, agruparPorCorSalva), tamanho].join(' - ');
 }
 
 interface EstoqueCanalPorSku {
@@ -760,21 +799,55 @@ export async function getCurvaAbcSkus(filtro: CurvaAbcSkuFiltro) {
     estoquePorSku.set(row.product_sku, atual);
   }
 
-  const linhas = identidadeRows
-    .map((row) => {
-      const venda = row.product_code !== null ? vendaAtual.get(row.product_code) : undefined;
-      const estoque = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
-      return {
-        sku: row.product_sku,
-        refCorTam: buildRefCorTam(row),
-        referenceCode: row.reference_code,
-        referenceName: row.reference_name,
-        qtdVendida: round(venda?.quantidade || 0, 0),
-        valorReais: round(venda?.valor || 0, 2),
-        estoqueVarejo: round(estoque.varejo, 0),
-        estoqueAtacado: round(estoque.atacado, 0),
-      };
-    })
+  const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
+  const linhasPorChave = new Map<string, {
+    sku: string;
+    refCorTam: string;
+    referenceCode: string | null;
+    referenceName: string | null;
+    qtdVendida: number;
+    valorReais: number;
+    estoqueVarejo: number;
+    estoqueAtacado: number;
+  }>();
+
+  for (const row of identidadeRows) {
+    const venda = row.product_code !== null ? vendaAtual.get(row.product_code) : undefined;
+    const estoque = estoquePorSku.get(row.product_sku) || { varejo: 0, atacado: 0 };
+    const referenceCode = row.reference_code || row.product_sku;
+    const chave = agruparPorCorSalva
+      ? `${referenceCode}|${corExibicao(row, true)}|${row.size?.trim() || 'SEM TAM'}`
+      : row.product_sku;
+
+    const existente = linhasPorChave.get(chave);
+    if (existente) {
+      existente.qtdVendida += venda?.quantidade || 0;
+      existente.valorReais += venda?.valor || 0;
+      existente.estoqueVarejo += estoque.varejo;
+      existente.estoqueAtacado += estoque.atacado;
+      continue;
+    }
+
+    linhasPorChave.set(chave, {
+      sku: chave,
+      refCorTam: buildRefCorTam(row, agruparPorCorSalva),
+      referenceCode: row.reference_code,
+      referenceName: row.reference_name,
+      qtdVendida: venda?.quantidade || 0,
+      valorReais: venda?.valor || 0,
+      estoqueVarejo: estoque.varejo,
+      estoqueAtacado: estoque.atacado,
+    });
+  }
+
+  const linhas = [...linhasPorChave.values()]
+    .map((linha) => ({
+      ...linha,
+      qtdVendida: round(linha.qtdVendida, 0),
+      valorReais: round(linha.valorReais, 2),
+      estoqueVarejo: round(linha.estoqueVarejo, 0),
+      estoqueAtacado: round(linha.estoqueAtacado, 0),
+    }))
     .sort((a, b) => b.qtdVendida - a.qtdVendida);
 
   const total = linhas.length;

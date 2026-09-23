@@ -17,6 +17,7 @@ export interface EstoqueSemGiroParams {
   cobertura?: CoberturaFiltro;
   produtoFiltro?: ProdutoFiltro;
   limit?: number | null;
+  agruparPorCorSalva?: boolean;
 }
 
 export interface EstoqueSemGiroResumoItem {
@@ -44,7 +45,9 @@ export interface EstoqueSemGiroSku {
   descricao: string;
   colecao: string | null;
   grade: string | null;
+  cor: string;
   cor_de_para: string | null;
+  skus_agrupados: number;
   dias_sem_giro: number;
   ultima_venda: string | null;
   lojas_total: number;
@@ -158,6 +161,18 @@ function buildGrade(cor?: string | null, tamanho?: string | null): string | null
   return partes.length > 0 ? partes.join(' - ') : null;
 }
 
+// Chave de agregacao de uma linha: por SKU (padrao) ou, se o usuario ligou o toggle "por
+// Agrupamento de Cores salvo", por referencia+cor_de_para+tamanho - assim SKUs cuja cor
+// original foi unificada num grupo (Agrupamento de Cores) somam quantidade/valor numa
+// linha so, em vez de aparecerem espalhados como hoje.
+function chaveAgregacao(row: AnaliticoRow, agruparPorCorSalva: boolean): string {
+  if (!agruparPorCorSalva) return row.product_sku;
+  const referencia = row.reference_code || row.product_sku;
+  const cor = row.cor_de_para || row.cor || 'SEM COR';
+  const tamanho = row.tamanho || 'SEM TAM';
+  return `${referencia}|${cor}|${tamanho}`;
+}
+
 async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]> {
   const branchFilter = buildBranchFilter(params.branchCodes);
   const produtoFilter = buildProdutoFilter(params.produtoFiltro);
@@ -234,76 +249,108 @@ function isInDiasRange(diasSemGiro: number, diasFiltro: number): boolean {
   return dias > 90;
 }
 
-function aggregateSkuRows(rows: AnaliticoRow[]): EstoqueSemGiroSku[] {
-  const skuMap = new Map<string, EstoqueSemGiroSku>();
+interface GrupoAcumulado {
+  sku: EstoqueSemGiroSku;
+  skusOriginais: Set<string>;
+  branchesComVenda: Set<number>;
+  branchesSemVenda: Set<number>;
+  lojasPorBranch: Map<number, { branch_code: number; branch_name: string; quantidade: number }>;
+  coberturaIniciada: boolean;
+}
+
+function aggregateSkuRows(rows: AnaliticoRow[], agruparPorCorSalva: boolean): EstoqueSemGiroSku[] {
+  const grupos = new Map<string, GrupoAcumulado>();
 
   for (const row of rows) {
-    const atual = skuMap.get(row.product_sku);
+    const chave = chaveAgregacao(row, agruparPorCorSalva);
     const quantidade = decimalToNumber(row.quantidade);
     const valor = decimalToNumber(row.valor);
     const cobertura = row.cobertura_meses === null ? null : decimalToNumber(row.cobertura_meses);
     const ultimaVenda = row.ultima_venda ? row.ultima_venda.toISOString().split('T')[0] : null;
     const semVendaNaLoja = !ultimaVenda || row.dias_sem_giro >= 9999;
     const diasRede = semVendaNaLoja ? 9999 : row.dias_sem_giro;
-    const grade = buildGrade(row.cor, row.tamanho);
+    const grade = agruparPorCorSalva ? buildGrade(row.cor_de_para || row.cor, row.tamanho) : buildGrade(row.cor, row.tamanho);
 
-    if (!atual) {
-      skuMap.set(row.product_sku, {
-        sku: row.product_sku,
-        referencia: row.reference_code || row.product_sku,
-        descricao: row.descricao || row.product_sku,
-        colecao: row.colecao,
-        grade,
-        cor_de_para: row.cor_de_para,
-        dias_sem_giro: diasRede,
-        ultima_venda: ultimaVenda,
-        lojas_total: 1,
-        lojas_sem_venda: semVendaNaLoja ? 1 : 0,
+    let grupo = grupos.get(chave);
+    if (!grupo) {
+      grupo = {
+        sku: {
+          sku: agruparPorCorSalva ? chave : row.product_sku,
+          referencia: row.reference_code || row.product_sku,
+          descricao: row.descricao || row.product_sku,
+          colecao: row.colecao,
+          grade,
+          cor: (agruparPorCorSalva ? row.cor_de_para || row.cor : row.cor) || 'SEM COR',
+          cor_de_para: row.cor_de_para,
+          skus_agrupados: 0,
+          dias_sem_giro: 9999,
+          ultima_venda: null,
+          lojas_total: 0,
+          lojas_sem_venda: 0,
+          quantidade: 0,
+          valor: 0,
+          cobertura_meses: null,
+          lojas: [],
+        },
+        skusOriginais: new Set(),
+        branchesComVenda: new Set(),
+        branchesSemVenda: new Set(),
+        lojasPorBranch: new Map(),
+        coberturaIniciada: false,
+      };
+      grupos.set(chave, grupo);
+    }
+
+    grupo.skusOriginais.add(row.product_sku);
+    if (!grupo.sku.grade && grade) grupo.sku.grade = grade;
+    if (!grupo.sku.cor_de_para && row.cor_de_para) grupo.sku.cor_de_para = row.cor_de_para;
+    grupo.sku.quantidade = round(grupo.sku.quantidade + quantidade, 0);
+    grupo.sku.valor = round(grupo.sku.valor + valor);
+    if (semVendaNaLoja) grupo.branchesSemVenda.add(row.branch_code);
+    else grupo.branchesComVenda.add(row.branch_code);
+    if (ultimaVenda && (!grupo.sku.ultima_venda || ultimaVenda > grupo.sku.ultima_venda)) {
+      grupo.sku.ultima_venda = ultimaVenda;
+    }
+    grupo.sku.dias_sem_giro = Math.min(grupo.sku.dias_sem_giro, diasRede);
+    grupo.sku.cobertura_meses = !grupo.coberturaIniciada
+      ? (cobertura === null ? null : round(cobertura, 1))
+      : (grupo.sku.cobertura_meses === null || cobertura === null
+          ? null
+          : round(Math.max(grupo.sku.cobertura_meses, cobertura), 1));
+    grupo.coberturaIniciada = true;
+
+    const lojaExistente = grupo.lojasPorBranch.get(row.branch_code);
+    if (lojaExistente) {
+      lojaExistente.quantidade = round(lojaExistente.quantidade + quantidade, 0);
+    } else {
+      grupo.lojasPorBranch.set(row.branch_code, {
+        branch_code: row.branch_code,
+        branch_name: rowBranchName(row.branch_code, row.branch_name),
         quantidade: round(quantidade, 0),
-        valor: round(valor),
-        cobertura_meses: cobertura === null ? null : round(cobertura, 1),
-        lojas: [
-          {
-            branch_code: row.branch_code,
-            branch_name: rowBranchName(row.branch_code, row.branch_name),
-            quantidade: round(quantidade, 0),
-          },
-        ],
       });
-      continue;
     }
-
-    if (!atual.grade && grade) atual.grade = grade;
-    if (!atual.cor_de_para && row.cor_de_para) atual.cor_de_para = row.cor_de_para;
-    atual.quantidade = round(atual.quantidade + quantidade, 0);
-    atual.valor = round(atual.valor + valor);
-    atual.lojas_total += 1;
-    if (semVendaNaLoja) atual.lojas_sem_venda += 1;
-    if (ultimaVenda && (!atual.ultima_venda || ultimaVenda > atual.ultima_venda)) {
-      atual.ultima_venda = ultimaVenda;
-    }
-    atual.dias_sem_giro = Math.min(atual.dias_sem_giro, diasRede);
-    atual.cobertura_meses =
-      atual.cobertura_meses === null || cobertura === null
-        ? null
-        : round(Math.max(atual.cobertura_meses, cobertura), 1);
-    atual.lojas.push({
-      branch_code: row.branch_code,
-      branch_name: rowBranchName(row.branch_code, row.branch_name),
-      quantidade: round(quantidade, 0),
-    });
   }
 
-  return [...skuMap.values()].map((sku) => ({
-    ...sku,
-    lojas: sku.lojas.sort((a, b) => a.branch_code - b.branch_code),
-  }));
+  return [...grupos.values()].map((grupo) => {
+    // Uma loja pode ter linha "sem venda" e linha "com venda" vindas de SKUs
+    // diferentes dentro do mesmo grupo agrupado - conta como "com venda" se qualquer
+    // uma tiver, e so entra em "sem venda" se NENHUM SKU do grupo vendeu la.
+    const branchesSemVendaDeVerdade = [...grupo.branchesSemVenda].filter((b) => !grupo.branchesComVenda.has(b));
+    return {
+      ...grupo.sku,
+      skus_agrupados: grupo.skusOriginais.size,
+      lojas_total: new Set([...grupo.branchesComVenda, ...grupo.branchesSemVenda]).size,
+      lojas_sem_venda: branchesSemVendaDeVerdade.length,
+      lojas: [...grupo.lojasPorBranch.values()].sort((a, b) => a.branch_code - b.branch_code),
+    };
+  });
 }
 
 export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<EstoqueSemGiroResponse> {
   const diasSelecionado = params.dias > 90 ? 91 : params.dias;
+  const agruparPorCorSalva = params.agruparPorCorSalva ?? false;
   const allRows = await getBaseRows(params);
-  const allSkus = aggregateSkuRows(allRows);
+  const allSkus = aggregateSkuRows(allRows, agruparPorCorSalva);
   const thresholds = [30, 60, 90, 91];
 
   const resumoRows = thresholds.map((dias) => {
@@ -332,8 +379,8 @@ export async function getEstoqueSemGiro(params: EstoqueSemGiroParams): Promise<E
   }));
 
   const selectedSkus = allSkus.filter((sku) => isInDiasRange(sku.dias_sem_giro, diasSelecionado));
-  const selectedSkuSet = new Set(selectedSkus.map((sku) => sku.sku));
-  const rows = allRows.filter((row) => selectedSkuSet.has(row.product_sku));
+  const selectedChaveSet = new Set(selectedSkus.map((sku) => sku.sku));
+  const rows = allRows.filter((row) => selectedChaveSet.has(chaveAgregacao(row, agruparPorCorSalva)));
 
   const totalQuantidade = selectedSkus.reduce((sum, sku) => sum + sku.quantidade, 0);
   const totalValor = selectedSkus.reduce((sum, sku) => sum + sku.valor, 0);
