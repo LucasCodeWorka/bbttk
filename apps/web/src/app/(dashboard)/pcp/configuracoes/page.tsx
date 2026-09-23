@@ -28,6 +28,10 @@ const ATACADO_COBERTURA_OPTIONS = [
 ];
 
 const FILIAIS_REAIS = RELATORIO_BASE_BRANCH_ORDER.filter((b) => b.branchCode > 0);
+const LOJAS_REFERENCIA_CUSTO_PRECO = [
+  { branchCode: 2, label: 'FABRICA' },
+  ...FILIAIS_REAIS,
+];
 
 type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'redistribuicao' | 'sugestao-producao';
 
@@ -676,7 +680,7 @@ export default function ConfiguracoesPcpPage() {
               />
               <Select
                 label="Loja de referencia"
-                options={FILIAIS_REAIS.map((b) => ({ value: b.branchCode, label: b.label }))}
+                options={LOJAS_REFERENCIA_CUSTO_PRECO.map((b) => ({ value: b.branchCode, label: b.label }))}
                 value={precoCustoBranchCode}
                 onChange={(e) => setPrecoCustoBranchCode(e.target.value)}
                 className="w-48"
