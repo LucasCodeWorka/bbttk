@@ -820,14 +820,18 @@ function normalizarClassificacao(valor: string | null): string {
     .toUpperCase();
 }
 
+const LINHA_BUCKET_BASICO = 'B\u00e1sico';
+const LINHA_BUCKET_BASICO_RENOVAVEL = 'B\u00e1sico Renov\u00e1vel';
+const LINHA_BUCKET_COLECAO = 'Cole\u00e7\u00e3o';
+
 // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
 // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
 // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
 export function linhaBucket(linha: string | null): string | null {
   const l = normalizarClassificacao(linha);
-  if (l === 'BASICA' || l === 'BASICO') return 'Básico';
-  if (l === 'BASICA RENOVAVEL' || l === 'BASICO RENOVAVEL') return 'Básico Renovável';
-  if (l === 'STYLE' || l === 'COLECAO') return 'Coleção';
+  if (l === 'BASICA' || l === 'BASICO') return LINHA_BUCKET_BASICO;
+  if (l === 'BASICA RENOVAVEL' || l === 'BASICO RENOVAVEL') return LINHA_BUCKET_BASICO_RENOVAVEL;
+  if (l === 'STYLE' || l === 'COLECAO') return LINHA_BUCKET_COLECAO;
   return null;
 }
 
@@ -1081,6 +1085,7 @@ async function getRelatorioBaseAnalitico(
     estTt: number;
     estoqueAnoAnterior: number;
     valorEstoque: number;
+    valorEstoqueAnoAnterior: number;
     giro30: number;
     giro60: number;
     giro90: number;
@@ -1101,6 +1106,7 @@ async function getRelatorioBaseAnalitico(
     const valorEstoque = row.valor_estoque_custo_producao !== null
       ? decimalToNumber(row.valor_estoque_custo_producao)
       : estoque * (custo ?? 0);
+    const valorEstoqueAnoAnterior = decimalToNumber(row.estoque_ano_anterior) * (custo ?? 0);
     const ultimaEntrada = dateToIsoDate(row.ultima_entrada);
 
     const agg = skus.get(sku) || {
@@ -1123,6 +1129,7 @@ async function getRelatorioBaseAnalitico(
       estTt: 0,
       estoqueAnoAnterior: 0,
       valorEstoque: 0,
+      valorEstoqueAnoAnterior: 0,
       giro30: 0,
       giro60: 0,
       giro90: 0,
@@ -1135,6 +1142,7 @@ async function getRelatorioBaseAnalitico(
     agg.estTt += estoque;
     agg.estoqueAnoAnterior += decimalToNumber(row.estoque_ano_anterior);
     agg.valorEstoque += valorEstoque;
+    agg.valorEstoqueAnoAnterior += valorEstoqueAnoAnterior;
     agg.giro30 += decimalToNumber(row.giro_30d);
     agg.giro60 += decimalToNumber(row.giro_60d);
     agg.giro90 += decimalToNumber(row.giro_90d);
@@ -1142,6 +1150,9 @@ async function getRelatorioBaseAnalitico(
     agg.giroTt3 += decimalToNumber(row.giro_3m);
     agg.giroTt6 += decimalToNumber(row.giro_6m);
     if (ultimaEntrada && (!agg.ultimaEntrada || ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = ultimaEntrada;
+    if (agg.custo === null && custo !== null) agg.custo = custo;
+    if (agg.pdvVar === null && row.pdv_varejo !== null) agg.pdvVar = decimalToNumber(row.pdv_varejo);
+    if (agg.pdvAta === null && row.pdv_atacado !== null) agg.pdvAta = decimalToNumber(row.pdv_atacado);
 
     const branch = agg.branchesAgg.get(row.branch_code) || { est: 0, giro: 0, vendaCobertura: 0 };
     branch.est += estoque;
@@ -1201,7 +1212,7 @@ async function getRelatorioBaseAnalitico(
     const custo = sku.custo;
 
     valorEstoqueTotal += sku.valorEstoque;
-    valorEstoqueAnoAnterior += sku.estoqueAnoAnterior * (custo ?? 0);
+    valorEstoqueAnoAnterior += sku.valorEstoqueAnoAnterior;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
@@ -1373,7 +1384,8 @@ async function getRelatorioBaseAnalitico(
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
-    return linhas.find((l) => l.label === label)?.coberturaGeral ?? null;
+    const labelNormalizado = normalizarClassificacao(label);
+    return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
   }
 
   const statusBreakdown = [...statusAgg.entries()]
@@ -1420,9 +1432,9 @@ async function getRelatorioBaseAnalitico(
       estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
       estoquePromocaoValor: round(estoquePromocaoValor, 2),
       estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
-      coberturaBasico: coberturaPorLabel(matrizLinha, 'BÃ¡sico'),
-      coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'BÃ¡sico RenovÃ¡vel'),
-      coberturaColecao: coberturaPorLabel(matrizLinha, 'ColeÃ§Ã£o'),
+      coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
+      coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
+      coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
       referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
       statusBreakdown,
     },
@@ -1977,7 +1989,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizGenero = buildMatriz(matrizGeneroAgg);
 
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
-    return linhas.find((l) => l.label === label)?.coberturaGeral ?? null;
+    const labelNormalizado = normalizarClassificacao(label);
+    return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
   }
 
   const statusBreakdown = [...statusAgg.entries()]
@@ -2009,9 +2022,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
     estoquePromocaoValor: round(estoquePromocaoValor, 2),
     estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
-    coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
-    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
-    coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
+    coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
+    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
+    coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
     referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
     statusBreakdown,
   };
