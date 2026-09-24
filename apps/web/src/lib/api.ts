@@ -236,8 +236,8 @@ export const agrupamentosApi = {
     uploadFile<{ cores: CorProduto[]; total_linhas: number }>('/api/agrupamentos/cores/csv', token, file),
 };
 
-// Configurador PCP (dias de giro, meses de cobertura, cobertura ideal por loja, e qual
-// codigo de custo/preco do TOTVS usar como padrao nas analises PCP)
+// Configurador PCP (dias de giro, meses de cobertura, cobertura ideal por loja e
+// codigos de preco do TOTVS; custo PCP fica fixo em producao/codigo 1).
 export interface PcpRelatorioConfig {
   relatorio: string;
   giroDias: number;

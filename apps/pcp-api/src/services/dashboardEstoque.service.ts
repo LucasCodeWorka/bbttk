@@ -2,7 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE, FABRICA_BRANCH_CODE, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 const STOCK_CODE_LABELS: Record<number, string> = {
@@ -238,7 +238,7 @@ function buildStockCodeFiltro(stockCodes?: number[]): Prisma.Sql {
   return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
 }
 
-function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number): Prisma.Sql {
+function baseCte(filtro: DashboardEstoqueFiltro): Prisma.Sql {
   const produtoFiltro = buildProdutoFiltro(filtro);
   const localFiltro = buildEstoqueLocalFiltro(filtro.branches);
   const stockCodeFiltro = buildStockCodeFiltro(filtro.stockCodes);
@@ -285,8 +285,8 @@ function baseCte(filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBr
     precos AS (
       SELECT product_code, valor AS custo
       FROM produto_custos
-      WHERE branch_code = ${precoCustoBranchCode}
-        AND cost_code = ${custoCode}
+      WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE}
+        AND cost_code = ${CUSTO_PRODUCAO_CODE}
     ),
     saldo AS (
       SELECT
@@ -363,10 +363,10 @@ async function getConfig(db: PrismaClient = prisma) {
   });
 }
 
-async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
+async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
   const column = Prisma.raw(dimensao);
   return db.$queryRaw<BucketRow[]>`
-    ${baseCte(filtro, custoCode, precoCustoBranchCode)}
+    ${baseCte(filtro)}
     SELECT
       ${column} AS label,
       SUM(quantidade) AS quantidade,
@@ -379,9 +379,9 @@ async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, cust
   `;
 }
 
-async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro, custoCode: number, precoCustoBranchCode: number) {
+async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro) {
   return db.$queryRaw<BucketRow[]>`
-    ${baseCte(filtro, custoCode, precoCustoBranchCode)}
+    ${baseCte(filtro)}
     SELECT
       branch_code::text AS label,
       SUM(quantidade) AS quantidade,
@@ -463,7 +463,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     gradeSaldosRows,
   ] = await Promise.all([
     db.$queryRaw<TotalRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
@@ -474,12 +474,12 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       FROM saldo
       WHERE quantidade <> 0
     `,
-    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'colecao'),
-    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'linha'),
-    getBuckets(db, filtro, config.custoCode, config.precoCustoBranchCode, 'categoria'),
-    getBucketFilial(db, filtro, config.custoCode, config.precoCustoBranchCode),
+    getBuckets(db, filtro, 'colecao'),
+    getBuckets(db, filtro, 'linha'),
+    getBuckets(db, filtro, 'categoria'),
+    getBucketFilial(db, filtro),
     db.$queryRaw<SaldoTipoRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         stock_code,
         MIN(stock_description) AS stock_description,
@@ -490,7 +490,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY stock_code
     `,
     db.$queryRaw<ReferenciaRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         referencia,
         MIN(descricao) AS descricao,
@@ -509,7 +509,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY SUM(quantidade) DESC, SUM(quantidade * COALESCE(custo, 0)) DESC
     `,
     db.$queryRaw<ReferenciaSaldoTipoRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         referencia,
         stock_code,
@@ -521,7 +521,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY referencia, stock_code
     `,
     db.$queryRaw<GradeRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         referencia,
         COALESCE(cor, 'SEM COR') AS cor,
@@ -536,7 +536,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
     `,
     db.$queryRaw<GradeSaldoTipoRow[]>`
-      ${baseCte(filtro, config.custoCode, config.precoCustoBranchCode)}
+      ${baseCte(filtro)}
       SELECT
         referencia,
         COALESCE(cor, 'SEM COR') AS cor,
@@ -618,7 +618,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     atualizadoEm: total?.atualizado_em ? total.atualizado_em.toISOString() : null,
     config: {
       precoCustoBranchCode: config.precoCustoBranchCode,
-      custoCode: config.custoCode,
+      custoCode: CUSTO_PRODUCAO_CODE,
     },
     total: {
       quantidade: round(totalQuantidade, 0),

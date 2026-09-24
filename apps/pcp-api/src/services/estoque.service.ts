@@ -142,16 +142,8 @@ function buildCoberturaFilter(cobertura?: CoberturaFiltro): Prisma.Sql {
   return Prisma.sql`AND (a.cobertura_meses >= 24 OR a.cobertura_meses IS NULL)`;
 }
 
-function buildValorEstoqueSql(custoCode: number): Prisma.Sql {
-  if (custoCode === 1) {
-    return Prisma.sql`COALESCE(a.valor_estoque_custo_producao, a.valor_estoque, 0)`;
-  }
-
-  if (custoCode === 2) {
-    return Prisma.sql`COALESCE(a.valor_estoque_custo_ultima_compra, a.valor_estoque, 0)`;
-  }
-
-  return Prisma.sql`COALESCE(a.valor_estoque, 0)`;
+function buildValorEstoqueSql(): Prisma.Sql {
+  return Prisma.sql`COALESCE(a.valor_estoque_custo_producao, a.valor_estoque, 0)`;
 }
 
 function labelDias(dias: number): string {
@@ -176,18 +168,12 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
   const coberturaFilter = buildCoberturaFilter(params.cobertura);
 
   // Busca o período de maturação configurado
-  const [config, custoConfig] = await Promise.all([
-    prisma.pcpRelatorioConfig.findFirst({
-      where: { relatorio: 'estoque_sem_giro' },
-      select: { maturacaoDias: true },
-    }),
-    prisma.pcpRelatorioConfig.findFirst({
-      where: { relatorio: 'relatorio_base' },
-      select: { custoCode: true },
-    }),
-  ]);
+  const config = await prisma.pcpRelatorioConfig.findFirst({
+    where: { relatorio: 'estoque_sem_giro' },
+    select: { maturacaoDias: true },
+  });
   const maturacaoDias = config?.maturacaoDias ?? 30;
-  const valorEstoqueSql = buildValorEstoqueSql(custoConfig?.custoCode ?? 2);
+  const valorEstoqueSql = buildValorEstoqueSql();
 
   return prisma.$queryRaw<AnaliticoRow[]>`
     WITH primeira_entrada AS (

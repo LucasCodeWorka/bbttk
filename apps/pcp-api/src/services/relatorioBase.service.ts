@@ -652,7 +652,7 @@ interface CustoPrecoRow {
 // Custo/PDV real (var/ata) por product_code, na "loja de referencia" configurada -
 // custo/preco no TOTVS sao por filial, mas o Relatorio Base mostra 1 valor so por SKU
 // (decisao do Configurador do PCP: apps/web/.../pcp/relatorio-base-config/page.tsx).
-async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number, pdvVarejoCode: number, pdvAtacadoCode: number, productCodes: number[] | null): Promise<CustoPrecoRow[]> {
+async function getCustoPrecoRows(precoCustoBranchCode: number, pdvVarejoCode: number, pdvAtacadoCode: number, productCodes: number[] | null): Promise<CustoPrecoRow[]> {
   return prisma.$queryRaw<CustoPrecoRow[]>`
     SELECT
       base.product_code,
@@ -660,11 +660,11 @@ async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number
       pv.valor AS pdv_var,
       pa.valor AS pdv_ata
     FROM (
-      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
+      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} ${filtroProductCode(productCodes)}
       UNION
       SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
     ) base
-    LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${precoCustoBranchCode} AND c.cost_code = ${custoCode}
+    LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
     LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${precoCustoBranchCode} AND pv.price_code = ${pdvVarejoCode}
     LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${precoCustoBranchCode} AND pa.price_code = ${pdvAtacadoCode}
   `;
@@ -684,6 +684,8 @@ export function markupPercentual(preco: number | null, custo: number | null): nu
 // real (transacao de verdade, com desconto ja aplicado) em vez do PDV Real/Atual -
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 export const CUSTO_ULTIMA_COMPRA_CODE = 2;
+export const CUSTO_PRODUCAO_CODE = 1;
+export const CUSTO_PRODUCAO_BRANCH_CODE = 1;
 
 export async function getCustoRows(precoCustoBranchCode: number, custoCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
@@ -703,12 +705,10 @@ export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, pro
 // cost_code=1 ("PRODUCAO" no TOTVS) tem cobertura quase total (99,8% dos produtos,
 // branch_code=1) e e semanticamente o que um relatorio de PCP quer (custo de produzir
 // a peca, nao preco da ultima compra de matéria-prima/mercadoria).
-export const CUSTO_PRODUCAO_CODE = 1;
-
-export async function getCustoProducaoRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoProducaoRows(productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
-    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_PRODUCAO_CODE}
+    WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND cost_code = ${CUSTO_PRODUCAO_CODE}
       ${filtroProductCode(productCodes)}
   `;
 }
@@ -930,9 +930,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
-    getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
+    getCustoPrecoRows(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
-    getCustoRows(config.precoCustoBranchCode, config.custoCode, productCodesFiltro),
+    getCustoProducaoRows(productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
 

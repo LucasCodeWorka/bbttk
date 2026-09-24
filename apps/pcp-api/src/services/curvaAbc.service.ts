@@ -8,8 +8,7 @@ import {
   FABRICA_BRANCH_CODE,
   linhaBucket,
   formatarLancamento,
-  getConfig as getRelatorioBaseConfig,
-  getCustoRows,
+  getCustoProducaoRows,
   getUltimaEntradaRows,
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
 } from './relatorioBase.service.js';
@@ -257,15 +256,13 @@ export async function getCurvaAbcResumo(filtro: CurvaAbcFiltro = {}) {
   // "meses fechados" (ver Input na tela de Configuracoes do PCP).
   const mesesJanela = Math.max(1, Math.round(config.giroDias / 30));
 
-  const relatorioBaseConfig = await getRelatorioBaseConfig();
-
   const [identidadeRows, vendaAtual, vendaAnterior, estoqueRows, venda30d, custoRows, ultimaEntradaRows] = await Promise.all([
     getIdentidadeRows(filtro),
     getVendaPorProductCodeMesesFechados(mesesJanela, 0),
     getVendaPorProductCodeMesesFechados(mesesJanela * 2, mesesJanela),
     getEstoqueCanalPorSku(),
     getVenda30DiasPorCanal(),
-    getCustoRows(relatorioBaseConfig.precoCustoBranchCode, relatorioBaseConfig.custoCode, null),
+    getCustoProducaoRows(null),
     getUltimaEntradaRows(null),
   ]);
 

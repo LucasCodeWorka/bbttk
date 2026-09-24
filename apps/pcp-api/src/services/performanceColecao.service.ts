@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE, FABRICA_BRANCH_CODE, IS_DEVOLUCAO, OPERACAO_JOIN, QUANTIDADE_COM_SINAL, SALE_OPERATION_FILTER, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 
 const RELATORIO_KEY = 'relatorio_base';
 
@@ -312,11 +312,11 @@ async function getResumoMensal(
         pv.valor AS pdv_varejo,
         pa.valor AS pdv_atacado
       FROM (
-        SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode}
+        SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE}
         UNION
         SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${config.precoCustoBranchCode}
       ) base
-      LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${config.custoCode}
+      LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
       LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${config.precoCustoBranchCode} AND pv.price_code = ${config.pdvVarejoCode}
       LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${config.precoCustoBranchCode} AND pa.price_code = ${config.pdvAtacadoCode}
     ),
@@ -501,11 +501,11 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           pv.valor AS pdv_varejo,
           pa.valor AS pdv_atacado
         FROM (
-          SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${config.precoCustoBranchCode}
+          SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE}
           UNION
           SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${config.precoCustoBranchCode}
         ) base
-        LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${config.precoCustoBranchCode} AND c.cost_code = ${config.custoCode}
+        LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
         LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${config.precoCustoBranchCode} AND pv.price_code = ${config.pdvVarejoCode}
         LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${config.precoCustoBranchCode} AND pa.price_code = ${config.pdvAtacadoCode}
       ),
@@ -630,7 +630,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
   return {
     config: {
       precoCustoBranchCode: config.precoCustoBranchCode,
-      custoCode: config.custoCode,
+      custoCode: CUSTO_PRODUCAO_CODE,
       pdvVarejoCode: config.pdvVarejoCode,
       pdvAtacadoCode: config.pdvAtacadoCode,
     },
