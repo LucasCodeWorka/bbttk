@@ -811,14 +811,23 @@ export function formatarLancamento(valor: string | null): string | null {
   return `${match[1]}/${match[2]}`;
 }
 
+function normalizarClassificacao(valor: string | null): string {
+  return (valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
 // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
 // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
 // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
 export function linhaBucket(linha: string | null): string | null {
-  const l = linha?.trim().toUpperCase();
-  if (l === 'BASICA') return 'Básico';
-  if (l === 'BASICA RENOVAVEL') return 'Básico Renovável';
-  if (l === 'STYLE') return 'Coleção';
+  const l = normalizarClassificacao(linha);
+  if (l === 'BASICA' || l === 'BASICO') return 'Básico';
+  if (l === 'BASICA RENOVAVEL' || l === 'BASICO RENOVAVEL') return 'Básico Renovável';
+  if (l === 'STYLE' || l === 'COLECAO') return 'Coleção';
   return null;
 }
 
