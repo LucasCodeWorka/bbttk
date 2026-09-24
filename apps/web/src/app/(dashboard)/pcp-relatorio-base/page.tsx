@@ -126,6 +126,56 @@ function ThSortPcp({
 }
 
 const PAGE_SIZE = 15;
+const VISAO_GERAL_CACHE_TTL_MS = 5 * 60 * 1000;
+const VISAO_GERAL_STATE_KEY = 'pcp-visao-geral-state-v1';
+
+interface VisaoGeralPageState {
+  timestamp: number;
+  produtoFiltro?: Record<string, string[] | undefined>;
+  filiaisSelecionadas?: number[];
+  search?: string;
+  dataPosicao?: string;
+  pagina?: number;
+  verPorLoja?: boolean;
+  sortKey?: string | null;
+  sortDir?: 'asc' | 'desc';
+  dimensao?: 'linha' | 'categoria' | 'genero';
+}
+
+function readVisaoGeralPageState(): VisaoGeralPageState | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(VISAO_GERAL_STATE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as VisaoGeralPageState;
+    if (!parsed.timestamp || Date.now() - parsed.timestamp > VISAO_GERAL_CACHE_TTL_MS) {
+      window.sessionStorage.removeItem(VISAO_GERAL_STATE_KEY);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeVisaoGeralPageState(state: Omit<VisaoGeralPageState, 'timestamp'>) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.sessionStorage.setItem(
+      VISAO_GERAL_STATE_KEY,
+      JSON.stringify({
+        ...state,
+        timestamp: Date.now(),
+      })
+    );
+  } catch {
+    // Ignora falhas de sessionStorage, como quota excedida ou modo privado.
+  }
+}
 
 // Largura fixa em px de cada coluna "de identidade" (nao-filial) - tabela e larga
 // demais pra usar %, precisa de largura fixa + scroll horizontal.
@@ -275,30 +325,42 @@ function zonaBg(key: string): string {
 export default function PcpRelatorioBasePage() {
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const initialPageStateRef = useRef<VisaoGeralPageState | null | undefined>(undefined);
+  if (initialPageStateRef.current === undefined) {
+    initialPageStateRef.current = readVisaoGeralPageState();
+  }
+  const initialPageState = initialPageStateRef.current;
+
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [colunasDisponiveis, setColunasDisponiveis] = useState<{ branchCode: number; label: string }[]>([]);
 
-  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
-  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
-  const [search, setSearch] = useState('');
-  const [dataPosicao, setDataPosicao] = useState('');
-  const [pagina, setPagina] = useState(1);
-  const [verPorLoja, setVerPorLoja] = useState(false);
+  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>(
+    () => initialPageState?.produtoFiltro || {}
+  );
+  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>(
+    () => initialPageState?.filiaisSelecionadas || []
+  );
+  const [search, setSearch] = useState(() => initialPageState?.search || '');
+  const [dataPosicao, setDataPosicao] = useState(() => initialPageState?.dataPosicao || '');
+  const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
+  const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
   const [exportando, setExportando] = useState(false);
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
-  const [sortKey, setSortKey] = useState<string | null>('giroTt3');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.sortKey ?? 'giroTt3');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.sortDir || 'desc');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
 
   // Indicadores extra (Analise de Grade/Estoque Sem Giro/Curva ABC) - carregados em
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
-  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero'>('linha');
+  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero'>(
+    () => initialPageState?.dimensao || 'linha'
+  );
 
   const [metaModalAberto, setMetaModalAberto] = useState(false);
   const [meta, setMeta] = useState<PcpMetaVisaoGeral | null>(null);
@@ -307,6 +369,7 @@ export default function PcpRelatorioBasePage() {
   // Refs e estado para scroll sincronizado
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+  const ignorarPrimeiroResetPaginaRef = useRef(true);
   const [scrollWidth, setScrollWidth] = useState(0);
 
   const carregarDados = useCallback(async (forcarRecarregar = false) => {
@@ -334,7 +397,7 @@ export default function PcpRelatorioBasePage() {
         if (cached) {
           const { data: cachedData, timestamp } = JSON.parse(cached);
           // Cache válido por 5 minutos
-          if (Date.now() - timestamp < 5 * 60 * 1000) {
+          if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setData(cachedData);
             setIsLoading(false);
             return;
@@ -371,8 +434,26 @@ export default function PcpRelatorioBasePage() {
   // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
   // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
   useEffect(() => {
+    if (ignorarPrimeiroResetPaginaRef.current) {
+      ignorarPrimeiroResetPaginaRef.current = false;
+      return;
+    }
     setPagina(1);
   }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao]);
+
+  useEffect(() => {
+    writeVisaoGeralPageState({
+      produtoFiltro,
+      filiaisSelecionadas,
+      search,
+      dataPosicao,
+      pagina,
+      verPorLoja,
+      sortKey,
+      sortDir,
+      dimensao,
+    });
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
@@ -395,7 +476,7 @@ export default function PcpRelatorioBasePage() {
         if (cached) {
           const { data: cachedData, timestamp } = JSON.parse(cached);
           // Cache válido por 5 minutos
-          if (Date.now() - timestamp < 5 * 60 * 1000) {
+          if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setExtras(cachedData);
             setIsLoadingExtras(false);
             return;
@@ -783,7 +864,7 @@ export default function PcpRelatorioBasePage() {
           onChange={(e) => setDataPosicao(e.target.value)}
           className="w-40"
         />
-        <Button onClick={() => { carregarDados(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
+        <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
         <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
           Exportar Excel
         </Button>
