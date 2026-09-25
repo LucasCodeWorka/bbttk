@@ -154,9 +154,6 @@ function temFiltroProduto(filtro?: ProdutoFiltro): boolean {
   return Object.values(filtro).some((v) => v && v.length > 0);
 }
 
-// JOIN sempre em LEFT - sem filtro ativo, nao muda nada nas linhas retornadas.
-const PRODUTO_ANALITICO_JOIN = Prisma.sql`LEFT JOIN produto_analitico pa ON pa.product_code = ti.product_code`;
-
 function buildProdutoFilter(filtro?: ProdutoFiltro): Prisma.Sql {
   if (!temFiltroProduto(filtro)) return Prisma.empty;
   const condicoes: Prisma.Sql[] = [];
@@ -166,7 +163,14 @@ function buildProdutoFilter(filtro?: ProdutoFiltro): Prisma.Sql {
       condicoes.push(Prisma.sql`TRIM(pa.${Prisma.raw(CLASSIFICACAO_COLUNAS[chave])}) IN (${Prisma.join(valores)})`);
     }
   }
-  return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
+  return Prisma.sql`
+    AND EXISTS (
+      SELECT 1
+      FROM produto_analitico pa
+      WHERE pa.product_code = ti.product_code
+        AND ${Prisma.join(condicoes, ' AND ')}
+    )
+  `;
 }
 
 // Vendas por período (por filial de venda, exclui Fábrica e devoluções)
@@ -199,7 +203,6 @@ export async function getVendasPeriodo(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
@@ -320,7 +323,6 @@ export async function getVendasFabricaDividida(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND t.branch_code = 2
@@ -384,7 +386,6 @@ export async function getVendasDiarias(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
@@ -450,7 +451,6 @@ export async function getVendasHorarias(
         AND t.transaction_code = ti.transaction_code
         AND ti.seller_code != 1
       ${OPERACAO_JOIN}
-      ${PRODUTO_ANALITICO_JOIN}
       WHERE th.hora BETWEEN 0 AND 23
         AND ${SALE_OPERATION_FILTER}
         ${produtoFilter}
@@ -506,7 +506,6 @@ export async function getVendasDiaSemana(
         AND t.transaction_code = ti.transaction_code
         AND ti.seller_code != 1
       ${OPERACAO_JOIN}
-      ${PRODUTO_ANALITICO_JOIN}
       WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
@@ -570,7 +569,6 @@ export async function getVendasMensais(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
@@ -614,7 +612,6 @@ export async function getVendasVendedor(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SELLER_FILTER}
@@ -770,7 +767,6 @@ export async function getTopProdutos(
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ti.seller_code != 1
@@ -814,7 +810,6 @@ export async function getDevolucoesPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${IS_DEVOLUCAO}
@@ -861,7 +856,6 @@ export async function getDevolucoesFabricaDividida(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND t.branch_code = 2
@@ -921,7 +915,6 @@ export async function getClientesNovosPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    ${PRODUTO_ANALITICO_JOIN}
     WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}

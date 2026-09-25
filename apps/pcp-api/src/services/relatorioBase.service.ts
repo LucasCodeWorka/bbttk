@@ -2012,6 +2012,104 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
+  for (const identidade of identidadeRows) {
+    const referenceCode = identidade.reference_code || identidade.product_sku;
+    const row = rowsPorReferencia.get(referenceCode);
+    if (!row) continue;
+
+    const sku = identidade.product_sku;
+    const productCode = identidade.product_code;
+    const estoqueDoSku = estoquePorSku.get(sku) || new Map<number, number>();
+    const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
+    const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
+
+    let estTt = 0;
+    if (branchFiltroParaDados) {
+      for (const [branchCode, valor] of estoqueDoSku) {
+        if (branchFiltroParaDados.has(branchCode)) estTt += valor;
+      }
+    } else {
+      for (const valor of estoqueDoSku.values()) estTt += valor;
+    }
+
+    const branches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const coluna of colunasAtivas) {
+      if (coluna.branchCode === ATACADO_BRANCH_CODE) {
+        const estFabrica = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
+        const giroAtacado = productCode !== null ? giroAtacadoPorProductCode.get(productCode) || 0 : 0;
+        const mediaMensalAtacado =
+          config.atacadoCoberturaBase === 'atacado_only'
+            ? (productCode !== null ? vendaAtacadoMesesPorProductCode.get(productCode) || 0 : 0) / config.coberturaMeses
+            : (vendaMesesDoProduto?.get(ATACADO_BRANCH_CODE) || 0) / config.coberturaMeses;
+
+        branches[coluna.branchCode] = {
+          giro: round(giroAtacado, 0),
+          est: round(estFabrica, 0),
+          cob: coberturaDe(estFabrica, mediaMensalAtacado),
+        };
+        continue;
+      }
+
+      const est = estoqueDoSku.get(coluna.branchCode) || 0;
+      const giro = giroDoProduto?.get(coluna.branchCode) || 0;
+      const mediaMensal = (vendaMesesDoProduto?.get(coluna.branchCode) || 0) / config.coberturaMeses;
+      branches[coluna.branchCode] = {
+        giro: round(giro, 0),
+        est: round(est, 0),
+        cob: coberturaDe(est, mediaMensal),
+      };
+    }
+
+    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
+    const custo = custoPreco?.custo ?? null;
+    const pdvRealVar = custoPreco?.pdvVar ?? null;
+    const pdvRealAta = custoPreco?.pdvAta ?? null;
+    const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
+    const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
+    const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
+    const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
+
+    const cor = identidade.color_name || identidade.color_code || 'SEM COR';
+    const tamanho = identidade.size || 'SEM TAM';
+    row.skus.push({
+      sku,
+      codigo: productCode,
+      referenceCode,
+      cor,
+      tamanho,
+      refCorTam: buildRefCorTam(referenceCode, cor, tamanho),
+      descricao: identidade.descricao || identidade.reference_name || sku,
+      descricaoCompleta: identidade.descricao_completa || identidade.descricao || identidade.reference_name || sku,
+      categoria: identidade.categoria,
+      linha: identidade.linha,
+      genero: identidade.genero,
+      modelo: identidade.modelo,
+      status: identidade.status,
+      lancamento: formatarLancamento(identidade.lancamento),
+      ultimaEntrada,
+      custo,
+      pdvAtual: pdvRealVar,
+      pdvRealVar,
+      markupVar: markupPercentual(pdvRealVar, custoSelecionado),
+      pdvRealAta,
+      markupAta: markupPercentual(pdvRealAta, custoSelecionado),
+      estDisponivel: null,
+      emProducao: round(emProducao, 0),
+      estPrevisto: null,
+      estTt: round(estTt, 0),
+      giroTt1: round(giroTt1, 0),
+      giroTt3: round(giroTt3, 0),
+      giroTt6: round(giroTt6, 0),
+      branches,
+    });
+  }
+  for (const row of rowsPaginadas) {
+    row.skus.sort((a, b) => a.refCorTam.localeCompare(b.refCorTam));
+  }
 
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.
