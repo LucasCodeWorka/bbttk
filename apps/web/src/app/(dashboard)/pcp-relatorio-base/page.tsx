@@ -1211,7 +1211,7 @@ export default function PcpRelatorioBasePage() {
                     {expandida && (
                       <TableRow>
                         <TableCell colSpan={totalColunas} className="!p-0 bg-gray-50/60">
-                          <div className="p-2">
+                          <div className="p-2 overflow-x-auto">
                             <Table tableClassName="table-fixed text-xs">
                               <colgroup>
                                 {COLUNAS_SKU_DETALHE.map((c) => (
@@ -1250,7 +1250,13 @@ export default function PcpRelatorioBasePage() {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {row.skus.map((sku) => (
+                                {row.skus.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell colSpan={COLUNAS_SKU_DETALHE.length + colunas.length * 3} align="center" className="py-6 text-gray-500">
+                                      Nenhum SKU detalhado retornado para esta referÃªncia
+                                    </TableCell>
+                                  </TableRow>
+                                ) : row.skus.map((sku) => (
                                   <TableRow key={sku.sku}>
                                     {COLUNAS_SKU_DETALHE.map((c) => (
                                       <TableCell

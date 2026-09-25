@@ -772,6 +772,10 @@ interface RelatorioBaseAnaliticoRow {
   reference_code: string | null;
   reference_name: string | null;
   product_name: string | null;
+  descricao_completa: string | null;
+  color_code: string | null;
+  color_name: string | null;
+  size: string | null;
   categoria: string | null;
   linha: string | null;
   genero: string | null;
@@ -851,18 +855,18 @@ function buildIdentidadeFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
 
 function buildAnaliticoFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
   const condicoes: Prisma.Sql[] = [];
-  if (filtro.categoria?.length) condicoes.push(Prisma.sql`TRIM(categoria) IN (${Prisma.join(filtro.categoria)})`);
-  if (filtro.linha?.length) condicoes.push(Prisma.sql`TRIM(linha) IN (${Prisma.join(filtro.linha)})`);
-  if (filtro.genero?.length) condicoes.push(Prisma.sql`TRIM(genero) IN (${Prisma.join(filtro.genero)})`);
-  if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(status) IN (${Prisma.join(filtro.status)})`);
-  if (filtro.branches?.length) condicoes.push(Prisma.sql`branch_code IN (${Prisma.join(filtro.branches)})`);
+  if (filtro.categoria?.length) condicoes.push(Prisma.sql`TRIM(rb.categoria) IN (${Prisma.join(filtro.categoria)})`);
+  if (filtro.linha?.length) condicoes.push(Prisma.sql`TRIM(rb.linha) IN (${Prisma.join(filtro.linha)})`);
+  if (filtro.genero?.length) condicoes.push(Prisma.sql`TRIM(rb.genero) IN (${Prisma.join(filtro.genero)})`);
+  if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(rb.status) IN (${Prisma.join(filtro.status)})`);
+  if (filtro.branches?.length) condicoes.push(Prisma.sql`rb.branch_code IN (${Prisma.join(filtro.branches)})`);
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
     condicoes.push(Prisma.sql`(
-      product_sku ILIKE ${termo}
-      OR reference_code ILIKE ${termo}
-      OR reference_name ILIKE ${termo}
-      OR product_name ILIKE ${termo}
+      rb.product_sku ILIKE ${termo}
+      OR rb.reference_code ILIKE ${termo}
+      OR rb.reference_name ILIKE ${termo}
+      OR rb.product_name ILIKE ${termo}
     )`);
   }
   if (condicoes.length === 0) return Prisma.empty;
@@ -976,36 +980,41 @@ async function getRelatorioBaseAnalitico(
   const filtroSql = buildAnaliticoFiltro(filtro);
   const rowsAnaliticas = await prisma.$queryRaw<RelatorioBaseAnaliticoRow[]>`
     SELECT
-      to_char(data_posicao, 'YYYY-MM-DD') AS data_posicao,
-      product_sku,
-      product_code,
-      reference_code,
-      reference_name,
-      product_name,
-      categoria,
-      linha,
-      genero,
-      modelo,
-      status,
-      lancamento,
-      branch_code,
-      estoque,
-      estoque_ano_anterior,
-      giro_30d,
-      giro_60d,
-      giro_90d,
-      giro_1m,
-      giro_3m,
-      giro_6m,
-      venda_cobertura_periodo,
-      custo_producao,
-      pdv_varejo,
-      pdv_atacado,
-      ultima_entrada,
-      em_producao,
-      valor_estoque_custo_producao
-    FROM pcp_relatorio_base_analitico_diario
-    WHERE data_posicao = ${dataAnalitica}::date
+      to_char(rb.data_posicao, 'YYYY-MM-DD') AS data_posicao,
+      rb.product_sku,
+      rb.product_code,
+      rb.reference_code,
+      rb.reference_name,
+      rb.product_name,
+      COALESCE(NULLIF(TRIM(a.description), ''), NULLIF(TRIM(rb.product_name), ''), NULLIF(TRIM(rb.reference_name), ''), rb.product_sku) AS descricao_completa,
+      NULLIF(TRIM(a.color_code), '') AS color_code,
+      NULLIF(TRIM(a.color_name), '') AS color_name,
+      NULLIF(TRIM(a.size), '') AS size,
+      rb.categoria,
+      rb.linha,
+      rb.genero,
+      rb.modelo,
+      rb.status,
+      rb.lancamento,
+      rb.branch_code,
+      rb.estoque,
+      rb.estoque_ano_anterior,
+      rb.giro_30d,
+      rb.giro_60d,
+      rb.giro_90d,
+      rb.giro_1m,
+      rb.giro_3m,
+      rb.giro_6m,
+      rb.venda_cobertura_periodo,
+      rb.custo_producao,
+      rb.pdv_varejo,
+      rb.pdv_atacado,
+      rb.ultima_entrada,
+      rb.em_producao,
+      rb.valor_estoque_custo_producao
+    FROM pcp_relatorio_base_analitico_diario rb
+    LEFT JOIN produto_analitico a ON a.product_sku = rb.product_sku
+    WHERE rb.data_posicao = ${dataAnalitica}::date
       ${filtroSql}
   `;
 
@@ -1071,6 +1080,9 @@ async function getRelatorioBaseAnalitico(
     referenceCode: string;
     referenceName: string;
     productName: string;
+    descricaoCompleta: string;
+    cor: string;
+    tamanho: string;
     categoria: string | null;
     linha: string | null;
     genero: string | null;
@@ -1115,6 +1127,9 @@ async function getRelatorioBaseAnalitico(
       referenceCode,
       referenceName,
       productName: row.product_name || referenceName,
+      descricaoCompleta: row.descricao_completa || row.product_name || referenceName,
+      cor: row.color_name || row.color_code || '-',
+      tamanho: row.size || '-',
       categoria: row.categoria,
       linha: row.linha,
       genero: row.genero,
@@ -1344,6 +1359,59 @@ async function getRelatorioBaseAnalitico(
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
+  for (const sku of skus.values()) {
+    const row = rowsPorReferencia.get(sku.referenceCode);
+    if (!row) continue;
+
+    const custo = sku.custo;
+    const markupVar = markupPercentual(sku.pdvVar, custo);
+    const markupAta = markupPercentual(sku.pdvAta, custo);
+    const skuBranches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const coluna of colunasAtivas) {
+      const valores = sku.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, vendaCobertura: 0 };
+      skuBranches[coluna.branchCode] = {
+        est: round(valores.est, 0),
+        giro: round(valores.giro, 0),
+        cob: coberturaDe(valores.est, valores.vendaCobertura / config.coberturaMeses),
+      };
+    }
+
+    row.skus.push({
+      sku: sku.productSku,
+      codigo: sku.productCode,
+      referenceCode: sku.referenceCode,
+      cor: sku.cor,
+      tamanho: sku.tamanho,
+      refCorTam: buildRefCorTam(sku.referenceCode, sku.cor, sku.tamanho),
+      descricao: sku.productName,
+      descricaoCompleta: sku.descricaoCompleta,
+      categoria: sku.categoria,
+      linha: sku.linha,
+      genero: sku.genero,
+      modelo: sku.modelo,
+      status: sku.status,
+      lancamento: sku.lancamento,
+      ultimaEntrada: sku.ultimaEntrada,
+      custo,
+      pdvAtual: sku.pdvVar,
+      pdvRealVar: sku.pdvVar,
+      markupVar,
+      pdvRealAta: sku.pdvAta,
+      markupAta,
+      estDisponivel: null,
+      emProducao: round(sku.emProducao, 0),
+      estPrevisto: null,
+      estTt: round(sku.estTt, 0),
+      giroTt1: round(sku.giroTt1, 0),
+      giroTt3: round(sku.giroTt3, 0),
+      giroTt6: round(sku.giroTt6, 0),
+      branches: skuBranches,
+    });
+  }
+  for (const row of rowsPaginadas) {
+    row.skus.sort((a, b) => a.sku.localeCompare(b.sku));
+  }
 
   function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
     const mediaMensalVarejo = acc.vendaVarejo / config.coberturaMeses;
