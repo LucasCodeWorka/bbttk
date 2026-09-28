@@ -20,24 +20,24 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
 
-const LOJA_ABREVIACOES: Record<number, string> = {
-  1: 'IGU',
-  2: 'FAB',
-  3: 'BEN',
-  4: 'DEL',
-  5: 'PDL',
-  6: 'SOB',
-  7: 'PAR',
-  8: 'RIO',
-  9: 'IEX',
-  10: 'MOS',
-  11: 'RPK',
-  12: 'MES',
-  13: 'EUS',
-  16: 'VIA',
-  17: 'NOR',
-  18: 'TER',
-  19: 'MAR',
+const LOJA_LABELS: Record<number, string> = {
+  1: '1 IGUAT.',
+  2: '2 FAB.',
+  3: '3 BENF.',
+  4: '4 DEL PAS.',
+  5: '5 PATIO',
+  6: '6 SOBRAL',
+  7: '7 PARANG.',
+  8: '8 RIOMAR',
+  9: '9 IGUAT EXP.',
+  10: '10 MOSSORO',
+  11: '11 RIOMAR PK',
+  12: '12 MESSEJ.',
+  13: '13 EUSEBIO',
+  16: '16 VIA SUL',
+  17: '17 NORTH',
+  18: '18 TERRAZO',
+  19: '19 MART MODA',
 };
 
 // Valor numerico de cada coluna ordenavel, usado tanto pro clique no cabecalho quanto pro export
@@ -528,7 +528,7 @@ export default function DashboardPage() {
 
   function getLojasVendedor(vendedor: { branch_codes?: number[]; branch_names?: string[] }): { label: string; title: string } {
     const codes = vendedor.branch_codes || [];
-    const labels = codes.map((code) => LOJA_ABREVIACOES[code] || FILIAIS[code] || String(code));
+    const labels = codes.map((code) => LOJA_LABELS[code] || `${code} ${FILIAIS[code] || 'LOJA'}`);
     return {
       label: labels.length > 0 ? labels.join(', ') : '-',
       title: (vendedor.branch_names || codes.map((code) => FILIAIS[code] || `Filial ${code}`)).join(', '),
@@ -637,7 +637,7 @@ export default function DashboardPage() {
   function exportarRankingVendedores() {
     const colunas: ExcelColumn[] = [
       { key: 'posicao', header: '#', width: 6, type: 'number' },
-      { key: 'lojas', header: 'Loja', width: 14, type: 'text' },
+      { key: 'lojas', header: 'Loja', width: 18, type: 'text' },
       { key: 'seller_name', header: 'Vendedor', width: 25, type: 'text' },
       { key: 'faturamento', header: 'Faturamento', width: 14, type: 'currency' },
       { key: 'meta', header: 'Meta', width: 14, type: 'currency' },
@@ -1206,7 +1206,12 @@ export default function DashboardPage() {
                         )}
                       </td>
                       <td className="px-2 py-2 text-left">
-                        <span className="text-[11px] font-semibold text-gray-500" title={lojas.title}>{lojas.label}</span>
+                        <span
+                          className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600"
+                          title={lojas.title}
+                        >
+                          {lojas.label}
+                        </span>
                       </td>
                       <td className="px-2 py-1 font-medium whitespace-nowrap">
                         <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
