@@ -49,129 +49,7 @@ function formatMeses(value: number | null | undefined, decimals: number): string
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
 }
 
-function matrizPercentual(value: number, max: number): number {
-  if (max <= 0) return 0;
-  return Math.max(4, Math.min(100, (value / max) * 100));
-}
-
-function matrizCoberturaPercentual(value: number | null, max: number): number {
-  if (value === null || max <= 0) return 0;
-  return Math.max(8, Math.min(100, (value / max) * 100));
-}
-
-function matrizCoberturaClasse(value: number | null): string {
-  if (value === null) return 'bg-gray-100 text-gray-400';
-  if (value <= 2) return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
-  if (value >= 6) return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100';
-  return 'bg-amber-50 text-amber-700 ring-1 ring-amber-100';
-}
-
-function MatrizNumeroCell({
-  value,
-  max,
-  children,
-  tone = 'blue',
-}: {
-  value: number;
-  max: number;
-  children: React.ReactNode;
-  tone?: 'blue' | 'green' | 'violet';
-}) {
-  const barClass = tone === 'green' ? 'bg-emerald-300' : tone === 'violet' ? 'bg-violet-300' : 'bg-sky-300';
-  return (
-    <td className="px-3 py-3 text-right tabular-nums text-gray-800">
-      <div className="ml-auto flex min-w-[96px] max-w-[150px] flex-col items-end gap-1.5">
-        <span className="font-semibold">{children}</span>
-        <span className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
-          <span className={cn('block h-full rounded-full', barClass)} style={{ width: `${matrizPercentual(value, max)}%` }} />
-        </span>
-      </div>
-    </td>
-  );
-}
-
-function MatrizCoberturaCell({ value, max }: { value: number | null; max: number }) {
-  return (
-    <td className="px-3 py-3 text-right tabular-nums">
-      <div className="ml-auto flex min-w-[88px] max-w-[130px] flex-col items-end gap-1.5">
-        <span className={cn('rounded-md px-2 py-1 text-[11px] font-bold', matrizCoberturaClasse(value))}>
-          {value === null ? '-' : `${value.toFixed(1)}m`}
-        </span>
-        <span className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
-          <span
-            className="block h-full rounded-full bg-gray-400"
-            style={{ width: `${matrizCoberturaPercentual(value, max)}%` }}
-          />
-        </span>
-      </div>
-    </td>
-  );
-}
-
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
-  const maxEstoque = Math.max(...linhas.map((linha) => linha.estoqueTotal), 0);
-  const maxValor = Math.max(...linhas.map((linha) => linha.valorEstoque), 0);
-  const maxCobertura = Math.max(
-    ...linhas.flatMap((linha) => [linha.coberturaVarejo ?? 0, linha.coberturaAtacado ?? 0, linha.coberturaGeral ?? 0]),
-    0
-  );
-
-  return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-      <table className="min-w-[980px] w-full border-separate border-spacing-0 text-xs">
-        <thead>
-          <tr className="bg-gray-950 text-white">
-            <th className="sticky left-0 z-10 bg-gray-950 px-4 py-3 text-left font-bold uppercase tracking-wider">Linha</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Est. Varejo</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Est. Atacado</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Est. Total</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Valor em Estoque</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Cob. Varejo</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Cob. Atacado</th>
-            <th className="px-3 py-3 text-right font-bold uppercase tracking-wider">Cob. Geral</th>
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((linha, index) => {
-            const isTotal = linha.label === 'Total';
-            return (
-              <tr
-                key={linha.label}
-                className={cn(
-                  'group border-b border-gray-100 transition-colors',
-                  isTotal ? 'bg-gray-100 font-bold text-gray-950' : index % 2 === 0 ? 'bg-white' : 'bg-gray-50/70',
-                  !isTotal && 'hover:bg-sky-50/60'
-                )}
-              >
-                <td
-                  className={cn(
-                    'sticky left-0 z-10 border-b border-gray-100 px-4 py-3',
-                    isTotal ? 'bg-gray-100' : index % 2 === 0 ? 'bg-white group-hover:bg-sky-50' : 'bg-gray-50 group-hover:bg-sky-50'
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className={cn('h-8 w-1 rounded-full', isTotal ? 'bg-gray-900' : 'bg-[var(--bbtk-green)]')} />
-                    <span className="font-bold text-gray-900">{linha.label}</span>
-                  </div>
-                </td>
-                <MatrizNumeroCell value={linha.estoqueVarejo} max={maxEstoque}>{formatNumber(linha.estoqueVarejo)}</MatrizNumeroCell>
-                <MatrizNumeroCell value={linha.estoqueAtacado} max={maxEstoque}>{formatNumber(linha.estoqueAtacado)}</MatrizNumeroCell>
-                <MatrizNumeroCell value={linha.estoqueTotal} max={maxEstoque} tone="green">{formatNumber(linha.estoqueTotal)}</MatrizNumeroCell>
-                <MatrizNumeroCell value={linha.valorEstoque} max={maxValor} tone="violet">{formatMoney(linha.valorEstoque)}</MatrizNumeroCell>
-                <MatrizCoberturaCell value={linha.coberturaVarejo} max={maxCobertura} />
-                <MatrizCoberturaCell value={linha.coberturaAtacado} max={maxCobertura} />
-                <MatrizCoberturaCell value={linha.coberturaGeral} max={maxCobertura} />
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/*
-function LegacyMatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
   return (
     <Table>
       <TableHead>
@@ -203,8 +81,6 @@ function LegacyMatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
     </Table>
   );
 }
-
-*/
 
 function ThSortPcp({
   label,
