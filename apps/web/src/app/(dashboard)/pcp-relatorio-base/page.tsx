@@ -153,7 +153,6 @@ interface VisaoGeralPageState {
   sortKey?: string | null;
   sortDir?: 'asc' | 'desc';
   dimensao?: 'linha' | 'categoria' | 'genero';
-  situacaoFiltro?: SituacaoFiltro;
 }
 
 function readVisaoGeralPageState(): VisaoGeralPageState | null {
@@ -206,16 +205,6 @@ interface ColunaFixa<T> {
 }
 
 type SituacaoCodigo = 'ok' | 'markup_baixo' | 'preco_custo' | 'sem_movimento';
-type SituacaoFiltro = SituacaoCodigo | 'todas';
-
-const SITUACAO_OPTIONS: { value: SituacaoFiltro; label: string }[] = [
-  { value: 'todas', label: 'Todas' },
-  { value: 'ok', label: 'OK' },
-  { value: 'markup_baixo', label: 'MKUP baixo' },
-  { value: 'preco_custo', label: 'Preço < Custo' },
-  { value: 'sem_movimento', label: 'Sem movimento' },
-];
-
 function pdvRealPrincipal(row: Pick<RelatorioBaseRow, 'pdvRealVar' | 'pdvRealAta'>): number | null {
   return row.pdvRealVar ?? row.pdvRealAta ?? null;
 }
@@ -248,29 +237,6 @@ function situacaoReferencia(row: RelatorioBaseReferenciaRow): SituacaoCodigo {
     return 'markup_baixo';
   }
   return 'ok';
-}
-
-function situacaoMeta(codigo: SituacaoCodigo): { label: string; className: string; dotClassName: string } {
-  if (codigo === 'preco_custo') {
-    return { label: 'Preço < Custo', className: 'text-red-700', dotClassName: 'bg-red-500' };
-  }
-  if (codigo === 'markup_baixo') {
-    return { label: 'MKUP baixo', className: 'text-red-700', dotClassName: 'bg-red-500' };
-  }
-  if (codigo === 'sem_movimento') {
-    return { label: 'Sem movimento', className: 'text-gray-600', dotClassName: 'bg-gray-400' };
-  }
-  return { label: 'OK', className: 'text-gray-700', dotClassName: 'bg-green-500' };
-}
-
-function SituacaoBadge({ codigo }: { codigo: SituacaoCodigo }) {
-  const meta = situacaoMeta(codigo);
-  return (
-    <span className={cn('inline-flex items-center gap-2 text-xs font-semibold uppercase', meta.className)}>
-      <span className={cn('h-2.5 w-2.5 rounded-full', meta.dotClassName)} />
-      {meta.label}
-    </span>
-  );
 }
 
 function StatusBadge({ status }: { status: string | null | undefined }) {
@@ -335,19 +301,27 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
     ),
   },
   { key: 'status', label: 'STATUS', width: 95, render: (r) => <StatusBadge status={r.status} /> },
+  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: () => '-' },
   { key: 'totalSkus', label: 'SKUs', width: 70, align: 'right', render: (r) => formatNumber(r.totalSkus) },
   { key: 'categoria', label: 'CATEGORIA', width: 120, render: (r) => r.categoria || '-' },
   { key: 'linha', label: 'LINHA', width: 120, render: (r) => r.linha || '-' },
+  { key: 'genero', label: 'GÊNERO', width: 95, render: (r) => r.genero || '-' },
+  { key: 'modelo', label: 'MODELO', width: 105, render: (r) => r.modelo || '-' },
   { key: 'lancamento', label: 'LANÇ.', width: 80, align: 'center', render: (r) => r.lancamento || '-' },
   { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 115, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '-') },
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
-  { key: 'pdvRealVar', label: 'PDV REAL', width: 105, align: 'right', render: (r) => {
-    const pdv = pdvRealPrincipal(r);
-    return pdv === null ? '-' : formatMoney(pdv);
-  } },
-  { key: 'markupVar', label: 'MKUP REAL', width: 130, align: 'right', render: (r) => <MarkupIndicador value={markupRealPrincipal(r)} situacao={situacaoReferencia(r)} /> },
-  { key: 'situacao', label: 'SITUAÇÃO', width: 145, render: (r) => <SituacaoBadge codigo={situacaoReferencia(r)} /> },
+  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'markupVar', label: 'MKUP VAR', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoReferencia(r)} /> },
+  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'markupAta', label: 'MKUP ATA', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
+  { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
+  { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
+  { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
+  { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
+  { key: 'giroTt6', label: 'GIRO TT 6', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt6) },
 ];
 
 // Colunas do drill-down por SKU (abre ao clicar na referencia) - a identidade em
@@ -366,15 +340,38 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
       </span>
     ),
   },
+  {
+    key: 'descricao',
+    label: 'DESCRIÇÃO',
+    width: DESCRICAO_WIDTH,
+    sticky: 'descricao',
+    render: (r) => (
+      <span className="block truncate" title={r.descricaoCompleta}>
+        {r.descricao}
+      </span>
+    ),
+  },
+  { key: 'status', label: 'STATUS', width: 95, render: (r) => <StatusBadge status={r.status} /> },
   { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: (r) => r.codigo ?? '-' },
+  { key: 'categoria', label: 'CATEGORIA', width: 120, render: (r) => r.categoria || '-' },
+  { key: 'linha', label: 'LINHA', width: 120, render: (r) => r.linha || '-' },
+  { key: 'genero', label: 'GÊNERO', width: 95, render: (r) => r.genero || '-' },
+  { key: 'modelo', label: 'MODELO', width: 105, render: (r) => r.modelo || '-' },
+  { key: 'lancamento', label: 'LANÇ.', width: 80, align: 'center', render: (r) => r.lancamento || '-' },
+  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 115, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '-') },
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
-  { key: 'pdvRealVar', label: 'PDV REAL', width: 105, align: 'right', render: (r) => {
-    const pdv = pdvRealPrincipal(r);
-    return pdv === null ? '-' : formatMoney(pdv);
-  } },
-  { key: 'markupVar', label: 'MKUP REAL', width: 130, align: 'right', render: (r) => <MarkupIndicador value={markupRealPrincipal(r)} situacao={situacaoSku(r)} /> },
-  { key: 'situacao', label: 'SITUAÇÃO', width: 145, render: (r) => <SituacaoBadge codigo={situacaoSku(r)} /> },
+  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'markupVar', label: 'MKUP VAR', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoSku(r)} /> },
+  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'markupAta', label: 'MKUP ATA', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
+  { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
+  { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
+  { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
+  { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
+  { key: 'giroTt6', label: 'GIRO TT 6', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt6) },
 ];
 
 const BRANCH_SUBCOL_WIDTH = 56;
@@ -415,7 +412,6 @@ export default function PcpRelatorioBasePage() {
   const [dataPosicao, setDataPosicao] = useState(() => initialPageState?.dataPosicao || getDefaultDataPosicao());
   const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
   const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
-  const [situacaoFiltro, setSituacaoFiltro] = useState<SituacaoFiltro>(() => initialPageState?.situacaoFiltro || 'todas');
   const [exportando, setExportando] = useState(false);
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
@@ -521,9 +517,8 @@ export default function PcpRelatorioBasePage() {
       sortKey,
       sortDir,
       dimensao,
-      situacaoFiltro,
     });
-  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao, situacaoFiltro]);
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
@@ -700,7 +695,6 @@ export default function PcpRelatorioBasePage() {
     if (key === 'descricao') return row.descricao || '';
     if (key === 'status') return row.status || '';
     if (key === 'totalSkus') return row.totalSkus || 0;
-    if (key === 'situacao') return situacaoMeta(situacaoReferencia(row)).label;
     if (key === 'codigo') return -1;
     if (key === 'categoria') return row.categoria || '';
     if (key === 'linha') return row.linha || '';
@@ -741,15 +735,9 @@ export default function PcpRelatorioBasePage() {
   // as colunas de filial nem entram no colgroup/header/corpo da tabela.
   const colunas = verPorLoja ? data?.colunas || [] : [];
 
-  const rowsFiltradasPorSituacao = useMemo(() => {
-    const rows = data?.rows || [];
-    if (situacaoFiltro === 'todas') return rows;
-    return rows.filter((row) => situacaoReferencia(row) === situacaoFiltro);
-  }, [data, situacaoFiltro]);
-
   const sortedRows = useMemo(() => {
-    if (!sortKey) return rowsFiltradasPorSituacao;
-    const rows = [...rowsFiltradasPorSituacao];
+    if (!data || !sortKey) return data?.rows || [];
+    const rows = [...data.rows];
 
     return rows.sort((a, b) => {
       const aVal = getSortValue(a, sortKey);
@@ -764,7 +752,7 @@ export default function PcpRelatorioBasePage() {
 
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [rowsFiltradasPorSituacao, sortKey, sortDir]);
+  }, [data, sortKey, sortDir]);
   const totalColunas = COLUNAS_REFERENCIA.length + colunas.length * 3;
 
   const resumoSkuLoja = useMemo(() => {
@@ -1132,7 +1120,7 @@ export default function PcpRelatorioBasePage() {
         </div>
 
         <div className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(260px,1.4fr)_repeat(5,minmax(130px,0.75fr))_auto_auto] xl:items-end">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(260px,1.4fr)_repeat(4,minmax(130px,0.75fr))_auto_auto] xl:items-end">
             <Input
               label="Buscar"
               value={search}
@@ -1152,12 +1140,6 @@ export default function PcpRelatorioBasePage() {
                 />
               );
             })}
-            <Select
-              label="Situação"
-              value={situacaoFiltro}
-              onChange={(e) => setSituacaoFiltro(e.target.value as SituacaoFiltro)}
-              options={SITUACAO_OPTIONS}
-            />
             <Input
               label="Data"
               type="date"
@@ -1173,7 +1155,6 @@ export default function PcpRelatorioBasePage() {
                 setProdutoFiltro({});
                 setFiliaisSelecionadas([]);
                 setSearch('');
-                setSituacaoFiltro('todas');
               }}
             >
               Limpar filtros
@@ -1196,7 +1177,7 @@ export default function PcpRelatorioBasePage() {
         <div
           ref={topScrollRef}
           onScroll={sincronizarScrollPeloTopo}
-          className="mb-2 overflow-x-auto overflow-y-hidden"
+          className="mb-1 h-4 overflow-x-auto overflow-y-hidden rounded border border-gray-100 bg-gray-50"
         >
           <div style={{ width: scrollWidth || '100%', height: 1 }} />
         </div>
