@@ -255,20 +255,11 @@ function MarkupIndicador({ value, situacao }: { value: number | null; situacao: 
 
   const problem = situacao === 'markup_baixo' || situacao === 'preco_custo';
   const neutral = situacao === 'sem_movimento';
-  const width = Math.max(8, Math.min(100, Math.abs(value)));
 
   return (
-    <div className="ml-auto flex min-w-[110px] items-center justify-end gap-2 tabular-nums">
-      <span className={cn('font-semibold', problem ? 'text-red-600' : neutral ? 'text-gray-500' : 'text-green-700')}>
-        {formatNumber(value, 1)}%
-      </span>
-      <span className="h-3 w-14 overflow-hidden rounded bg-gray-100 ring-1 ring-gray-200">
-        <span
-          className={cn('block h-full rounded', problem ? 'bg-red-400' : neutral ? 'bg-gray-400' : 'bg-green-500')}
-          style={{ width: `${width}%` }}
-        />
-      </span>
-    </div>
+    <span className={cn('font-semibold tabular-nums', problem ? 'text-red-600' : neutral ? 'text-gray-500' : 'text-green-700')}>
+      {formatNumber(value, 1)}%
+    </span>
   );
 }
 
@@ -312,9 +303,9 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
   { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
-  { key: 'markupVar', label: 'MKUP VAR', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoReferencia(r)} /> },
+  { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoReferencia(r)} /> },
   { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
-  { key: 'markupAta', label: 'MKUP ATA', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
+  { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
   { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
@@ -362,9 +353,9 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
   { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
-  { key: 'markupVar', label: 'MKUP VAR', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoSku(r)} /> },
+  { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoSku(r)} /> },
   { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
-  { key: 'markupAta', label: 'MKUP ATA', width: 130, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
+  { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
   { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
