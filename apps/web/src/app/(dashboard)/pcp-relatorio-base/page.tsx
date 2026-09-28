@@ -108,7 +108,7 @@ function MatrizCoberturaCell({ value, max }: { value: number | null; max: number
   );
 }
 
-function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
+function OldMatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
   const maxEstoque = Math.max(...linhas.map((linha) => linha.estoqueTotal), 0);
   const maxValor = Math.max(...linhas.map((linha) => linha.valorEstoque), 0);
   const maxCobertura = Math.max(
@@ -205,6 +205,238 @@ function LegacyMatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
 }
 
 */
+
+type MatrizModo = 'diagnostico' | 'excesso' | 'risco' | 'valor';
+
+function matrizPct(value: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / total) * 100));
+}
+
+function matrizCoberturaLabel(value: number | null): string {
+  return value === null ? '-' : `${value.toFixed(1)}m`;
+}
+
+function matrizCoberturaBadge(value: number | null): string {
+  if (value === null) return 'bg-slate-100 text-slate-600 border-slate-200';
+  if (value <= 2) return 'bg-rose-50 text-rose-700 border-rose-200';
+  if (value >= 6) return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+}
+
+function matrizSinal(linha: RelatorioBaseMatrizLinha): { label: string; className: string; peso: number } {
+  if (linha.coberturaGeral === null) {
+    return {
+      label: linha.estoqueTotal > 0 ? 'Sem giro' : 'Sem sinal',
+      className: 'bg-slate-100 text-slate-700 border-slate-200',
+      peso: linha.estoqueTotal > 0 ? 3 : 0,
+    };
+  }
+  if (linha.coberturaGeral <= 2) return { label: 'Risco', className: 'bg-rose-50 text-rose-700 border-rose-200', peso: 4 };
+  if (linha.coberturaGeral >= 6) return { label: 'Excesso', className: 'bg-amber-50 text-amber-700 border-amber-200', peso: 5 };
+  return { label: 'Saudavel', className: 'bg-emerald-50 text-emerald-700 border-emerald-200', peso: 1 };
+}
+
+function matrizDesequilibrio(linha: RelatorioBaseMatrizLinha): number | null {
+  if (linha.coberturaVarejo === null || linha.coberturaAtacado === null) return null;
+  return Math.abs(linha.coberturaVarejo - linha.coberturaAtacado);
+}
+
+function matrizOrdenada(linhas: RelatorioBaseMatrizLinha[], modo: MatrizModo): RelatorioBaseMatrizLinha[] {
+  const arr = [...linhas];
+  if (modo === 'valor') return arr.sort((a, b) => b.valorEstoque - a.valorEstoque);
+  if (modo === 'excesso') return arr.sort((a, b) => (b.coberturaGeral ?? -1) - (a.coberturaGeral ?? -1));
+  if (modo === 'risco') {
+    return arr.sort((a, b) => {
+      const av = a.coberturaGeral ?? Number.POSITIVE_INFINITY;
+      const bv = b.coberturaGeral ?? Number.POSITIVE_INFINITY;
+      return av - bv || b.valorEstoque - a.valorEstoque;
+    });
+  }
+  return arr.sort((a, b) => {
+    const sinalDiff = matrizSinal(b).peso - matrizSinal(a).peso;
+    if (sinalDiff !== 0) return sinalDiff;
+    return b.valorEstoque - a.valorEstoque;
+  });
+}
+
+function MatrizCoberturaChip({ label, value }: { label: string; value: number | null }) {
+  return (
+    <span className={cn('inline-flex items-center justify-between gap-2 rounded-md border px-2.5 py-1 text-[11px] font-bold', matrizCoberturaBadge(value))}>
+      <span className="text-[10px] font-semibold opacity-70">{label}</span>
+      <span>{matrizCoberturaLabel(value)}</span>
+    </span>
+  );
+}
+
+function MatrizResumoLinha({
+  linha,
+  totalValor,
+  totalEstoque,
+}: {
+  linha: RelatorioBaseMatrizLinha;
+  totalValor: number;
+  totalEstoque: number;
+}) {
+  const varejoPct = matrizPct(linha.estoqueVarejo, linha.estoqueTotal);
+  const atacadoPct = matrizPct(linha.estoqueAtacado, linha.estoqueTotal);
+  const sinal = matrizSinal(linha);
+  const desequilibrio = matrizDesequilibrio(linha);
+
+  return (
+    <div className="border-t border-gray-100 py-4 first:border-t-0">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(210px,1.1fr)_minmax(260px,1.2fr)_minmax(250px,1fr)] xl:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-sm font-bold text-gray-950">{linha.label}</span>
+            <span className={cn('rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide', sinal.className)}>
+              {sinal.label}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+            <span>{formatNumber(matrizPct(linha.valorEstoque, totalValor), 1)}% do valor</span>
+            <span>{formatNumber(matrizPct(linha.estoqueTotal, totalEstoque), 1)}% do estoque</span>
+            <span>Deseq. {desequilibrio === null ? '-' : `${desequilibrio.toFixed(1)}m`}</span>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Estoque total</p>
+              <p className="text-lg font-black text-gray-950">{formatNumber(linha.estoqueTotal)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Valor</p>
+              <p className="text-sm font-bold text-gray-950">{formatMoney(linha.valorEstoque)}</p>
+            </div>
+          </div>
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-gray-100">
+            <div className="h-full bg-[var(--bbtk-blue)]" style={{ width: `${varejoPct}%` }} />
+            <div className="h-full bg-[var(--bbtk-green)]" style={{ width: `${atacadoPct}%` }} />
+          </div>
+          <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-gray-500">
+            <span>Varejo {formatNumber(linha.estoqueVarejo)}</span>
+            <span>Atacado {formatNumber(linha.estoqueAtacado)}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 xl:justify-end">
+          <MatrizCoberturaChip label="VAR" value={linha.coberturaVarejo} />
+          <MatrizCoberturaChip label="ATA" value={linha.coberturaAtacado} />
+          <MatrizCoberturaChip label="GERAL" value={linha.coberturaGeral} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
+  const [modo, setModo] = useState<MatrizModo>('diagnostico');
+  const total = linhas.find((linha) => linha.label === 'Total');
+  const linhasBase = linhas.filter((linha) => linha.label !== 'Total');
+  const linhasOrdenadas = matrizOrdenada(linhasBase, modo);
+  const totalValor = total?.valorEstoque || linhasBase.reduce((sum, linha) => sum + linha.valorEstoque, 0);
+  const totalEstoque = total?.estoqueTotal || linhasBase.reduce((sum, linha) => sum + linha.estoqueTotal, 0);
+  const maiorValor = linhasBase.reduce<RelatorioBaseMatrizLinha | null>((acc, linha) => !acc || linha.valorEstoque > acc.valorEstoque ? linha : acc, null);
+  const maiorCobertura = linhasBase.reduce<RelatorioBaseMatrizLinha | null>((acc, linha) => {
+    if (linha.coberturaGeral === null) return acc;
+    if (!acc || acc.coberturaGeral === null || linha.coberturaGeral > acc.coberturaGeral) return linha;
+    return acc;
+  }, null);
+  const menorCobertura = linhasBase.reduce<RelatorioBaseMatrizLinha | null>((acc, linha) => {
+    if (linha.coberturaGeral === null) return acc;
+    if (!acc || acc.coberturaGeral === null || linha.coberturaGeral < acc.coberturaGeral) return linha;
+    return acc;
+  }, null);
+
+  const modos: { key: MatrizModo; label: string }[] = [
+    { key: 'diagnostico', label: 'Diagnostico' },
+    { key: 'excesso', label: 'Excesso' },
+    { key: 'risco', label: 'Risco' },
+    { key: 'valor', label: 'Valor' },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 border-b border-gray-100 pb-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Total estoque</p>
+            <p className="mt-1 text-xl font-black text-gray-950">{formatNumber(totalEstoque)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Valor estoque</p>
+            <p className="mt-1 text-xl font-black text-gray-950">{formatMoney(totalValor)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Maior valor</p>
+            <p className="mt-1 truncate text-sm font-bold text-gray-950">{maiorValor?.label || '-'}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Faixa critica</p>
+            <p className="mt-1 truncate text-sm font-bold text-gray-950">{maiorCobertura?.label || menorCobertura?.label || '-'}</p>
+          </div>
+        </div>
+        <div className="inline-flex w-fit rounded-lg border border-gray-200 bg-gray-50 p-1">
+          {modos.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setModo(item.key)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-xs font-bold transition-colors',
+                modo === item.key ? 'bg-white text-gray-950 shadow-sm' : 'text-gray-500 hover:text-gray-900'
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="divide-y divide-gray-100">
+        {linhasOrdenadas.map((linha) => (
+          <MatrizResumoLinha key={linha.label} linha={linha} totalValor={totalValor} totalEstoque={totalEstoque} />
+        ))}
+      </div>
+
+      <div className="overflow-x-auto border-t border-gray-100 pt-4">
+        <table className="min-w-[900px] w-full text-xs">
+          <thead>
+            <tr className="text-gray-500">
+              <th className="px-3 py-2 text-left font-bold uppercase tracking-wider">Linha</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Est. Varejo</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Est. Atacado</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Est. Total</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Valor em Estoque</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Cob. Varejo</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Cob. Atacado</th>
+              <th className="px-3 py-2 text-right font-bold uppercase tracking-wider">Cob. Geral</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {[...linhasOrdenadas, ...(total ? [total] : [])].map((linha) => {
+              const isTotal = linha.label === 'Total';
+              return (
+                <tr key={linha.label} className={cn(isTotal && 'bg-gray-50 font-bold text-gray-950')}>
+                  <td className="px-3 py-2.5 text-left font-bold text-gray-900">{linha.label}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{formatNumber(linha.estoqueVarejo)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{formatNumber(linha.estoqueAtacado)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{formatNumber(linha.estoqueTotal)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{formatMoney(linha.valorEstoque)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{matrizCoberturaLabel(linha.coberturaVarejo)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{matrizCoberturaLabel(linha.coberturaAtacado)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{matrizCoberturaLabel(linha.coberturaGeral)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function ThSortPcp({
   label,
