@@ -85,6 +85,8 @@ interface VendasDiarias {
 interface VendasVendedor {
   seller_code: number;
   seller_name?: string;
+  branch_codes: number[];
+  branch_names: string[];
   transacoes: number;
   pecas: number;
   faturamento: number;
@@ -599,12 +601,14 @@ export async function getVendasVendedor(
 
   const results = await prisma.$queryRaw<Array<{
     seller_code: number;
+    branch_codes: number[];
     transacoes: bigint;
     pecas: Decimal;
     faturamento: Decimal;
   }>>`
     SELECT
       ti.seller_code,
+      ARRAY_AGG(DISTINCT ti.branch_code ORDER BY ti.branch_code) as branch_codes,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (ti.branch_code, ti.transaction_code) END) as transacoes,
       SUM(${PECAS_COM_SINAL}) as pecas,
       SUM(${FATURAMENTO_COM_SINAL}) as faturamento
@@ -631,6 +635,8 @@ export async function getVendasVendedor(
 
     return {
       seller_code: row.seller_code,
+      branch_codes: row.branch_codes || [],
+      branch_names: (row.branch_codes || []).map((code) => FILIAIS[code] || `Filial ${code}`),
       transacoes,
       pecas: Math.round(pecas),
       faturamento: round(faturamento),

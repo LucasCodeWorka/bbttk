@@ -588,6 +588,8 @@ export interface VendasDiariasResponse {
 export interface Vendedor {
   seller_code: number;
   seller_name: string;
+  branch_codes: number[];
+  branch_names: string[];
   transacoes: number;
   pecas: number;
   faturamento: number;
