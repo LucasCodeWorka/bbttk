@@ -887,6 +887,61 @@ export default function PcpRelatorioBasePage() {
         )}
       </div>
 
+      <Card className="p-3">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(260px,1.4fr)_repeat(4,minmax(130px,0.75fr))_auto_auto] xl:items-end">
+          <Input
+            label="Buscar"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Referência, descrição ou código..."
+          />
+          {(['categoria', 'linha', 'status'] as const).map((chave) => {
+            const dim = classificacoes.find((item) => item.chave === chave);
+            if (!dim) return null;
+            return (
+              <ClassificacaoMultiSelect
+                key={dim.chave}
+                label={dim.label}
+                options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
+                selected={produtoFiltro[dim.chave] || []}
+                onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
+              />
+            );
+          })}
+          <Input
+            label="Data"
+            type="date"
+            value={dataPosicao}
+            onChange={(e) => setDataPosicao(e.target.value)}
+          />
+          <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>
+            Atualizar
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setProdutoFiltro({});
+              setFiliaisSelecionadas([]);
+              setSearch('');
+            }}
+          >
+            Limpar filtros
+          </Button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <FilialMultiSelect
+            selected={filiaisSelecionadas}
+            onChange={setFiliaisSelecionadas}
+            options={filialOptions}
+            label="Loja"
+            className="w-full sm:w-64"
+          />
+          <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
+            Exportar Excel
+          </Button>
+        </div>
+      </Card>
+
       {erro && (
         <Card className="border-red-200 bg-red-50">
           <p className="text-sm text-red-700">{erro}</p>
@@ -1092,61 +1147,6 @@ export default function PcpRelatorioBasePage() {
           </div>
         </div>
 
-        <div className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(260px,1.4fr)_repeat(4,minmax(130px,0.75fr))_auto_auto] xl:items-end">
-            <Input
-              label="Buscar"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Referência, descrição ou código..."
-            />
-            {(['categoria', 'linha', 'status'] as const).map((chave) => {
-              const dim = classificacoes.find((item) => item.chave === chave);
-              if (!dim) return null;
-              return (
-                <ClassificacaoMultiSelect
-                  key={dim.chave}
-                  label={dim.label}
-                  options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
-                  selected={produtoFiltro[dim.chave] || []}
-                  onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
-                />
-              );
-            })}
-            <Input
-              label="Data"
-              type="date"
-              value={dataPosicao}
-              onChange={(e) => setDataPosicao(e.target.value)}
-            />
-            <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>
-              Atualizar
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setProdutoFiltro({});
-                setFiliaisSelecionadas([]);
-                setSearch('');
-              }}
-            >
-              Limpar filtros
-            </Button>
-          </div>
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <FilialMultiSelect
-              selected={filiaisSelecionadas}
-              onChange={setFiliaisSelecionadas}
-              options={filialOptions}
-              label="Loja"
-              className="w-full sm:w-64"
-            />
-            <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
-              Exportar Excel
-            </Button>
-          </div>
-        </div>
-
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div
           ref={topScrollRef}
@@ -1156,7 +1156,7 @@ export default function PcpRelatorioBasePage() {
           <div style={{ width: scrollWidth || '100%', height: 8 }} />
         </div>
 
-        <div ref={tabelaScrollRef} className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={tabelaScrollRef} className="overflow-x-hidden">
         <Table tableClassName="table-fixed text-xs">
           <colgroup>
             {COLUNAS_REFERENCIA.map((c) => (
