@@ -114,7 +114,7 @@ function buildIdentidadeFiltro(filtro: SugestaoProducaoFiltro): Prisma.Sql {
   if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(filtro.status)})`);
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
-    condicoes.push(Prisma.sql`(a.product_sku ILIKE ${termo} OR a.reference_name ILIKE ${termo} OR a.product_name ILIKE ${termo})`);
+    condicoes.push(Prisma.sql`(a.product_sku ILIKE ${termo} OR a.reference_code ILIKE ${termo} OR a.reference_name ILIKE ${termo} OR a.product_name ILIKE ${termo})`);
   }
   if (condicoes.length === 0) return Prisma.empty;
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
