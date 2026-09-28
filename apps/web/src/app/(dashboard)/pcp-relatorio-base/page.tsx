@@ -331,25 +331,7 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
       </span>
     ),
   },
-  {
-    key: 'descricao',
-    label: 'DESCRIÇÃO',
-    width: DESCRICAO_WIDTH,
-    sticky: 'descricao',
-    render: (r) => (
-      <span className="block truncate" title={r.descricaoCompleta}>
-        {r.descricao}
-      </span>
-    ),
-  },
-  { key: 'status', label: 'STATUS', width: 95, render: (r) => <StatusBadge status={r.status} /> },
   { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: (r) => r.codigo ?? '-' },
-  { key: 'categoria', label: 'CATEGORIA', width: 120, render: (r) => r.categoria || '-' },
-  { key: 'linha', label: 'LINHA', width: 120, render: (r) => r.linha || '-' },
-  { key: 'genero', label: 'GÊNERO', width: 95, render: (r) => r.genero || '-' },
-  { key: 'modelo', label: 'MODELO', width: 105, render: (r) => r.modelo || '-' },
-  { key: 'lancamento', label: 'LANÇ.', width: 80, align: 'center', render: (r) => r.lancamento || '-' },
-  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 115, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '-') },
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
   { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
   { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
@@ -1165,15 +1147,16 @@ export default function PcpRelatorioBasePage() {
           </div>
         </div>
 
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div
           ref={topScrollRef}
           onScroll={sincronizarScrollPeloTopo}
-          className="mb-1 h-4 overflow-x-auto overflow-y-hidden rounded border border-gray-100 bg-gray-50"
+          className="h-5 overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-gray-50"
         >
-          <div style={{ width: scrollWidth || '100%', height: 1 }} />
+          <div style={{ width: scrollWidth || '100%', height: 8 }} />
         </div>
 
-        <div ref={tabelaScrollRef} className="overflow-x-auto rounded-lg border border-gray-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={tabelaScrollRef} className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <Table tableClassName="table-fixed text-xs">
           <colgroup>
             {COLUNAS_REFERENCIA.map((c) => (
@@ -1397,6 +1380,7 @@ export default function PcpRelatorioBasePage() {
             )}
           </TableBody>
         </Table>
+        </div>
         </div>
       </Card>
 
