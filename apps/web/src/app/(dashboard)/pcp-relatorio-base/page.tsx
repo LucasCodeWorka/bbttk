@@ -727,6 +727,14 @@ export default function PcpRelatorioBasePage() {
     });
   }, [data, sortKey, sortDir]);
   const totalColunas = COLUNAS_REFERENCIA.length + colunas.length * 3;
+  const larguraTabelaSkuLoja = useMemo(
+    () => COLUNAS_REFERENCIA.reduce((total, coluna) => total + coluna.width, 0) + colunas.length * 3 * BRANCH_SUBCOL_WIDTH,
+    [colunas.length]
+  );
+  const larguraDetalheSkuLoja = useMemo(
+    () => COLUNAS_SKU_DETALHE.reduce((total, coluna) => total + coluna.width, 0) + colunas.length * 3 * BRANCH_SUBCOL_WIDTH,
+    [colunas.length]
+  );
 
   const resumoSkuLoja = useMemo(() => {
     const rows = data?.rows || [];
@@ -1153,11 +1161,11 @@ export default function PcpRelatorioBasePage() {
           onScroll={sincronizarScrollPeloTopo}
           className="h-5 overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-gray-50"
         >
-          <div style={{ width: scrollWidth || '100%', height: 8 }} />
+          <div style={{ width: Math.max(scrollWidth, larguraTabelaSkuLoja), height: 8 }} />
         </div>
 
         <div ref={tabelaScrollRef} className="overflow-x-hidden">
-        <Table tableClassName="table-fixed text-xs">
+        <table className="table-fixed text-xs" style={{ width: larguraTabelaSkuLoja, minWidth: larguraTabelaSkuLoja }}>
           <colgroup>
             {COLUNAS_REFERENCIA.map((c) => (
               <col key={c.key} style={{ width: `${c.width}px` }} />
@@ -1291,9 +1299,9 @@ export default function PcpRelatorioBasePage() {
                     {expandida && (
                       <TableRow>
                         <TableCell colSpan={totalColunas} className="!p-0 bg-blue-50/30">
-                          <div className="p-3 overflow-x-auto">
+                          <div className="overflow-hidden p-3">
                             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-                            <Table tableClassName="table-fixed text-xs">
+                            <table className="table-fixed text-xs" style={{ width: larguraDetalheSkuLoja, minWidth: larguraDetalheSkuLoja }}>
                               <colgroup>
                                 {COLUNAS_SKU_DETALHE.map((c) => (
                                   <col key={c.key} style={{ width: `${c.width}px` }} />
@@ -1368,7 +1376,7 @@ export default function PcpRelatorioBasePage() {
                                   </TableRow>
                                 ))}
                               </TableBody>
-                            </Table>
+                            </table>
                             </div>
                           </div>
                         </TableCell>
@@ -1379,7 +1387,7 @@ export default function PcpRelatorioBasePage() {
               })
             )}
           </TableBody>
-        </Table>
+        </table>
         </div>
         </div>
       </Card>
