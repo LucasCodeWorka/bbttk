@@ -29,6 +29,7 @@ export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(t
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';
 const MATRIZ_SEM_CLASSIFICACAO = 'Nao classificado';
+const COBERTURA_CRITICA_MESES = 5; // 150 dias na base de 30 dias.
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -38,6 +39,60 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 
 function round(value: number, decimals = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
+function temCoberturaCritica(estoque: number, venda30Dias: number): boolean {
+  if (estoque <= 0) return false;
+  if (venda30Dias <= 0) return true;
+  return estoque / venda30Dias >= COBERTURA_CRITICA_MESES;
+}
+
+function statusAtivo(status: string | null): boolean {
+  return status?.trim().replace(/\s+/g, ' ').toUpperCase() === 'ATIVO';
+}
+
+interface EstoqueAnaliseAcc {
+  quantidade: number;
+  valor: number;
+  referencias: Set<string>;
+}
+
+function estoqueAnaliseAccVazio(): EstoqueAnaliseAcc {
+  return { quantidade: 0, valor: 0, referencias: new Set<string>() };
+}
+
+function acumularEstoqueAnalise(acc: EstoqueAnaliseAcc, referenceCode: string, quantidade: number, valor: number) {
+  if (quantidade <= 0) return;
+  acc.quantidade += quantidade;
+  acc.valor += valor;
+  acc.referencias.add(referenceCode);
+}
+
+function montarEstoqueAnaliseKpi(acc: EstoqueAnaliseAcc, estoqueTotal: number, valorEstoqueTotal: number): RelatorioBaseEstoqueAnaliseKpi {
+  return {
+    quantidade: round(acc.quantidade, 0),
+    referencias: acc.referencias.size,
+    quantidadePercent: estoqueTotal > 0 ? round((acc.quantidade / estoqueTotal) * 100, 1) : 0,
+    valor: round(acc.valor, 2),
+    valorPercent: valorEstoqueTotal > 0 ? round((acc.valor / valorEstoqueTotal) * 100, 1) : 0,
+  };
+}
+
+interface RupturaLinhaAcc {
+  skus: number;
+  totalSkus: number;
+}
+
+function rupturaLinhaAccVazio(): RupturaLinhaAcc {
+  return { skus: 0, totalSkus: 0 };
+}
+
+function montarRupturaLinhaKpi(acc: RupturaLinhaAcc): RelatorioBaseRupturaLinhaKpi {
+  return {
+    skus: acc.skus,
+    totalSkus: acc.totalSkus,
+    percent: acc.totalSkus > 0 ? round((acc.skus / acc.totalSkus) * 100, 1) : 0,
+  };
 }
 
 export interface RelatorioBaseFiltro {
@@ -151,7 +206,7 @@ export interface RelatorioBaseKpisExtra {
   valorEstoqueTotal: number;
   valorEstoqueAnoAnterior: number;
   valorEstoqueVariacaoPercent: number | null;
-  // Fora de linha cheio = status TOTVS exatamente "FORA DE LINHA".
+  // Critico = estoque com cobertura >= 150 dias, usando venda dos ultimos 30 dias.
   // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
@@ -163,9 +218,30 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
+  ruptura: {
+    basico: RelatorioBaseRupturaLinhaKpi;
+    renovavel: RelatorioBaseRupturaLinhaKpi;
+  };
   // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
   // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAnaliseKpi {
+  quantidade: number;
+  referencias: number;
+  quantidadePercent: number;
+  valor: number;
+  valorPercent: number;
+}
+
+export interface RelatorioBaseRupturaLinhaKpi {
+  skus: number;
+  totalSkus: number;
+  percent: number;
 }
 
 export interface RelatorioBaseMatrizLinha {
@@ -734,6 +810,23 @@ export async function getUltimaEntradaRows(productCodes: number[] | null, dataPo
   `;
 }
 
+async function getEntradaDpaRows(productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; ultima_entrada_dpa: Date }>> {
+  const dataBase = dataBaseSql(dataPosicao);
+  return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada_dpa: Date }>>`
+    SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada_dpa
+    FROM transacoes t
+    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
+    WHERE t.status = 4
+      AND co.operations_type = 'E'
+      AND t.branch_code = ${FABRICA_BRANCH_CODE}
+      AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%'
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+      ${filtroProductCodeTi(productCodes)}
+    GROUP BY ti.product_code
+  `;
+}
+
 // Quantidade pendente de Ordens de Producao abertas, somada em todas as filiais - a
 // tabela ops_em_producao vem detalhada por OP + product_code (sincronizada via
 // totvs.service.ts syncEmProducao), aqui so agrega pro nivel do relatorio (que mostra
@@ -826,7 +919,7 @@ function normalizarClassificacao(valor: string | null): string {
 
 const LINHA_BUCKET_BASICO = 'B\u00e1sico';
 const LINHA_BUCKET_BASICO_RENOVAVEL = 'B\u00e1sico Renov\u00e1vel';
-const LINHA_BUCKET_COLECAO = 'Cole\u00e7\u00e3o';
+const LINHA_BUCKET_COLECAO = 'Style';
 
 // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
 // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
@@ -1104,7 +1197,7 @@ async function getRelatorioBaseAnalitico(
     giroTt1: number;
     giroTt3: number;
     giroTt6: number;
-    branchesAgg: Map<number, { est: number; giro: number; vendaCobertura: number }>;
+    branchesAgg: Map<number, { est: number; giro: number; vendaCobertura: number; giro30: number }>;
   }
 
   const skus = new Map<string, SkuAgg>();
@@ -1151,7 +1244,7 @@ async function getRelatorioBaseAnalitico(
       giroTt1: 0,
       giroTt3: 0,
       giroTt6: 0,
-      branchesAgg: new Map<number, { est: number; giro: number; vendaCobertura: number }>(),
+      branchesAgg: new Map<number, { est: number; giro: number; vendaCobertura: number; giro30: number }>(),
     };
 
     agg.estTt += estoque;
@@ -1169,10 +1262,11 @@ async function getRelatorioBaseAnalitico(
     if (agg.pdvVar === null && row.pdv_varejo !== null) agg.pdvVar = decimalToNumber(row.pdv_varejo);
     if (agg.pdvAta === null && row.pdv_atacado !== null) agg.pdvAta = decimalToNumber(row.pdv_atacado);
 
-    const branch = agg.branchesAgg.get(row.branch_code) || { est: 0, giro: 0, vendaCobertura: 0 };
+    const branch = agg.branchesAgg.get(row.branch_code) || { est: 0, giro: 0, vendaCobertura: 0, giro30: 0 };
     branch.est += estoque;
     branch.giro += giroAnaliticoDaConfig(row, config.giroDias);
     branch.vendaCobertura += vendaCobertura;
+    branch.giro30 += decimalToNumber(row.giro_30d);
     agg.branchesAgg.set(row.branch_code, branch);
 
     skus.set(sku, agg);
@@ -1192,6 +1286,11 @@ async function getRelatorioBaseAnalitico(
   let estoqueMortoValor = 0;
   let estoquePromocaoQtd = 0;
   let estoquePromocaoValor = 0;
+  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const rupturaBasicoAcc = rupturaLinhaAccVazio();
+  const rupturaRenovavelAcc = rupturaLinhaAccVazio();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
 
   interface RefAgg {
@@ -1221,9 +1320,9 @@ async function getRelatorioBaseAnalitico(
     for (const [branchCode, valores] of sku.branchesAgg) {
       if (branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += valores.est;
-      vendaVarejoSku += valores.vendaCobertura;
+      vendaVarejoSku += valores.giro30;
     }
-    const vendaAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.vendaCobertura ?? 0;
+    const vendaAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.giro30 ?? 0;
     const custo = sku.custo;
 
     valorEstoqueTotal += sku.valorEstoque;
@@ -1250,10 +1349,20 @@ async function getRelatorioBaseAnalitico(
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
     statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + sku.estTt);
-    if (statusBucketKey === 'FORA DE LINHA') {
+    if (temCoberturaCritica(sku.estTt, sku.giro30)) {
       estoqueMortoQtd += sku.estTt;
       estoqueMortoValor += sku.valorEstoque;
-    } else if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+    }
+    if (sku.giro30 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    if (sku.giro60 <= 0 && sku.giro90 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    if (sku.giro90 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    const linhaSku = linhaBucket(sku.linha);
+    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
+    if (rupturaAcc && statusAtivo(sku.status) && sku.ultimaEntrada) {
+      rupturaAcc.totalSkus += 1;
+      if (sku.estTt <= 0) rupturaAcc.skus += 1;
+    }
+    if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += sku.estTt;
       estoquePromocaoValor += sku.valorEstoque;
     }
@@ -1307,7 +1416,7 @@ async function getRelatorioBaseAnalitico(
       const acumulado = agg.branchesAgg.get(branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
       acumulado.est += valores.est;
       acumulado.giro += valores.giro;
-      acumulado.mediaMensalSum += valores.vendaCobertura / config.coberturaMeses;
+      acumulado.mediaMensalSum += valores.giro30;
       agg.branchesAgg.set(branchCode, acumulado);
     }
     referenciaAgg.set(referenceCode, agg);
@@ -1369,11 +1478,11 @@ async function getRelatorioBaseAnalitico(
     const markupAta = markupPercentual(sku.pdvAta, custo);
     const skuBranches: Record<number, RelatorioBaseColunaFilial> = {};
     for (const coluna of colunasAtivas) {
-      const valores = sku.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, vendaCobertura: 0 };
+      const valores = sku.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, vendaCobertura: 0, giro30: 0 };
       skuBranches[coluna.branchCode] = {
         est: round(valores.est, 0),
         giro: round(valores.giro, 0),
-        cob: coberturaDe(valores.est, valores.vendaCobertura / config.coberturaMeses),
+        cob: coberturaDe(valores.est, valores.giro30),
       };
     }
 
@@ -1414,9 +1523,9 @@ async function getRelatorioBaseAnalitico(
   }
 
   function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
-    const mediaMensalVarejo = acc.vendaVarejo / config.coberturaMeses;
-    const mediaMensalAtacado = acc.vendaAtacado / config.coberturaMeses;
-    const mediaMensalGeral = (acc.vendaVarejo + acc.vendaAtacado) / config.coberturaMeses;
+    const mediaMensalVarejo = acc.vendaVarejo;
+    const mediaMensalAtacado = acc.vendaAtacado;
+    const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
     return {
       label,
       estoqueVarejo: round(acc.estVarejo, 0),
@@ -1487,9 +1596,9 @@ async function getRelatorioBaseAnalitico(
       skuCount: kpis.skuCount,
     },
     kpisExtra: {
-      coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, (vendaVarejoTotal + vendaAtacadoTotal) / config.coberturaMeses),
-      coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal / config.coberturaMeses),
-      coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal / config.coberturaMeses),
+      coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
+      coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal),
+      coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
       giroAnualizado,
       valorEstoqueTotal: round(valorEstoqueTotal, 2),
       valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
@@ -1504,6 +1613,13 @@ async function getRelatorioBaseAnalitico(
       coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
       coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
       referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
+      itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
+      itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
+      itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+      ruptura: {
+        basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
+        renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
+      },
       statusBreakdown,
     },
     matriz: {
@@ -1560,10 +1676,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroTt60Total,
     giroTt90Total,
     giroTt1Rows,
+    giroTt2Rows,
     giroTt3Rows,
     giroTt6Rows,
     custoPrecoRows,
     ultimaEntradaRows,
+    entradaDpaRows,
     custoSelecionadoRows,
     emProducaoRows,
   ] = await Promise.all([
@@ -1577,10 +1695,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTotalDias(60, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTotalDias(90, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
+    getGiroTtRows(2, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
     getCustoPrecoRows(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
+    getEntradaDpaRows(productCodesFiltro, filtro.dataPosicao),
     getCustoProducaoRows(productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
@@ -1628,6 +1748,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     mapa.set(r.branch_code, decimalToNumber(r.quantidade));
     giroTt1PorProductCode.set(r.product_code, mapa);
   }
+  const giroTt2PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt2Rows) {
+    const mapa = giroTt2PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt2PorProductCode.set(r.product_code, mapa);
+  }
   const giroTt3PorProductCode = new Map<number, Map<number, number>>();
   for (const r of giroTt3Rows) {
     const mapa = giroTt3PorProductCode.get(r.product_code) || new Map<number, number>();
@@ -1652,6 +1778,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   const ultimaEntradaPorProductCode = new Map<number, Date>();
   for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
+
+  const entradaDpaProductCodes = new Set<number>();
+  for (const r of entradaDpaRows) entradaDpaProductCodes.add(r.product_code);
 
   const custoSelecionadoPorProductCode = new Map<number, number>();
   for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
@@ -1716,6 +1845,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   let estoqueMortoValor = 0;
   let estoquePromocaoQtd = 0;
   let estoquePromocaoValor = 0;
+  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const rupturaBasicoAcc = rupturaLinhaAccVazio();
+  const rupturaRenovavelAcc = rupturaLinhaAccVazio();
 
   const colunasAtivas = branchFiltro
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
@@ -1838,6 +1972,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     // lojas selecionadas. Assim os cards "Giro TT 1/3/6" ficam coerentes com "Estoque Total".
     // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2).
     const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt2 = productCode !== null ? somaMapaFiltrado(giroTt2PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
@@ -1861,9 +1996,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
-      vendaVarejoSku += (mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0) * config.coberturaMeses;
+      vendaVarejoSku += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
     }
-    const vendaAtacadoSku = (mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0) * config.coberturaMeses;
+    const vendaAtacadoSku = mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0;
     const valorEstoqueSku = estTt * (custo ?? 0);
     const valorEstoqueAnoAnteriorSku = estTtAnoAnterior * (custo ?? 0);
 
@@ -1882,10 +2017,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
     statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + estTt);
-    if (statusBucketKey === 'FORA DE LINHA') {
+    if (temCoberturaCritica(estTt, giroTt1)) {
       estoqueMortoQtd += estTt;
       estoqueMortoValor += valorEstoqueSku;
-    } else if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+    }
+    const referenceCodeParaKpi = identidade.reference_code || sku;
+    if (giroTt1 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    if (giroTt2 <= 0 && giroTt3 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    if (giroTt3 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    const linhaSku = linhaBucket(identidade.linha);
+    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
+    if (rupturaAcc && productCode !== null && statusAtivo(identidade.status) && entradaDpaProductCodes.has(productCode)) {
+      rupturaAcc.totalSkus += 1;
+      if (estTt <= 0) rupturaAcc.skus += 1;
+    }
+    if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += estTt;
       estoquePromocaoValor += valorEstoqueSku;
     }
@@ -2114,9 +2260,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.
   function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
-    const mediaMensalVarejo = acc.vendaVarejo / config.coberturaMeses;
-    const mediaMensalAtacado = acc.vendaAtacado / config.coberturaMeses;
-    const mediaMensalGeral = (acc.vendaVarejo + acc.vendaAtacado) / config.coberturaMeses;
+    const mediaMensalVarejo = acc.vendaVarejo;
+    const mediaMensalAtacado = acc.vendaAtacado;
+    const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
     return {
       label,
       estoqueVarejo: round(acc.estVarejo, 0),
@@ -2175,9 +2321,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
   const kpisExtra: RelatorioBaseKpisExtra = {
-    coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, (vendaVarejoTotal + vendaAtacadoTotal) / config.coberturaMeses),
-    coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal / config.coberturaMeses),
-    coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal / config.coberturaMeses),
+    coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
+    coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal),
+    coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
     giroAnualizado,
     valorEstoqueTotal: round(valorEstoqueTotal, 2),
     valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
@@ -2192,6 +2338,13 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
     coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
     referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
+    itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
+    itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
+    itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+    ruptura: {
+      basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
+      renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
+    },
     statusBreakdown,
   };
 

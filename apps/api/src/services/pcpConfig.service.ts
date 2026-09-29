@@ -1,6 +1,8 @@
 import { prisma } from '../config/database.js';
 
 const ATACADO_COBERTURA_BASES = ['fabrica_total', 'atacado_only'];
+const META_COBERTURA_BASICO_MESES = 4;
+const META_COBERTURA_STYLE_MESES = 3;
 
 export interface UpdateConfigInput {
   relatorio: string;
@@ -137,11 +139,25 @@ export async function upsertCoberturaIdeal(relatorio: string, items: CoberturaId
 // Metas da tela Visao Geral (cards com meta/gap) - upsert-on-read, defaults =
 // valores do mockup enviado pelo usuario (ja definidos no schema).
 export async function getMetaVisaoGeral(relatorio: string) {
-  return prisma.pcpMetaVisaoGeral.upsert({
+  const meta = await prisma.pcpMetaVisaoGeral.upsert({
     where: { relatorio },
-    create: { relatorio },
+    create: {
+      relatorio,
+      metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
+      metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
+    },
     update: {},
   });
+  if (Number(meta.metaCoberturaBasicoMeses) === 3 && Number(meta.metaCoberturaColecaoMeses) === 1.5) {
+    return prisma.pcpMetaVisaoGeral.update({
+      where: { relatorio },
+      data: {
+        metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
+        metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
+      },
+    });
+  }
+  return meta;
 }
 
 export async function updateMetaVisaoGeral(input: UpdateMetaVisaoGeralInput, userId?: number) {

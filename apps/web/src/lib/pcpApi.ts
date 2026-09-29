@@ -394,7 +394,28 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
+  ruptura: {
+    basico: RelatorioBaseRupturaLinhaKpi;
+    renovavel: RelatorioBaseRupturaLinhaKpi;
+  };
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAnaliseKpi {
+  quantidade: number;
+  referencias: number;
+  quantidadePercent: number;
+  valor: number;
+  valorPercent: number;
+}
+
+export interface RelatorioBaseRupturaLinhaKpi {
+  skus: number;
+  totalSkus: number;
+  percent: number;
 }
 
 export interface RelatorioBaseMatrizLinha {

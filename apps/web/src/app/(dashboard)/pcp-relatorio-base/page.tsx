@@ -20,6 +20,7 @@ import {
   RelatorioBaseRow,
   RelatorioBaseReferenciaRow,
   RelatorioBaseMatrizLinha,
+  RelatorioBaseEstoqueAnaliseKpi,
   VisaoGeralExtrasResponse,
   relatorioBaseApi,
   visaoGeralApi,
@@ -30,13 +31,17 @@ import { exportToCsv } from '@/lib/exportCsv';
 import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const DIMENSAO_OPTIONS = [
-  { value: 'linha', label: 'Por linha (Básico/Coleção)' },
+  { value: 'linha', label: 'Por linha (Básico/Style)' },
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
 ];
 
 function gapDe(valor: number | null, meta: number): number {
   return valor === null ? 0 : round1(valor - meta);
+}
+function gapPercentualDe(valor: number | null, meta: number): number {
+  if (valor === null || meta <= 0) return 0;
+  return ((valor - meta) / meta) * 100;
 }
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -47,6 +52,10 @@ function giroSobreEstoque(giro: number | undefined, estoque: number | undefined)
 }
 function formatMeses(value: number | null | undefined, decimals: number): string {
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
+}
+
+function formatEstoqueAnaliseSubtitle(kpi: RelatorioBaseEstoqueAnaliseKpi): string {
+  return `${formatNumber(kpi.referencias)} refs | ${formatNumber(kpi.quantidadePercent, 1)}% das peças | ${formatMoney(kpi.valor)} (${formatNumber(kpi.valorPercent, 1)}% valor)`;
 }
 
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
@@ -957,20 +966,17 @@ export default function PcpRelatorioBasePage() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPIMetaCard
-          title="Cobertura geral"
-          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
-          meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
-          invertido
-          isLoading={isLoading || isLoadingExtras}
-        />
-        <KPIMetaCard
-          title="Giro anualizado"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
-          meta={`${extras?.meta.metaGiroAnualizado.toFixed(1) ?? '—'}x`}
-          gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
-          isLoading={isLoading || isLoadingExtras}
+        <KPICard
+          title="Estoque Total"
+          value={formatNumber(data?.kpis.estTt || 0)}
+          subtitle={
+            data
+              ? `${formatNumber(data.kpisExtra.referenciasComEstoque || 0)} referências com estoque | ${formatNumber(data.kpis.skuCount || 0)} SKUs`
+              : undefined
+          }
+          color="blue"
+          valueSize="sm"
+          isLoading={isLoading}
         />
         <KPICard
           title="Valor em Estoque"
@@ -982,100 +988,108 @@ export default function PcpRelatorioBasePage() {
           isLoading={isLoading}
         />
         <KPIMetaCard
-          title="Estoque morto (Fora de Linha)"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.estoqueMortoPercent.toFixed(1)}%`}
-          meta={`${extras?.meta.metaEstoqueMortoPercent.toFixed(1) ?? '—'}%`}
-          gap={gapDe(data?.kpisExtra.estoqueMortoPercent ?? null, extras?.meta.metaEstoqueMortoPercent ?? 0)}
+          title="Cobertura geral"
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
+          gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
           invertido
-          subtitle={data ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)}` : undefined}
+          isLoading={isLoading || isLoadingExtras}
+        />
+        <KPIMetaCard
+          title="Giro anual"
+          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
+          meta={`${extras?.meta.metaGiroAnualizado.toFixed(1) ?? '—'}x`}
+          gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
           isLoading={isLoading || isLoadingExtras}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPICard
-          title="Fora de Linha em Promoção"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.estoquePromocaoPercent.toFixed(1)}%`}
-          subtitle={
-            data
-              ? `${formatNumber(data.kpisExtra.estoquePromocaoQtd)} peças | ${formatMoney(data.kpisExtra.estoquePromocaoValor)}`
-              : undefined
-          }
-          color="yellow"
-          valueSize="md"
-          isLoading={isLoading}
-        />
+        <KPICard title="Peças Vendidas 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPIMetaCard
           title="Cobertura Básico"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
-          title="Cobertura Básico Renovável"
+          title="Cobertura Renovável"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasicoRenovavel, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
-          title="Cobertura Coleção"
+          title="Cobertura Style"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaColecao, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaColecaoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-        <KPICard title="SKUs" value={formatNumber(data?.kpis.skuCount || 0)} color="red" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Estoque Total" value={formatNumber(data?.kpis.estTt || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Referências com Estoque" value={formatNumber(data?.kpisExtra.referenciasComEstoque || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 60 dias" value={formatNumber(data?.kpis.giroTt60 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt60, data?.kpis.estTt)} color="yellow" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 90 dias" value={formatNumber(data?.kpis.giroTt90 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt90, data?.kpis.estTt)} color="purple" valueSize="sm" isLoading={isLoading} />
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         <KPICard
-          title={`SKUs em risco${extras ? ` (${extras.skusEmRisco.skusEmRiscoTotal}/${extras.skusEmRisco.totalSkus})` : ''}`}
-          value={isLoadingExtras || !extras ? '—' : `${extras.skusEmRisco.percent.toFixed(1)}%`}
-          color="yellow"
-          valueSize="md"
-          isLoading={isLoadingExtras}
-        />
-        <KPICard
-          title="Referências críticas"
-          value={formatNumber(extras?.skusEmRisco.referenciasCriticas || 0)}
+          title="Estoque crítico"
+          value={isLoading || !data ? '—' : `${data.kpisExtra.estoqueMortoPercent.toFixed(1)}%`}
+          subtitle={
+            data
+              ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)} a custo (${data.kpisExtra.estoqueMortoPercent.toFixed(1)}% do total)`
+              : undefined
+          }
           color="red"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
         <KPICard
-          title={`Estoque sem giro 90+ dias${extras ? ` (${formatNumber(extras.estoqueSemGiro.find((r) => r.dias === 91)?.sku_count || 0)} SKUs)` : ''}`}
-          value={
-            isLoadingExtras || !extras
-              ? '—'
-              : formatMoney(extras.estoqueSemGiro.find((r) => r.dias === 91)?.valor || 0)
-          }
+          title="Itens sem venda"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensSemVenda30d.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensSemVenda30d) : undefined}
+          color="yellow"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Itens envelhecidos 60/90 dias"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos60a90d.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos60a90d) : undefined}
           color="purple"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
         <KPICard
-          title="Curva A (% do valor vendido)"
+          title="Itens envelhecidos >90 dias"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos90Mais.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos90Mais) : undefined}
+          color="red"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Ruptura"
           value={
-            isLoadingExtras || !extras
+            isLoading || !data
               ? '—'
-              : `${extras.curvaAbc.find((c) => c.curva === 'A')?.percentDoTotal.toFixed(1) ?? 0}%`
+              : `${formatNumber(data.kpisExtra.ruptura.basico.skus + data.kpisExtra.ruptura.renovavel.skus)} SKUs`
+          }
+          subtitle={
+            data
+              ? `Básico: ${formatNumber(data.kpisExtra.ruptura.basico.skus)} (${formatNumber(data.kpisExtra.ruptura.basico.percent, 1)}%) | Renovável: ${formatNumber(data.kpisExtra.ruptura.renovavel.skus)} (${formatNumber(data.kpisExtra.ruptura.renovavel.percent, 1)}%)`
+              : undefined
           }
           color="green"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
       </div>
 
@@ -1411,13 +1425,6 @@ export default function PcpRelatorioBasePage() {
                 onChange={(e) => setMeta({ ...meta, metaGiroAnualizado: Number(e.target.value) })}
               />
               <Input
-                label="Meta estoque morto (%)"
-                type="number"
-                step="0.1"
-                value={meta.metaEstoqueMortoPercent}
-                onChange={(e) => setMeta({ ...meta, metaEstoqueMortoPercent: Number(e.target.value) })}
-              />
-              <Input
                 label="Meta cobertura Básico/Renovável (meses)"
                 type="number"
                 step="0.1"
@@ -1425,7 +1432,7 @@ export default function PcpRelatorioBasePage() {
                 onChange={(e) => setMeta({ ...meta, metaCoberturaBasicoMeses: Number(e.target.value) })}
               />
               <Input
-                label="Meta cobertura Coleção (meses)"
+                label="Meta cobertura Style (meses)"
                 type="number"
                 step="0.1"
                 value={meta.metaCoberturaColecaoMeses}

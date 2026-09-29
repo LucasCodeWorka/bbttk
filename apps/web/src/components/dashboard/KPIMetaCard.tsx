@@ -12,11 +12,13 @@ interface KPIMetaCardProps {
    * pra metricas onde ficar ACIMA da meta é o problema (ex: cobertura, estoque morto).
    * Quando false (padrao), gap positivo = bom - mesma polaridade do resto do dashboard. */
   invertido?: boolean;
+  gapFormato?: 'numero' | 'percentual';
+  gapNegativoCor?: 'verde' | 'azul';
   subtitle?: string;
   isLoading?: boolean;
 }
 
-export function KPIMetaCard({ title, value, meta, gap, invertido, subtitle, isLoading }: KPIMetaCardProps) {
+export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = 'numero', gapNegativoCor = 'verde', subtitle, isLoading }: KPIMetaCardProps) {
   if (isLoading) {
     return (
       <Card className="border-l-4 border-l-gray-200">
@@ -28,9 +30,9 @@ export function KPIMetaCard({ title, value, meta, gap, invertido, subtitle, isLo
   }
 
   const bom = invertido ? gap <= 0 : gap >= 0;
-  const gapCor = bom ? 'text-green-600' : 'text-red-600';
-  const borderCor = bom ? 'border-l-[var(--bbtk-green)]' : 'border-l-[var(--bbtk-red)]';
-  const gapTexto = `${gap > 0 ? '+' : ''}${gap.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}`;
+  const gapCor = gap < 0 && gapNegativoCor === 'azul' ? 'text-blue-600' : bom ? 'text-green-600' : 'text-red-600';
+  const borderCor = gap < 0 && gapNegativoCor === 'azul' ? 'border-l-[var(--bbtk-blue)]' : bom ? 'border-l-[var(--bbtk-green)]' : 'border-l-[var(--bbtk-red)]';
+  const gapTexto = `${gap > 0 ? '+' : ''}${gap.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${gapFormato === 'percentual' ? '%' : ''}`;
 
   return (
     <Card className={cn('border-l-4', borderCor)}>
