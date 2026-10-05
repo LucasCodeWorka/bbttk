@@ -3,6 +3,7 @@ import { prisma } from '../config/database.js';
 const ATACADO_COBERTURA_BASES = ['fabrica_total', 'atacado_only'];
 const META_COBERTURA_BASICO_MESES = 4;
 const META_COBERTURA_STYLE_MESES = 3;
+const META_GIRO_ANUALIZADO = 3;
 
 export interface UpdateConfigInput {
   relatorio: string;
@@ -143,15 +144,20 @@ export async function getMetaVisaoGeral(relatorio: string) {
     where: { relatorio },
     create: {
       relatorio,
+      metaGiroAnualizado: META_GIRO_ANUALIZADO,
       metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
       metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
     },
     update: {},
   });
-  if (Number(meta.metaCoberturaBasicoMeses) === 3 && Number(meta.metaCoberturaColecaoMeses) === 1.5) {
+  if (
+    (Number(meta.metaCoberturaBasicoMeses) === 3 && Number(meta.metaCoberturaColecaoMeses) === 1.5) ||
+    Number(meta.metaGiroAnualizado) === 3.4
+  ) {
     return prisma.pcpMetaVisaoGeral.update({
       where: { relatorio },
       data: {
+        metaGiroAnualizado: META_GIRO_ANUALIZADO,
         metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
         metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
       },

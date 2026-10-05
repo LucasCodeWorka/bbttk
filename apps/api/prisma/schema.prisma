@@ -475,7 +475,7 @@ model PcpMetaVisaoGeral {
   id                        Int      @id @default(autoincrement())
   relatorio                 String   @unique @db.VarChar(50)
   metaCoberturaGeralMeses   Decimal  @default(3.5) @map("meta_cobertura_geral_meses") @db.Decimal(6, 2)
-  metaGiroAnualizado        Decimal  @default(3.4) @map("meta_giro_anualizado") @db.Decimal(6, 2)
+  metaGiroAnualizado        Decimal  @default(3.0) @map("meta_giro_anualizado") @db.Decimal(6, 2)
   metaEstoqueMortoPercent   Decimal  @default(10) @map("meta_estoque_morto_percent") @db.Decimal(6, 2)
   metaCoberturaBasicoMeses  Decimal  @default(4.0) @map("meta_cobertura_basico_meses") @db.Decimal(6, 2)
   metaCoberturaColecaoMeses Decimal  @default(3.0) @map("meta_cobertura_colecao_meses") @db.Decimal(6, 2)

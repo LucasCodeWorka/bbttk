@@ -1583,7 +1583,7 @@ async function getRelatorioBaseAnalitico(
     }))
     .sort((a, b) => b.estTt - a.estTt);
   const giroAnualizado =
-    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 365) / (30 * kpis.estTt), 2) : 0;
+    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
@@ -2334,10 +2334,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     }))
     .sort((a, b) => b.estTt - a.estTt);
 
-  // Giro anualizado em vezes/ano usando a velocidade dos ultimos 30 dias:
-  // cobertura em dias = (estoque / giro 30d) * 30; giros/ano = 365 / cobertura em dias.
+  // Giro anual em vezes/ano usando 12 periodos de 30 dias, igual ao BI:
+  // cobertura em meses = estoque / venda 30d; giro anual = 12 / cobertura.
   const giroAnualizado =
-    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 365) / (30 * kpis.estTt), 2) : 0;
+    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 

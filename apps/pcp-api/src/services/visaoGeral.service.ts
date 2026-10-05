@@ -4,6 +4,7 @@ import { prisma } from '../config/database.js';
 const META_VISAO_GERAL_KEY = 'visao_geral';
 const META_COBERTURA_BASICO_MESES = 4;
 const META_COBERTURA_STYLE_MESES = 3;
+const META_GIRO_ANUALIZADO = 3;
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -30,18 +31,21 @@ export async function getVisaoGeralExtras(_filtro: VisaoGeralExtrasFiltro) {
     where: { relatorio: META_VISAO_GERAL_KEY },
     create: {
       relatorio: META_VISAO_GERAL_KEY,
+      metaGiroAnualizado: META_GIRO_ANUALIZADO,
       metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
       metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
     },
     update: {},
   });
   if (
-    decimalToNumber(metaRow.metaCoberturaBasicoMeses) === 3 &&
-    decimalToNumber(metaRow.metaCoberturaColecaoMeses) === 1.5
+    (decimalToNumber(metaRow.metaCoberturaBasicoMeses) === 3 &&
+      decimalToNumber(metaRow.metaCoberturaColecaoMeses) === 1.5) ||
+    decimalToNumber(metaRow.metaGiroAnualizado) === 3.4
   ) {
     metaRow = await prisma.pcpMetaVisaoGeral.update({
       where: { relatorio: META_VISAO_GERAL_KEY },
       data: {
+        metaGiroAnualizado: META_GIRO_ANUALIZADO,
         metaCoberturaBasicoMeses: META_COBERTURA_BASICO_MESES,
         metaCoberturaColecaoMeses: META_COBERTURA_STYLE_MESES,
       },

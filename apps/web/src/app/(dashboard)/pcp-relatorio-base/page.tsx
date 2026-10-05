@@ -55,6 +55,11 @@ function formatMeses(value: number | null | undefined, decimals: number): string
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
 }
 
+function formatVezes(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return `${formatNumber(value, Number.isInteger(value) ? 0 : 1)}x`;
+}
+
 function formatEstoqueAnaliseSubtitle(kpi: RelatorioBaseEstoqueAnaliseKpi): string {
   return `${formatNumber(kpi.referencias)} refs | ${formatNumber(kpi.quantidadePercent, 1)}% das peças | ${formatMoney(kpi.valor)} (${formatNumber(kpi.valorPercent, 1)}% valor)`;
 }
@@ -1005,7 +1010,7 @@ export default function PcpRelatorioBasePage() {
         <KPIMetaCard
           title="Giro anual"
           value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
-          meta={`${extras?.meta.metaGiroAnualizado.toFixed(1) ?? '—'}x`}
+          meta={formatVezes(extras?.meta.metaGiroAnualizado)}
           gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
           isLoading={isLoading || isLoadingExtras}
         />
