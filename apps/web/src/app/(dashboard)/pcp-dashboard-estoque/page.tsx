@@ -15,7 +15,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { DashboardEstoqueBucket, DashboardEstoqueProdutoSugestao, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
 
-const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'grupo', 'categoria', 'genero', 'status'];
+const FILTROS_OCULTOS = new Set(['grupo', 'campanha', 'motorPromocional']);
+const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'categoria', 'genero', 'status', 'lancamento', 'modelo', 'tecido', 'tipo'];
 type SortDir = 'asc' | 'desc';
 type SortKey = 'referencia' | 'descricao' | 'colecao' | 'linha' | 'categoria' | 'quantidade' | 'custo' | 'valorCusto' | `saldo-${number}`;
 
@@ -240,7 +241,6 @@ export default function DashboardEstoquePage() {
         stockCodes: tiposEstoqueSelecionados.length ? tiposEstoqueSelecionados.map(Number) : undefined,
         tipo: produtoFiltro.tipo,
         categoria: produtoFiltro.categoria,
-        grupo: produtoFiltro.grupo,
         linha: produtoFiltro.linha,
         colecao: produtoFiltro.colecao,
         genero: produtoFiltro.genero,
@@ -248,8 +248,6 @@ export default function DashboardEstoquePage() {
         tecido: produtoFiltro.tecido,
         lancamento: produtoFiltro.lancamento,
         status: produtoFiltro.status,
-        motorPromocional: produtoFiltro.motorPromocional,
-        campanha: produtoFiltro.campanha,
         refresh,
       });
       setData(response);
@@ -285,7 +283,7 @@ export default function DashboardEstoquePage() {
   }, [lojasFiltro, user]);
 
   const classificacoesOrdenadas = useMemo(() => {
-    return [...classificacoes].sort((a, b) => {
+    return classificacoes.filter((item) => !FILTROS_OCULTOS.has(item.chave)).sort((a, b) => {
       const ia = FILTROS_PRIORITARIOS.indexOf(a.chave);
       const ib = FILTROS_PRIORITARIOS.indexOf(b.chave);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.label.localeCompare(b.label);
