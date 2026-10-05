@@ -6,9 +6,9 @@ import { CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE, FABRICA_BRANCH_CODE, P
 
 const RELATORIO_KEY = 'relatorio_base';
 const STOCK_CODE_LABELS: Record<number, string> = {
-  1: 'FISICO',
-  5: 'DPA (SEGUNDA QUALIDADE)',
-  8: 'ATACADO',
+  1: 'Varejo',
+  5: '2ª qualidade',
+  8: 'Atacado',
 };
 const DASHBOARD_DPA_STOCK_CODE = 5;
 const DASHBOARD_ESTOQUE_CACHE_MAX_ENTRIES = 20;
@@ -30,7 +30,9 @@ function createDashboardPrisma() {
 }
 
 function stockCodeLabel(stockCode: number, stockDescription?: string | null) {
-  const label = STOCK_CODE_LABELS[stockCode] || stockDescription || '';
+  const dashboardLabel = STOCK_CODE_LABELS[stockCode];
+  if (dashboardLabel) return dashboardLabel;
+  const label = stockDescription || '';
   return label ? `${stockCode} - ${label}` : String(stockCode);
 }
 
@@ -283,10 +285,11 @@ function baseCte(filtro: DashboardEstoqueFiltro): Prisma.Sql {
       ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
     ),
     precos AS (
-      SELECT product_code, valor AS custo
+      SELECT product_code, MAX(valor) AS custo
       FROM produto_custos
       WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE}
         AND cost_code = ${CUSTO_PRODUCAO_CODE}
+      GROUP BY product_code
     ),
     saldo AS (
       SELECT
@@ -489,7 +492,14 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       FROM saldo
       WHERE quantidade <> 0
       GROUP BY stock_code
-      ORDER BY stock_code
+      ORDER BY
+        CASE stock_code
+          WHEN 1 THEN 1
+          WHEN ${ATACADO_STOCK_CODE} THEN 2
+          WHEN ${DASHBOARD_DPA_STOCK_CODE} THEN 3
+          ELSE 99
+        END,
+        stock_code
     `,
     db.$queryRaw<ReferenciaRow[]>`
       ${baseCte(filtro)}
@@ -503,7 +513,10 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
         MIN(status) AS status,
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
-        AVG(custo) FILTER (WHERE custo IS NOT NULL) AS custo,
+        CASE
+          WHEN SUM(quantidade) FILTER (WHERE custo IS NOT NULL) = 0 THEN NULL
+          ELSE SUM(quantidade * custo) FILTER (WHERE custo IS NOT NULL) / SUM(quantidade) FILTER (WHERE custo IS NOT NULL)
+        END AS custo,
         COUNT(DISTINCT product_sku) AS skus
       FROM saldo
       WHERE quantidade <> 0
@@ -530,7 +543,10 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
         COALESCE(tamanho, 'SEM TAM') AS tamanho,
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
-        AVG(custo) FILTER (WHERE custo IS NOT NULL) AS custo,
+        CASE
+          WHEN SUM(quantidade) FILTER (WHERE custo IS NOT NULL) = 0 THEN NULL
+          ELSE SUM(quantidade * custo) FILTER (WHERE custo IS NOT NULL) / SUM(quantidade) FILTER (WHERE custo IS NOT NULL)
+        END AS custo,
         COUNT(DISTINCT product_sku) AS skus
       FROM saldo
       WHERE quantidade <> 0
@@ -735,7 +751,14 @@ export async function getFiltrosDashboardEstoque() {
         COUNT(DISTINCT product_sku) AS qtd_skus
       FROM prd_saldo
       GROUP BY stock_code
-      ORDER BY stock_code
+      ORDER BY
+        CASE stock_code
+          WHEN 1 THEN 1
+          WHEN ${ATACADO_STOCK_CODE} THEN 2
+          WHEN ${DASHBOARD_DPA_STOCK_CODE} THEN 3
+          ELSE 99
+        END,
+        stock_code
     `,
   ]);
 

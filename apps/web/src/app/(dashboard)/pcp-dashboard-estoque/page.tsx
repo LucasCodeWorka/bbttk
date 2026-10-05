@@ -12,6 +12,7 @@ import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table';
 import { useAuth } from '@/contexts/AuthContext';
+import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
 import { DashboardEstoqueBucket, DashboardEstoqueProdutoSugestao, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
 import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
 
@@ -147,7 +148,7 @@ function ProdutoMultiSelect({
   const sugestoesFiltradas = sugestoes.filter((produto) => !selected.some((item) => item.referencia === produto.referencia));
 
   return (
-    <div className="xl:col-span-2" ref={containerRef}>
+    <div className="min-w-0" ref={containerRef}>
       <label className="block text-sm font-medium text-gray-700 mb-1">Buscar produto</label>
       <div className="min-h-[42px] rounded-lg border border-gray-300 bg-white px-2 py-1.5 focus-within:ring-2 focus-within:ring-[var(--bbtk-red)] focus-within:border-transparent">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -173,7 +174,7 @@ function ProdutoMultiSelect({
               setOpen(true);
             }}
             placeholder={selected.length ? 'Adicionar outra referencia...' : 'Digite referencia ou descricao'}
-            className="min-w-[220px] flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none"
+            className="min-w-[140px] flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none"
           />
         </div>
       </div>
@@ -349,6 +350,65 @@ export default function DashboardEstoquePage() {
     });
   }, [data?.itens, sortDir, sortKey]);
 
+  function exportarExcel() {
+    if (!data || itensOrdenados.length === 0) return;
+
+    const colunas: ExcelColumn[] = [
+      { key: 'referencia', header: 'Referencia', width: 18, type: 'text' },
+      { key: 'descricao', header: 'Descricao', width: 36, type: 'text' },
+      { key: 'colecao', header: 'Colecao', width: 24, type: 'text' },
+      { key: 'linha', header: 'Linha', width: 18, type: 'text' },
+      { key: 'categoria', header: 'Categoria', width: 18, type: 'text' },
+      { key: 'quantidade', header: 'Pecas', width: 12, type: 'number' },
+      ...tiposSaldoTabela.map((tipo) => ({
+        key: `saldo_${tipo.stockCode}`,
+        header: tipo.label,
+        width: 15,
+        type: 'number' as const,
+      })),
+      { key: 'custo', header: 'Custo un.', width: 13, type: 'currency' },
+      { key: 'valorCusto', header: 'Valor a custo', width: 16, type: 'currency' },
+    ];
+
+    const dados = itensOrdenados.map((item) => {
+      const row: Record<string, unknown> = {
+        referencia: item.referencia,
+        descricao: item.descricao,
+        colecao: item.colecao || '',
+        linha: item.linha || '',
+        categoria: item.categoria || '',
+        quantidade: item.quantidade,
+        custo: item.custo ?? '',
+        valorCusto: item.valorCusto,
+      };
+
+      for (const tipo of tiposSaldoTabela) {
+        row[`saldo_${tipo.stockCode}`] = saldoQuantidade(item.saldos, tipo.stockCode);
+      }
+
+      return row;
+    });
+
+    const totals: Record<string, number | string> = {
+      referencia: 'Total',
+      quantidade: itensOrdenados.reduce((sum, item) => sum + item.quantidade, 0),
+      valorCusto: itensOrdenados.reduce((sum, item) => sum + item.valorCusto, 0),
+    };
+
+    for (const tipo of tiposSaldoTabela) {
+      totals[`saldo_${tipo.stockCode}`] = itensOrdenados.reduce((sum, item) => sum + saldoQuantidade(item.saldos, tipo.stockCode), 0);
+    }
+
+    exportToExcel({
+      filename: `ReferenciasEstoque_${data.data}`,
+      sheetName: 'Referencias',
+      title: `Referencias em estoque - ${formatDate(data.data)}`,
+      columns: colunas,
+      data: dados,
+      totals,
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -373,7 +433,7 @@ export default function DashboardEstoquePage() {
       </div>
 
       <Card>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <ProdutoMultiSelect token={token} selected={produtosSelecionados} onChange={setProdutosSelecionados} />
           <FilialMultiSelect
             label="Filiais"
@@ -416,7 +476,7 @@ export default function DashboardEstoquePage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <KPICard title="Pecas em estoque" value={formatNumber(total?.quantidade || 0)} color="red" isLoading={isLoading} />
         <KPICard title="Valor a custo" value={formatMoney(total?.valorCusto || 0)} color="green" valueSize="md" isLoading={isLoading} />
         <KPICard title="SKUs com saldo" value={formatNumber(total?.skus || 0)} color="purple" isLoading={isLoading} />
@@ -424,7 +484,7 @@ export default function DashboardEstoquePage() {
         <KPICard title="Filiais/locais" value={formatNumber(total?.filiais || 0)} color="yellow" isLoading={isLoading} />
       </div>
 
-      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {GRAFICOS.map((grafico) => (
           <ChartCard
             key={grafico.key}
@@ -438,6 +498,9 @@ export default function DashboardEstoquePage() {
       <Card>
         <CardHeader>
           <CardTitle>Referencias em estoque</CardTitle>
+          <Button variant="secondary" size="sm" onClick={exportarExcel} disabled={!data || itensOrdenados.length === 0 || isLoading}>
+            Exportar Excel
+          </Button>
         </CardHeader>
         <Table topScroll className="max-h-[560px] overflow-y-auto" tableClassName="min-w-[1180px]">
           <TableHead>
@@ -452,7 +515,7 @@ export default function DashboardEstoquePage() {
                 <ThSort key={tipo.stockCode} label={tipo.label} sortKeyName={`saldo-${tipo.stockCode}`} align="right" title={tipo.label} />
               ))}
               <ThSort label="Custo un." sortKeyName="custo" align="right" />
-              <ThSort label="Valor" sortKeyName="valorCusto" align="right" />
+              <ThSort label="Valor a custo" sortKeyName="valorCusto" align="right" />
             </TableRow>
           </TableHead>
           <TableBody>
