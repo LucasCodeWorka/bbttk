@@ -370,6 +370,7 @@ export interface RelatorioBaseResponse {
     linha: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
+    status: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
@@ -424,6 +425,9 @@ export interface RelatorioBaseMatrizLinha {
   estoqueAtacado: number;
   estoqueTotal: number;
   valorEstoque: number;
+  vendaVarejo: number;
+  vendaAtacado: number;
+  vendaTotal: number;
   coberturaVarejo: number | null;
   coberturaAtacado: number | null;
   coberturaGeral: number | null;

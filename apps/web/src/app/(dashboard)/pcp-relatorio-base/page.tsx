@@ -34,6 +34,7 @@ const DIMENSAO_OPTIONS = [
   { value: 'linha', label: 'Por linha (Básico/Style)' },
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
+  { value: 'status', label: 'Por status' },
 ];
 
 function gapDe(valor: number | null, meta: number): number {
@@ -68,6 +69,9 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
           <TableCell isHeader align="right">Est. Atacado</TableCell>
           <TableCell isHeader align="right">Est. Total</TableCell>
           <TableCell isHeader align="right">Valor em Estoque</TableCell>
+          <TableCell isHeader align="right">Venda Varejo 30d</TableCell>
+          <TableCell isHeader align="right">Venda Atacado 30d</TableCell>
+          <TableCell isHeader align="right">Venda Total 30d</TableCell>
           <TableCell isHeader align="right">Cob. Varejo</TableCell>
           <TableCell isHeader align="right">Cob. Atacado</TableCell>
           <TableCell isHeader align="right">Cob. Geral</TableCell>
@@ -81,6 +85,9 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
             <TableCell align="right">{formatNumber(linha.estoqueAtacado)}</TableCell>
             <TableCell align="right">{formatNumber(linha.estoqueTotal)}</TableCell>
             <TableCell align="right">{formatMoney(linha.valorEstoque)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaVarejo)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaAtacado)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaTotal)}</TableCell>
             <TableCell align="right">{linha.coberturaVarejo === null ? '—' : `${linha.coberturaVarejo.toFixed(1)}m`}</TableCell>
             <TableCell align="right">{linha.coberturaAtacado === null ? '—' : `${linha.coberturaAtacado.toFixed(1)}m`}</TableCell>
             <TableCell align="right">{linha.coberturaGeral === null ? '—' : `${linha.coberturaGeral.toFixed(1)}m`}</TableCell>
@@ -161,7 +168,7 @@ interface VisaoGeralPageState {
   verPorLoja?: boolean;
   sortKey?: string | null;
   sortDir?: 'asc' | 'desc';
-  dimensao?: 'linha' | 'categoria' | 'genero';
+  dimensao?: 'linha' | 'categoria' | 'genero' | 'status';
 }
 
 function readVisaoGeralPageState(): VisaoGeralPageState | null {
@@ -405,7 +412,7 @@ export default function PcpRelatorioBasePage() {
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
-  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero'>(
+  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero' | 'status'>(
     () => initialPageState?.dimensao || 'linha'
   );
 
@@ -1098,7 +1105,7 @@ export default function PcpRelatorioBasePage() {
           <CardTitle>Cobertura por linha/categoria/gênero × canal</CardTitle>
           <Select
             value={dimensao}
-            onChange={(e) => setDimensao(e.target.value as 'linha' | 'categoria' | 'genero')}
+            onChange={(e) => setDimensao(e.target.value as 'linha' | 'categoria' | 'genero' | 'status')}
             options={DIMENSAO_OPTIONS}
             className="w-64"
           />

@@ -250,6 +250,9 @@ export interface RelatorioBaseMatrizLinha {
   estoqueAtacado: number;
   estoqueTotal: number;
   valorEstoque: number;
+  vendaVarejo: number;
+  vendaAtacado: number;
+  vendaTotal: number;
   coberturaVarejo: number | null;
   coberturaAtacado: number | null;
   coberturaGeral: number | null;
@@ -278,6 +281,7 @@ export interface RelatorioBaseResponse {
     linha: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
+    status: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
@@ -1275,6 +1279,7 @@ async function getRelatorioBaseAnalitico(
   const matrizLinhaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
+  const matrizStatusAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>();
   let valorEstoqueTotal = 0;
   let valorEstoqueAnoAnterior = 0;
@@ -1377,6 +1382,7 @@ async function getRelatorioBaseAnalitico(
     acumularBucket(matrizLinhaAgg, linhaBucket(sku.linha), bucketValores);
     acumularBucket(matrizCategoriaAgg, sku.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, sku.genero?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, sku.status?.trim() || null, bucketValores);
 
     const referenceCode = sku.referenceCode;
     const markupVar = markupPercentual(sku.pdvVar, custo);
@@ -1532,6 +1538,9 @@ async function getRelatorioBaseAnalitico(
       estoqueAtacado: round(acc.estAtacado, 0),
       estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
       valorEstoque: round(acc.valorEstoque, 2),
+      vendaVarejo: round(acc.vendaVarejo, 0),
+      vendaAtacado: round(acc.vendaAtacado, 0),
+      vendaTotal: round(acc.vendaVarejo + acc.vendaAtacado, 0),
       coberturaVarejo: coberturaDe(acc.estVarejo, mediaMensalVarejo),
       coberturaAtacado: coberturaDe(acc.estAtacado, mediaMensalAtacado),
       coberturaGeral: coberturaDe(acc.estVarejo + acc.estAtacado, mediaMensalGeral),
@@ -1560,6 +1569,7 @@ async function getRelatorioBaseAnalitico(
   const matrizLinha = buildMatriz(matrizLinhaAgg);
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
+  const matrizStatus = buildMatriz(matrizStatusAgg);
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
     return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
@@ -1626,6 +1636,7 @@ async function getRelatorioBaseAnalitico(
       linha: matrizLinha,
       categoria: matrizCategoria,
       genero: matrizGenero,
+      status: matrizStatus,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: colunasAtivas,
@@ -1834,6 +1845,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizLinhaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
+  const matrizStatusAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
   let valorEstoqueAnoAnterior = 0;
@@ -1938,6 +1950,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
     const mediaMensalPorBranchDoSku = new Map<number, number>();
+    const venda30PorBranchDoSku = new Map<number, number>();
+    const giroTt1DoProduto = productCode !== null ? giroTt1PorProductCode.get(productCode) : undefined;
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) {
         const estFabrica = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
@@ -1953,6 +1967,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
           cob: coberturaDe(estFabrica, mediaMensalAtacado),
         };
         mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensalAtacado);
+        venda30PorBranchDoSku.set(coluna.branchCode, giroTt1DoProduto?.get(ATACADO_BRANCH_CODE) || 0);
         continue;
       }
 
@@ -1966,6 +1981,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
         cob: coberturaDe(est, mediaMensal),
       };
       mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensal);
+      venda30PorBranchDoSku.set(coluna.branchCode, giroTt1DoProduto?.get(coluna.branchCode) || 0);
     }
 
     // Giro TT respeita o filtro de loja - se filtrado por branch, soma so o giro das
@@ -1996,9 +2012,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
-      vendaVarejoSku += mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0;
+      vendaVarejoSku += venda30PorBranchDoSku.get(coluna.branchCode) || 0;
     }
-    const vendaAtacadoSku = mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0;
+    const vendaAtacadoSku = venda30PorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0;
     const valorEstoqueSku = estTt * (custo ?? 0);
     const valorEstoqueAnoAnteriorSku = estTtAnoAnterior * (custo ?? 0);
 
@@ -2046,6 +2062,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acumularBucket(matrizLinhaAgg, linhaBucket(identidade.linha), bucketValores);
     acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, identidade.status?.trim() || null, bucketValores);
 
     // Referencia/cor/tamanho vem do produto_analitico - fallback pro proprio SKU quando
     // reference_code vier nulo (dado incompleto), pra nao perder a linha, so vira uma
@@ -2269,6 +2286,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       estoqueAtacado: round(acc.estAtacado, 0),
       estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
       valorEstoque: round(acc.valorEstoque, 2),
+      vendaVarejo: round(acc.vendaVarejo, 0),
+      vendaAtacado: round(acc.vendaAtacado, 0),
+      vendaTotal: round(acc.vendaVarejo + acc.vendaAtacado, 0),
       coberturaVarejo: coberturaDe(acc.estVarejo, mediaMensalVarejo),
       coberturaAtacado: coberturaDe(acc.estAtacado, mediaMensalAtacado),
       coberturaGeral: coberturaDe(acc.estVarejo + acc.estAtacado, mediaMensalGeral),
@@ -2299,6 +2319,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizLinha = buildMatriz(matrizLinhaAgg);
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
+  const matrizStatus = buildMatriz(matrizStatusAgg);
 
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
@@ -2371,6 +2392,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       linha: matrizLinha,
       categoria: matrizCategoria,
       genero: matrizGenero,
+      status: matrizStatus,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: colunasAtivas,

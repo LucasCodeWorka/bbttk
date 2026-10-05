@@ -270,7 +270,7 @@ function LinhaStratificacaoCard({ resumo }: { resumo: CurvaResumoItem }) {
 // nao sao calculados no modo SKU).
 function VendaEstoqueResumoTable({ linhas }: { linhas: VendaEstoqueResumoLinha[] }) {
   return (
-    <Table className="overflow-x-auto" tableClassName="text-xs">
+    <Table topScroll tableClassName="min-w-[980px] text-xs">
       <TableHead>
         <TableRow>
           <TableCell isHeader>Curva</TableCell>
@@ -710,11 +710,12 @@ export default function PcpCurvaAbcPage() {
           <CardTitle>{itensFiltrados.length} {visao === 'referencia' ? 'referencias' : 'SKUs'}</CardTitle>
         </CardHeader>
         <Table
+          topScroll
           className={cn(
             'overflow-x-auto',
             itensFiltrados.length > 10 && 'max-h-[560px] overflow-y-auto'
           )}
-          tableClassName="text-[10px] lg:text-xs"
+          tableClassName="min-w-[1320px] text-[10px] lg:text-xs"
         >
           <TableHead className="sticky top-0 z-10">
             <TableRow>

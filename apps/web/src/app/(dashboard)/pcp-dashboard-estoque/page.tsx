@@ -439,7 +439,7 @@ export default function DashboardEstoquePage() {
         <CardHeader>
           <CardTitle>Referencias em estoque</CardTitle>
         </CardHeader>
-        <Table className="max-h-[560px] overflow-y-auto" tableClassName="min-w-[1180px]">
+        <Table topScroll className="max-h-[560px] overflow-y-auto" tableClassName="min-w-[1180px]">
           <TableHead>
             <TableRow>
               <ThSort label="Referencia" sortKeyName="referencia" />

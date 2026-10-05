@@ -688,7 +688,7 @@ export default function PcpAnaliseGradePage() {
         ) : heatmap.linhas.length === 0 ? (
           <div className="py-8 text-center text-gray-500">Nenhuma referencia para mostrar</div>
         ) : (
-          <Table className="max-h-[520px]">
+          <Table topScroll className="max-h-[520px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
                 <ThSortPcp label="Referencia" sortKeyName="referencia" sortKey={heatmapSortKey} sortDir={heatmapSortDir} onSort={handleHeatmapSort} />
@@ -738,7 +738,7 @@ export default function PcpAnaliseGradePage() {
         <CardHeader>
           <CardTitle>{data?.referencias.length || 0} referencias</CardTitle>
         </CardHeader>
-        <Table>
+        <Table topScroll tableClassName="min-w-[1180px]">
           <TableHead>
             <TableRow>
               <ThSortPcp label="Referencia" sortKeyName="referenceCode" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />

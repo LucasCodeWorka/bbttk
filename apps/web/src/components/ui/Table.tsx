@@ -1,20 +1,87 @@
 'use client';
 
-import { CSSProperties, ReactNode, forwardRef } from 'react';
+import { CSSProperties, ReactNode, Ref, forwardRef, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TableProps {
   children: ReactNode;
   className?: string;
   tableClassName?: string;
+  topScroll?: boolean;
+}
+
+function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (!ref) return;
+  if (typeof ref === 'function') ref(value);
+  else ref.current = value;
 }
 
 // forwardRef no wrapper com scroll horizontal - permite que a pagina controle o scroll
 // programaticamente (ex: botoes de "rolar pra esquerda/direita" em tabelas largas).
-export const Table = forwardRef<HTMLDivElement, TableProps>(function Table({ children, className, tableClassName }, ref) {
+export const Table = forwardRef<HTMLDivElement, TableProps>(function Table({ children, className, tableClassName, topScroll }, ref) {
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const syncingRef = useRef(false);
+  const [scrollWidth, setScrollWidth] = useState(0);
+
+  useEffect(() => {
+    if (!topScroll) return;
+
+    const update = () => {
+      const table = tableRef.current;
+      setScrollWidth(table?.scrollWidth || 0);
+    };
+
+    update();
+    if (typeof ResizeObserver === 'undefined' || !tableRef.current) return;
+
+    const observer = new ResizeObserver(update);
+    observer.observe(tableRef.current);
+    return () => observer.disconnect();
+  }, [children, topScroll]);
+
+  function syncFrom(source: 'top' | 'table') {
+    if (!topScroll || syncingRef.current) return;
+    const top = topScrollRef.current;
+    const table = tableScrollRef.current;
+    if (!top || !table) return;
+
+    syncingRef.current = true;
+    if (source === 'top') table.scrollLeft = top.scrollLeft;
+    else top.scrollLeft = table.scrollLeft;
+    requestAnimationFrame(() => {
+      syncingRef.current = false;
+    });
+  }
+
+  if (topScroll) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div
+          ref={topScrollRef}
+          onScroll={() => syncFrom('top')}
+          className="h-5 overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-gray-50"
+        >
+          <div style={{ width: scrollWidth, height: 8 }} />
+        </div>
+        <div
+          ref={(node) => {
+            tableScrollRef.current = node;
+            setRef(ref, node);
+          }}
+          onScroll={() => syncFrom('table')}
+          className={cn('overflow-x-hidden', className, 'overflow-x-hidden')}
+        >
+          <table ref={tableRef} className={cn('w-full text-sm', tableClassName)}>{children}</table>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={ref} className={cn('overflow-x-auto', className)}>
-      <table className={cn('w-full text-sm', tableClassName)}>{children}</table>
+      <table ref={tableRef} className={cn('w-full text-sm', tableClassName)}>{children}</table>
     </div>
   );
 });
