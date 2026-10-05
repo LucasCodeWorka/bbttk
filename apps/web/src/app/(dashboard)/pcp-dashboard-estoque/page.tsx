@@ -21,16 +21,18 @@ type SortDir = 'asc' | 'desc';
 type SortKey = 'referencia' | 'descricao' | 'colecao' | 'linha' | 'categoria' | 'quantidade' | 'custo' | 'valorCusto' | `saldo-${number}`;
 
 const GRAFICOS: Array<{ key: keyof DashboardEstoqueResponse['graficos']; title: string; color: string }> = [
-  { key: 'linha', title: 'Estoque por linha', color: 'var(--bbtk-green)' },
-  { key: 'colecao', title: 'Estoque por colecao', color: 'var(--bbtk-red)' },
-  { key: 'categoria', title: 'Estoque por categoria', color: 'var(--bbtk-orange)' },
   { key: 'filial', title: 'Estoque por filial', color: 'var(--bbtk-blue)' },
+  { key: 'linha', title: 'Estoque por linha', color: 'var(--bbtk-green)' },
+  { key: 'categoria', title: 'Estoque por categoria', color: 'var(--bbtk-orange)' },
+  { key: 'status', title: 'Estoque por status', color: 'var(--bbtk-purple)' },
+  { key: 'colecao', title: 'Estoque por colecao', color: 'var(--bbtk-red)' },
 ];
 
 function ChartCard({ title, data, color }: { title: string; data: DashboardEstoqueBucket[]; color: string }) {
   const chartData = data.map((item) => ({
     name: item.label,
     value: item.quantidade,
+    displayValue: `${formatNumber(item.quantidade)} (${formatNumber(item.pctQuantidade, 1)}%)`,
     color,
   }));
 
@@ -422,7 +424,7 @@ export default function DashboardEstoquePage() {
         <KPICard title="Filiais/locais" value={formatNumber(total?.filiais || 0)} color="yellow" isLoading={isLoading} />
       </div>
 
-      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-5">
         {GRAFICOS.map((grafico) => (
           <ChartCard
             key={grafico.key}

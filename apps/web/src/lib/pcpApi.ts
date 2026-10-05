@@ -191,6 +191,7 @@ export interface DashboardEstoqueResponse {
     colecao: DashboardEstoqueBucket[];
     linha: DashboardEstoqueBucket[];
     categoria: DashboardEstoqueBucket[];
+    status: DashboardEstoqueBucket[];
     filial: DashboardEstoqueBucket[];
   };
   tiposSaldo: DashboardEstoqueSaldoTipo[];

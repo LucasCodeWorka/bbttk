@@ -455,6 +455,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     porColecao,
     porLinha,
     porCategoria,
+    porStatus,
     porFilial,
     tiposSaldoRows,
     referenciasRows,
@@ -477,6 +478,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     getBuckets(db, filtro, 'colecao'),
     getBuckets(db, filtro, 'linha'),
     getBuckets(db, filtro, 'categoria'),
+    getBuckets(db, filtro, 'status'),
     getBucketFilial(db, filtro),
     db.$queryRaw<SaldoTipoRow[]>`
       ${baseCte(filtro)}
@@ -631,6 +633,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       colecao: formatBuckets(porColecao, totalQuantidade),
       linha: formatBuckets(porLinha, totalQuantidade),
       categoria: formatBuckets(porCategoria, totalQuantidade),
+      status: formatBuckets(porStatus, totalQuantidade),
       filial: formatFilialBuckets(porFilial, totalQuantidade),
     },
     tiposSaldo,
