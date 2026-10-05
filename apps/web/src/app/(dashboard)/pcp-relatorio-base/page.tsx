@@ -64,26 +64,76 @@ function formatEstoqueAnaliseSubtitle(kpi: RelatorioBaseEstoqueAnaliseKpi): stri
   return `${formatNumber(kpi.referencias)} refs | ${formatNumber(kpi.quantidadePercent, 1)}% das peças | ${formatMoney(kpi.valor)} (${formatNumber(kpi.valorPercent, 1)}% valor)`;
 }
 
+type MatrizSortKey = keyof Pick<
+  RelatorioBaseMatrizLinha,
+  | 'label'
+  | 'estoqueVarejo'
+  | 'estoqueAtacado'
+  | 'estoqueTotal'
+  | 'valorEstoque'
+  | 'vendaVarejo'
+  | 'vendaAtacado'
+  | 'vendaTotal'
+  | 'coberturaVarejo'
+  | 'coberturaAtacado'
+  | 'coberturaGeral'
+>;
+
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
+  const [sortKey, setSortKey] = useState<MatrizSortKey>('estoqueTotal');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function handleSort(key: string) {
+    const nextKey = key as MatrizSortKey;
+    if (sortKey === nextKey) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(nextKey);
+      setSortDir(nextKey === 'label' ? 'asc' : 'desc');
+    }
+  }
+
+  function sortValue(linha: RelatorioBaseMatrizLinha, key: MatrizSortKey): string | number {
+    if (key === 'label') return linha.label.toLocaleLowerCase('pt-BR');
+    return linha[key] ?? -1;
+  }
+
+  const linhasOrdenadas = useMemo(() => {
+    const totais = linhas.filter((linha) => linha.label === 'Total');
+    const linhasSemTotal = linhas.filter((linha) => linha.label !== 'Total');
+
+    linhasSemTotal.sort((a, b) => {
+      const aVal = sortValue(a, sortKey);
+      const bVal = sortValue(b, sortKey);
+      const cmp = typeof aVal === 'string' || typeof bVal === 'string'
+        ? String(aVal).localeCompare(String(bVal), 'pt-BR')
+        : Number(aVal) - Number(bVal);
+
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return [...linhasSemTotal, ...totais];
+  }, [linhas, sortDir, sortKey]);
+
   return (
     <Table>
       <TableHead>
         <TableRow>
-          <TableCell isHeader>Linha</TableCell>
-          <TableCell isHeader align="right">Est. Varejo</TableCell>
-          <TableCell isHeader align="right">Est. Atacado</TableCell>
-          <TableCell isHeader align="right">Est. Total</TableCell>
-          <TableCell isHeader align="right">Valor em Estoque</TableCell>
-          <TableCell isHeader align="right">Venda Varejo 30d</TableCell>
-          <TableCell isHeader align="right">Venda Atacado 30d</TableCell>
-          <TableCell isHeader align="right">Venda Total 30d</TableCell>
-          <TableCell isHeader align="right">Cob. Varejo</TableCell>
-          <TableCell isHeader align="right">Cob. Atacado</TableCell>
-          <TableCell isHeader align="right">Cob. Geral</TableCell>
+          <ThSortPcp label="Linha" sortKeyName="label" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+          <ThSortPcp label="Est. Varejo" sortKeyName="estoqueVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Est. Atacado" sortKeyName="estoqueAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Valor em Estoque" sortKeyName="valorEstoque" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Varejo 30d" sortKeyName="vendaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Atacado 30d" sortKeyName="vendaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Total 30d" sortKeyName="vendaTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Varejo" sortKeyName="coberturaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Atacado" sortKeyName="coberturaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Geral" sortKeyName="coberturaGeral" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
         </TableRow>
       </TableHead>
       <TableBody>
-        {linhas.map((linha) => (
+        {linhasOrdenadas.map((linha) => (
           <TableRow key={linha.label} isHighlighted={linha.label === 'Total'}>
             <TableCell>{linha.label}</TableCell>
             <TableCell align="right">{formatNumber(linha.estoqueVarejo)}</TableCell>
