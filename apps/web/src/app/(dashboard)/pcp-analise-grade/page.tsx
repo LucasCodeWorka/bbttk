@@ -399,7 +399,7 @@ export default function PcpAnaliseGradePage() {
       const gradeRes = await analiseGradeApi.getGrade(token, filtro);
       setData(gradeRes);
     } catch (error) {
-      showToast('Erro ao carregar Analise de Grade', 'error');
+      showToast('Erro ao carregar Análise de Grade', 'error');
       console.error(error);
     } finally {
       setIsLoading(false);
@@ -567,7 +567,7 @@ export default function PcpAnaliseGradePage() {
     <div className="space-y-6">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">PCP</p>
-        <h1 className="text-2xl font-bold text-gray-900">Analise de Grade</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Análise de Grade</h1>
         <p className="text-gray-500 text-sm mt-1">
           Risco de ruptura por referencia, cor e tamanho com cobertura menor que 1 mes.
         </p>
