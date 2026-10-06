@@ -919,6 +919,20 @@ então usa `classificacao_operacoes.description ILIKE '%ATACADO%'` pra decidir o
   ver `ORDEM_GRADES`/`ordemGrade()`), "Por Categoria" agora agrupa a categoria inteira
   em vez de vir por item, filtros de Linha/Gênero adicionados quando filtra por
   Categoria, coluna de total vendido.
+  ⚠️ **Completado em 06/10/2026** — a ordem acima estava só meio certa:
+  `ORDEM_GRADES` começa com `'UN'`, mas o cadastro do TOTVS grava tamanho único como
+  **`U`** (1.344 SKUs; `UN`/`UNICO`/`ÚNICO` não existem no `produto_analitico.size`).
+  Como `'U'` não casava com a lista, caía no bucket "desconhecido" e era ordenado por
+  **último** em vez de primeiro. Corrigido com `normalizarTamanho()` em
+  `pesosGrades.service.ts`. Além disso, o pedido tinha uma segunda metade que nunca
+  havia sido implementada — "zero onde não houver venda naquele tamanho": o serviço
+  fazia `.filter(v => v.quantidade > 0)`, então tamanho sem venda sumia. Agora existe
+  `getGradeCadastrada()` (grade do cadastro por referência/categoria) e o universo de
+  tamanhos é `grade cadastrada ∪ tamanhos que venderam`, com 0 onde não houve venda.
+  **Não usar `ORDEM_GRADES` como universo** — a maioria das referências tem 3 a 6
+  tamanhos (produto de tamanho único ficaria com 9 colunas de zero) e existem 46
+  tamanhos distintos no cadastro, muitos fora da lista (PP, 12, 14, 36-44, numeração de
+  calçado 17-33). Referência que não vendeu nada no período continua fora da tela.
 - `metaClassificacao.service.ts` ganhou `status` como `tipoClassificacao` válido (antes
   só tinha categoria/linha/genero/colecao).
 

@@ -51,12 +51,25 @@ interface IdentidadeRow {
   reference_name: string | null;
 }
 
+// Ordem fixa pedida pelo cliente: UN P M G GG 2 4 6 8 10. Tamanho fora dessa lista
+// (PP, 12, 14, 36-44, numeracao de calcado...) vai pro fim, desempatado por ordem
+// numerica/alfabetica - sao 46 tamanhos distintos no cadastro, a lista cobre so os
+// principais de proposito.
 const ORDEM_GRADES = ['UN', 'P', 'M', 'G', 'GG', '2', '4', '6', '8', '10'];
 
 function ordemGrade(tamanho: string): number {
-  const normalizado = tamanho.trim().toUpperCase().replace('ÚNICO', 'UN').replace('UNICO', 'UN');
+  const normalizado = normalizarTamanho(tamanho);
   const indice = ORDEM_GRADES.indexOf(normalizado);
   return indice < 0 ? ORDEM_GRADES.length : indice;
+}
+
+// O cadastro do TOTVS grava tamanho unico como "U" (1.344 SKUs), nunca "UN"/"UNICO" -
+// sem normalizar, 'UN' da lista acima nao casava com nada e todo produto de tamanho
+// unico era ordenado por ULTIMO em vez de primeiro.
+function normalizarTamanho(tamanho: string): string {
+  const t = tamanho.trim().toUpperCase();
+  if (t === 'U' || t === 'UNICO' || t === 'ÚNICO' || t === 'UN') return 'UN';
+  return t;
 }
 
 // Universo de referencias selecionado - por item (lista explicita) ou por categoria
@@ -88,6 +101,45 @@ async function getReferenciasSelecionadas(filtro: PesosGradesFiltro): Promise<Id
       ${filtro.generos?.length ? Prisma.sql`AND TRIM(a.class_genero) IN (${Prisma.join(filtro.generos)})` : Prisma.empty}
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
     GROUP BY TRIM(a.class_categoria)
+  `;
+}
+
+interface GradeRow {
+  reference_code: string;
+  size: string;
+}
+
+// Grade CADASTRADA de cada referencia/categoria (todos os tamanhos que existem no
+// cadastro, tenham vendido ou nao). E o que permite mostrar "zero onde nao houve venda
+// naquele tamanho": sem isso, tamanho sem venda simplesmente nao aparece, porque a
+// query de venda so devolve o que foi vendido.
+// Nao usamos a lista fixa ORDEM_GRADES como universo de proposito - a maioria das
+// referencias tem 3 a 6 tamanhos, e um produto de tamanho unico ficaria com 9 colunas
+// de zero sem sentido. Alem disso existem tamanhos reais fora da lista (PP, 12, 14,
+// numeracao de calcado) que precisam aparecer.
+async function getGradeCadastrada(filtro: PesosGradesFiltro, grupos: string[]): Promise<GradeRow[]> {
+  if (grupos.length === 0) return [];
+  if (filtro.tipoAnalise === 'categoria') {
+    return prisma.$queryRaw<GradeRow[]>`
+      SELECT TRIM(a.class_categoria) AS reference_code, TRIM(a.size) AS size
+      FROM produto_analitico a
+      LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      WHERE TRIM(a.class_categoria) IN (${Prisma.join(grupos)})
+        ${filtro.linhas?.length ? Prisma.sql`AND TRIM(a.class_linha) IN (${Prisma.join(filtro.linhas)})` : Prisma.empty}
+        ${filtro.generos?.length ? Prisma.sql`AND TRIM(a.class_genero) IN (${Prisma.join(filtro.generos)})` : Prisma.empty}
+        AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        AND a.size IS NOT NULL AND TRIM(a.size) NOT IN ('', '.')
+      GROUP BY TRIM(a.class_categoria), TRIM(a.size)
+    `;
+  }
+  return prisma.$queryRaw<GradeRow[]>`
+    SELECT a.reference_code, TRIM(a.size) AS size
+    FROM produto_analitico a
+    LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    WHERE a.reference_code IN (${Prisma.join(grupos)})
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      AND a.size IS NOT NULL AND TRIM(a.size) NOT IN ('', '.')
+    GROUP BY a.reference_code, TRIM(a.size)
   `;
 }
 
@@ -141,31 +193,55 @@ export async function getPesosGrades(filtro: PesosGradesFiltro): Promise<PesosGr
 
   const identidade = await getReferenciasSelecionadas(filtro);
   const referenceCodes = identidade.map((r) => r.reference_code);
-  const vendaRows = await getVendaPorReferenciaTamanho(filtro, referenceCodes);
+  const [vendaRows, gradeRows] = await Promise.all([
+    getVendaPorReferenciaTamanho(filtro, referenceCodes),
+    getGradeCadastrada(filtro, referenceCodes),
+  ]);
 
-  const vendaPorRef = new Map<string, { tamanho: string; quantidade: number }[]>();
+  const vendaPorRef = new Map<string, Map<string, number>>();
   for (const row of vendaRows) {
-    const lista = vendaPorRef.get(row.reference_code) || [];
-    lista.push({ tamanho: row.size, quantidade: decimalToNumber(row.quantidade) });
-    vendaPorRef.set(row.reference_code, lista);
+    const mapa = vendaPorRef.get(row.reference_code) || new Map<string, number>();
+    mapa.set(row.size, decimalToNumber(row.quantidade));
+    vendaPorRef.set(row.reference_code, mapa);
+  }
+
+  const gradePorRef = new Map<string, Set<string>>();
+  for (const row of gradeRows) {
+    const set = gradePorRef.get(row.reference_code) || new Set<string>();
+    set.add(row.size);
+    gradePorRef.set(row.reference_code, set);
   }
 
   const referencias: PesosGradesReferencia[] = identidade
     .map((r) => {
-      const vendas = vendaPorRef.get(r.reference_code) || [];
-      const tamanhos: PesosGradesTamanho[] = vendas
-        .filter((v) => v.quantidade > 0)
-        .map((v) => ({
-          tamanho: v.tamanho,
-          quantidadeVendida: v.quantidade,
-          frequencia: Math.ceil(v.quantidade / filtro.fatorDivisor),
-        }))
+      const vendas = vendaPorRef.get(r.reference_code) || new Map<string, number>();
+      // Universo de tamanhos = grade cadastrada + qualquer tamanho que apareceu na
+      // venda mas nao esta mais no cadastro (produto descontinuado, por exemplo) -
+      // esconder uma venda real seria pior do que mostrar um tamanho a mais.
+      const universo = new Set<string>([...(gradePorRef.get(r.reference_code) || []), ...vendas.keys()]);
+
+      const tamanhos: PesosGradesTamanho[] = [...universo]
+        .map((tamanho) => {
+          // Venda liquida de devolucao pode dar negativo; pro corte de producao isso
+          // equivale a nao ter venda, entao vira 0 em vez de quantidade negativa.
+          const quantidade = Math.max(vendas.get(tamanho) || 0, 0);
+          return {
+            tamanho,
+            quantidadeVendida: quantidade,
+            frequencia: Math.ceil(quantidade / filtro.fatorDivisor),
+          };
+        })
         .sort((a, b) => ordemGrade(a.tamanho) - ordemGrade(b.tamanho) || a.tamanho.localeCompare(b.tamanho, undefined, { numeric: true }));
+
+      const totalVendido = tamanhos.reduce((total, tamanho) => total + tamanho.quantidadeVendida, 0);
       return {
         referenceCode: r.reference_code,
         descricao: r.reference_name || r.reference_code,
-        tamanhos,
-        totalVendido: tamanhos.reduce((total, tamanho) => total + tamanho.quantidadeVendida, 0),
+        // Referencia que nao vendeu NADA no periodo continua fora da tela (a tela filtra
+        // por tamanhos.length). O zero-fill e pros tamanhos DENTRO de um produto que
+        // vendeu, que e o que foi pedido: "zero onde nao houver venda naquele tamanho".
+        tamanhos: totalVendido > 0 ? tamanhos : [],
+        totalVendido,
       };
     })
     .sort((a, b) => a.referenceCode.localeCompare(b.referenceCode));

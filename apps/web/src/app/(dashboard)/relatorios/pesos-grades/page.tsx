@@ -117,7 +117,10 @@ export default function PesosGradesPage() {
     if (!data || data.referencias.length === 0) return;
     setExportando(true);
     try {
-      const sheets = data.referencias.map((ref) => {
+      // Mesma regra da tela (que filtra por tamanhos.length): referencia sem venda no
+      // periodo fica de fora. Antes o Excel gerava uma aba vazia pra ela, divergindo do
+      // que estava na tela.
+      const sheets = data.referencias.filter((ref) => ref.tamanhos.length > 0).map((ref) => {
         const columns: ExcelColumn[] = [
           { key: 'linha', header: '', width: 18, type: 'text' },
           ...ref.tamanhos.map((t) => ({ key: t.tamanho, header: t.tamanho, width: 8, type: 'number' as const })),
