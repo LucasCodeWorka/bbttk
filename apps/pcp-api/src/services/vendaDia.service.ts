@@ -462,7 +462,14 @@ export interface AcompanhamentoDiarioResponse {
     evolucaoValorPercent: number | null;
     estoqueFisicoTotal: number;
     pecasEmProducaoTotal: number;
+    // Meta do periodo somada (mesma de `totais.metaPeriodo`) e o equivalente diario
+    // dela, pro card de meta. Ambos null quando nenhuma classificacao tem meta.
+    metaPeriodoTotal: number | null;
+    metaDiaria: number | null;
   };
+  // Dias efetivamente selecionados no filtro (soma dos dias de cada mes-calendario do
+  // intervalo) - e o divisor da meta diaria, exposto pra tela poder explicar a conta.
+  diasPeriodo: number;
   linhas: AcompanhamentoDiarioLinha[];
   totais: AcompanhamentoDiarioTotais;
 }
@@ -793,14 +800,40 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
 
   linhas.sort((a, b) => b.vendaValorAtual - a.vendaValorAtual);
 
-  const vendaValorAnoAnteriorTotal = [...vendaAAMap.values()].reduce((s, v) => s + v.valor, 0);
-  const vendaPecasTotalAtual = [...vendaAtualMap.values()].reduce((s, v) => s + v.pecas, 0);
-  const vendaPecasTotalAnoAnterior = [...vendaAAMap.values()].reduce((s, v) => s + v.pecas, 0);
-  const estoqueFisicoTotal = [...estoqueMap.values()].reduce((s, v) => s + v, 0);
+  // Os totais dos campos ADITIVOS sao a soma dos MESMOS valores ja arredondados que
+  // aparecem nas linhas, nao o arredondamento da soma bruta: `Σ round(x) != round(Σ x)`.
+  // Era isso que fazia a coluna somada no Excel nao bater com a linha TOTAL da tela
+  // (reportado pelo cliente; reproduzido em set/2026: 976.923 nas linhas, 976.922 no
+  // total). Assim o total vira uma conta que o usuario consegue conferir na mao.
+  const somarLinhas = (campo: keyof Omit<AcompanhamentoDiarioLinha, 'classificacao'>): number =>
+    linhas.reduce((total, linha) => total + ((linha[campo] as number | null) || 0), 0);
+
+  const vendaValorTotal = somarLinhas('vendaValorAtual');
+  const vendaValorAnoAnteriorTotal = somarLinhas('vendaValorAnoAnterior');
+  const vendaPecasTotalAtual = somarLinhas('vendaPecasAtual');
+  const vendaPecasTotalAnoAnterior = somarLinhas('vendaPecasAnoAnterior');
+  const estoqueFisicoTotal = somarLinhas('estoqueFisico');
+  const pecasEmProducaoTotal = somarLinhas('pecasEmProducao');
+  // Cobertura A.A. continua precisando do estoque historico agregado, que nao vai pra
+  // nenhuma coluna da tela (so a cobertura derivada dele aparece).
   const estoqueFisicoAnoAnteriorTotal = [...estoqueAAMap.values()].reduce((s, v) => s + v, 0);
-  const pecasEmProducaoTotal = [...emProducaoMap.values()].reduce((s, v) => s + v, 0);
-  const metaPeriodoTotal = linhas.every((linha) => linha.metaPeriodo !== null)
-    ? round(linhas.reduce((s, linha) => s + (linha.metaPeriodo || 0), 0), 2)
+
+  // Meta: soma as classificacoes QUE TEM meta cadastrada, em vez de exigir que todas
+  // tenham. A linha "SEM CLASSIFICACAO" nunca vai ter meta, entao a regra antiga
+  // (all-or-nothing) deixava o total permanentemente em branco.
+  const linhasComMeta = linhas.filter((linha) => linha.metaPeriodo !== null);
+  const metaPeriodoTotal = linhasComMeta.length > 0
+    ? round(linhasComMeta.reduce((s, linha) => s + (linha.metaPeriodo || 0), 0), 2)
+    : null;
+  // O atingimento compara so a venda das linhas que TEM meta - somar a venda de quem
+  // nao tem meta contra uma meta parcial inflaria o percentual.
+  const vendaValorComMeta = linhasComMeta.reduce((s, linha) => s + linha.vendaValorAtual, 0);
+  // Meta diaria = meta do periodo / dias selecionados. A meta do periodo ja vem
+  // proporcionalizada por calcularMetaPeriodo (meta mensal / dias do mes * dias
+  // selecionados), que e exatamente a formula pedida na devolutiva.
+  const diasPeriodo = periodosAtual.reduce((total, p) => total + p.diasSelecionados, 0);
+  const metaDiaria = metaPeriodoTotal !== null && diasPeriodo > 0
+    ? round(metaPeriodoTotal / diasPeriodo, 2)
     : null;
 
   return {
@@ -808,28 +841,37 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     periodoAnoAnterior: { inicio: dataInicioAA, fim: dataFimAA },
     tipoClassificacao: filtro.tipoClassificacao,
     canal,
+    // kpis e totais compartilham os MESMOS numeros de proposito: a tela usa os dois
+    // (cards em cima, linha TOTAL embaixo) e o export Excel mistura as duas fontes -
+    // manter duas contas separadas so criaria uma divergencia nova.
     kpis: {
-      vendaValorTotal: round(vendaValorTotalAtual, 0),
-      vendaValorAnoAnteriorTotal: round(vendaValorAnoAnteriorTotal, 0),
-      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotalAtual - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
-      estoqueFisicoTotal: round(estoqueFisicoTotal, 0),
-      pecasEmProducaoTotal: round(pecasEmProducaoTotal, 0),
+      vendaValorTotal: vendaValorTotal,
+      vendaValorAnoAnteriorTotal: vendaValorAnoAnteriorTotal,
+      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotal - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
+      estoqueFisicoTotal: estoqueFisicoTotal,
+      pecasEmProducaoTotal: pecasEmProducaoTotal,
+      metaPeriodoTotal,
+      metaDiaria,
     },
+    diasPeriodo,
     linhas,
     totais: {
-      vendaValorAtual: round(vendaValorTotalAtual, 0),
-      vendaValorAnoAnterior: round(vendaValorAnoAnteriorTotal, 0),
-      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotalAtual - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
-      vendaPecasAtual: round(vendaPecasTotalAtual, 0),
-      vendaPecasAnoAnterior: round(vendaPecasTotalAnoAnterior, 0),
+      vendaValorAtual: vendaValorTotal,
+      vendaValorAnoAnterior: vendaValorAnoAnteriorTotal,
+      evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotal - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
+      vendaPecasAtual: vendaPecasTotalAtual,
+      vendaPecasAnoAnterior: vendaPecasTotalAnoAnterior,
       evolucaoPecasPercent: vendaPecasTotalAnoAnterior > 0 ? round(((vendaPecasTotalAtual - vendaPecasTotalAnoAnterior) / vendaPecasTotalAnoAnterior) * 100, 1) : null,
       metaPeriodo: metaPeriodoTotal,
-      atingimentoMetaPercent: metaPeriodoTotal && metaPeriodoTotal > 0 ? round((vendaValorTotalAtual / metaPeriodoTotal) * 100, 1) : null,
-      participacaoPercent: vendaValorTotalAtual > 0 ? 100 : 0,
+      atingimentoMetaPercent: metaPeriodoTotal && metaPeriodoTotal > 0 ? round((vendaValorComMeta / metaPeriodoTotal) * 100, 1) : null,
+      participacaoPercent: vendaValorTotal > 0 ? 100 : 0,
+      // Cobertura NAO e somavel: continua recalculada sobre os agregados
+      // (estoque total / venda media mensal total). Media simples das linhas daria
+      // outro numero, bem maior - foi o que o cliente fez no Excel (7,68 vs 5,6).
       coberturaMesesAtual: coberturaMeses(estoqueFisicoTotal, vendaPecasTotalAtual, periodosAtual),
       coberturaMesesAnoAnterior: coberturaMeses(estoqueFisicoAnoAnteriorTotal, vendaPecasTotalAnoAnterior, periodosAnoAnterior),
-      estoqueFisico: round(estoqueFisicoTotal, 0),
-      pecasEmProducao: round(pecasEmProducaoTotal, 0),
+      estoqueFisico: estoqueFisicoTotal,
+      pecasEmProducao: pecasEmProducaoTotal,
     },
   };
 }

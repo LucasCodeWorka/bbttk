@@ -168,10 +168,17 @@ premissas erradas, mas achou um caminho real:
     `classificacao_operacoes` que é a que realmente é sincronizada e usada). Só dá pra
     calcular um **saldo agregado**: `SUM(saída pro destino) − SUM(entrada vinda de lá)`
     por `product_code`, não rastrear uma remessa específica.
-  - Já existia uma tentativa anterior disso: `raioX.service.ts` tem uma função
-    `getTransferencias()` que **nunca foi implementada** (retorna sempre `0`, comentário
-    `// TODO: Implementar lógica de transferências quando soubermos onde isso está no
-    banco`) — agora sabemos onde está, se algum dia for retomada.
+  - ⚠️ **Corrigido em 06/10/2026**: `getTransferencias()` **não existe mais** em
+    `raioX.service.ts` (a descrição antiga aqui estava desatualizada). O que existe é um
+    campo chamado `transferencias` cujo valor é um **resíduo de reconciliação**
+    (`estoqueFinal - estoqueInicial + vendas`), não transferência de verdade — por isso
+    o frontend o exibe como **"MOV. ESTOQUE"** (`RaioXCompacto.tsx`, `raio-x/page.tsx`).
+    Não confundir os dois nem tentar "completar" aquela função.
+  - A classificação certa pra transferência é por `classificacao_operacoes`, não por
+    lista de código fixo (convenção do projeto, ver `apps/api/src/config/constants.ts`):
+    **saída = `operations_type='S' AND operation_mode='2'`** (35 operações),
+    **entrada = `operations_type='E' AND operation_mode='2'`** (27 operações). Os códigos
+    510/1510/512 e 3/1003/5 citados acima caem todos nesses dois pares.
 
 **Por que não foi construído mesmo assim**: medindo o saldo pendente (saída − entrada)
 por SKU/destino, **86% do total (7.129 de 8.266 peças) vem de lojas JÁ FECHADAS**
@@ -420,8 +427,17 @@ descobrir endpoints/campos sem depender de documentação externa).
 ### Bugs reais já encontrados e corrigidos (não repetir)
 
 1. **`customer_code >= 110000000` = conta interna do TOTVS**, nunca cliente real —
-   sem filtrar, inflava faturamento em ~R$22,8 milhões em todo o histórico. Corrigido
-   com `REAL_CUSTOMER_FILTER` em `vendas.service.ts`.
+   sem filtrar, inflava faturamento em ~R$22,8 milhões em todo o histórico.
+   ⚠️ **Atualizado em 06/10/2026**: `REAL_CUSTOMER_FILTER` **não existe mais** em
+   `vendas.service.ts` — foi removido de propósito, e a justificativa está preservada
+   num comentário longo no próprio arquivo (procurar "HISTÓRICO" perto do topo): a
+   heurística virou redundante e **ativamente prejudicial** depois que a classificação
+   passou a ser dinâmica, porque transferência/ajuste nunca tem
+   `operations_type='S' + operation_mode='4'` e já é excluída pelo `IS_VENDA` sozinho.
+   O `apps/api` (Comercial) hoje **não filtra `customer_code`**. O corte literal
+   `customer_code < 110000000` ainda aparece em `redistribuicao.service.ts` e
+   `vendaDesconto.service.ts` (3x cada) — ali sem guarda de `IS NULL`, e como a coluna é
+   `BigInt?`, linha com NULL some silenciosamente.
 2. **Filtro de status errado**: `t.status != 6` (só exclui cancelada) em vez de
    `t.status = 4` (exige "Atendida"). Enum completo (`StatusTransactionType`): 1=Em
    andamento, 2=Liberado p/ faturamento, 3=Parcialmente atendida, 4=Atendida,
@@ -697,7 +713,36 @@ Colunas "COB A.A." (dias) e "EVOL COB" existiram numa versão intermediária e f
 removidas a pedido do usuário ("tira") — não recriar em dias, só em meses, e sem a
 coluna de evolução (delta) a menos que peçam de novo.
 
-## ⚠️ Pendência aberta — cobertura do ano anterior parece alta demais, causa não confirmada
+## ✅ ENCERRADA (06/10/2026) — cobertura do ano anterior: era lacuna de captura (hipótese 2)
+
+**Resolvido.** A hipótese 2 abaixo está confirmada com dado; a 1 está descartada. Medição
+direta no `prd_saldo` (mesma query do relatório, só mudando o corte de data):
+
+| Posição | SKUs com saldo | Peças |
+|---|---|---|
+| 30/09/2025 | 1.524 | **10.901** |
+| 30/09/2026 | 6.040 | **263.812** |
+
+A causa é a densidade de captura do ETL, que mudou de patamar em 2026 — linhas gravadas
+por ano em `prd_saldo`: `stock_code=1` ficou em ~43 mil/ano de 2019 a 2025 e saltou pra
+**113 mil em 2026**; `stock_code=5` saiu de ~1 mil/ano pra **70 mil**; `stock_code=8` de
+~3 mil/ano pra **79 mil**. Ou seja: o estoque histórico não foi registrado por completo,
+não é que a rede tivesse 24x menos estoque (rede nenhuma multiplica estoque por 24 em 12
+meses). **Não foi preciso comparar com relatório nativo do TOTVS** — a própria assimetria
+de volume de captura já decide.
+
+**Consequência prática**: `coberturaMesesAnoAnterior` (e qualquer métrica que dependa de
+estoque histórico anterior a 2026) é um **piso**, sempre menor que o real. Serve pra
+tendência entre categorias no mesmo período, não como valor absoluto. Decisão do usuário:
+**manter a coluna com aviso visível** (asterisco no cabeçalho + nota abaixo da tabela +
+ressalva no cabeçalho do Excel) em vez de remover — ver
+`apps/web/src/app/(dashboard)/relatorios/acompanhamento-linha/page.tsx`. Não tentar
+"corrigir o cálculo": a fórmula sempre esteve certa, o insumo é que é incompleto.
+
+<details>
+<summary>Investigação original (mantida pra referência)</summary>
+
+### ⚠️ Pendência aberta — cobertura do ano anterior parece alta demais, causa não confirmada
 
 Ao construir a comparação de cobertura ano-a-ano no "Acompanhamento por Linha", os
 números do ano anterior deram consistentemente muito mais baixos que o atual em
@@ -737,6 +782,53 @@ validar o Dashboard Comercial contra FISFL024/PRDFL074) — se bater com o núme
 que o app mostra, é real (hipótese 1); se o TOTVS mostrar bem mais estoque pra aquela
 data, é lacuna de histórico (hipótese 2). Não assumir nenhuma das duas sem essa
 confirmação externa.
+
+</details>
+
+## 🚨 ETL parou de gravar ITENS de operação que não é venda (desde 25/06/2026, ativo)
+
+Achado em 06/10/2026 enquanto se investigava o pedido de "peças em trânsito". **Não tem
+relação com trânsito e é mais grave**: o ETL continua gravando os documentos em
+`transacoes`, mas **não grava nada em `transacao_itens`** pra quase toda operação que
+não seja venda. Documentos COM item / total, status=4:
+
+| type+mode | operação | jul | ago | set | out |
+|---|---|---|---|---|---|
+| `S4` | venda | 6987/6987 | 5800/5800 | 5270/5270 | 817/817 ✅ |
+| `E3` | devolução de venda | 668/668 | 608/608 | 564/564 | 110/110 ✅ |
+| `E4` | compra materiais uso/consumo | 17/17 | 12/12 | 10/10 | 6/6 ✅ |
+| `S2` | **saída de transferência** | 0/622 | 0/643 | 0/493 | 0/81 ❌ |
+| `E2` | **entrada de transferência** | 0/531 | 0/563 | 0/462 | 0/74 ❌ |
+| `E5` | **compra de matéria-prima** | 0/157 | 0/137 | 0/140 | 0/19 ❌ |
+| `E6`/`EC`/`S5`/`S6`/`SC` | industrialização, consignação | 0 | 0 | 0 | 0 ❌ |
+
+Corte exato: **25/06/2026** (nesse dia, 31 documentos de entrada e só 1 com item; de
+26/06 em diante, zero). Confirmado doc a doc: transferência `8/915457` de 05/10 tem 0
+itens, venda do mesmo dia tem itens normais.
+
+**Telas já degradadas por isso** (não é hipótese, foi medido):
+- **`ÚLT. ENTRADA` do Relatório Base** (`getUltimaEntradaRows`/`getEntradaDpaRows` em
+  `relatorioBase.service.ts`, filtram `co.operations_type='E'`): congelada em
+  **24/06/2026** pra todo produto que chega na loja por transferência (`E2`). Só `E3` e
+  `E4` ainda atualizam a data.
+- **Maturação do Estoque Sem Giro** (`estoque.service.ts`, CTE `primeira_entrada`): o
+  `WHERE` trata `primeira_entrada_data IS NULL` como **maduro** (passa no filtro), então
+  produto que chegou depois de 25/06 pode ser marcado "sem giro" logo na chegada — o
+  oposto do que o filtro existe pra fazer. Hoje: **8.337 pares produto+loja com estoque
+  e sem nenhuma entrada registrada**, de 28.488 (29%).
+
+**Não afeta** venda/devolução — faturamento, metas, comissões, Curva ABC, Venda do Dia e
+o Acompanhamento por Linha seguem corretos.
+
+**Correção é fora deste repo** (script Python do ETL): provavelmente um filtro de tipo de
+operação introduzido/estreitado por volta de 25/06 na etapa que baixa os itens. Além de
+remover a restrição, é preciso **reprocessar de 25/06/2026 até hoje** — os documentos já
+estão gravados sem itens e a retomada não revisita documento já processado (mesma causa
+raiz dos bugs 3 e 4 da seção "Bugs reais já encontrados"). Documento pronto pra
+encaminhar: `DIAGNOSTICO-DEVOLUTIVA-ACOMPANHAMENTO-LINHA.md` na raiz.
+
+**Enquanto não for corrigido, não dá pra construir nenhuma visão de trânsito, entrada ou
+compra** — não existe item pra contar.
 
 **Atualização 28-30/08/2026 — achada uma 3ª hipótese real e concreta, corrigida**: numa
 devolutiva do cliente (`.docx` "Projeto BI Estoque - Devolutiva 25 08"), a pergunta

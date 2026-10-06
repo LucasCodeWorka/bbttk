@@ -238,7 +238,9 @@ export default function AcompanhamentoLinhaPage() {
         { key: 'evolucaoPecasPercent', header: 'EVOL PÇ %', width: 12, type: 'number' },
         { key: 'participacaoPercent', header: 'PART %', width: 10, type: 'number' },
         { key: 'coberturaMesesAtual', header: 'COB MESES', width: 11, type: 'number' },
-        { key: 'coberturaMesesAnoAnterior', header: 'COB MESES A.A.', width: 13, type: 'number' },
+        // Mesma ressalva da tela: historico de estoque pre-2026 e incompleto, entao a
+        // coluna A.A. e um piso. Vai no cabecalho pra ressalva nao se perder no Excel.
+        { key: 'coberturaMesesAnoAnterior', header: 'COB MESES A.A. (piso*)', width: 20, type: 'number' },
         { key: 'estoqueFisico', header: 'ESTOQUE FISICO', width: 13, type: 'number' },
         { key: 'pecasEmProducao', header: 'PEÇAS EM PRODUÇÃO', width: 17, type: 'number' },
       ];
@@ -246,13 +248,13 @@ export default function AcompanhamentoLinhaPage() {
       exportToExcel({
         filename: `Acompanhamento_${tipoClassificacao}_${new Date().toISOString().slice(0, 10)}`,
         sheetName: 'Acompanhamento',
-        title: `Acompanhamento Diário por ${TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label} - Canal: ${CANAL_OPTIONS.find((o) => o.value === canal)?.label}`,
+        title: `Acompanhamento Diário por ${TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label} - Canal: ${CANAL_OPTIONS.find((o) => o.value === canal)?.label}  |  COB MESES do TOTAL é recalculada (estoque total ÷ venda média mensal), não é a média da coluna  |  * COB MESES A.A.: histórico de estoque pré-2026 é incompleto, o valor é um piso`,
         columns,
         data: sortedLinhas as unknown as Record<string, unknown>[],
         totals: {
           classificacao: `TOTAL (${sortedLinhas.length})`,
-          vendaValorAtual: data.kpis.vendaValorTotal,
-          vendaValorAnoAnterior: data.kpis.vendaValorAnoAnteriorTotal,
+          vendaValorAtual: data.totais.vendaValorAtual,
+          vendaValorAnoAnterior: data.totais.vendaValorAnoAnterior,
           evolucaoValorPercent: data.totais.evolucaoValorPercent ?? '',
           vendaPecasAtual: data.totais.vendaPecasAtual,
           vendaPecasAnoAnterior: data.totais.vendaPecasAnoAnterior,
@@ -337,8 +339,22 @@ export default function AcompanhamentoLinhaPage() {
       </div>
 
       {data && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
           <KPICard title="Venda Atual" value={formatMoney(data.kpis.vendaValorTotal)} color="green" isLoading={isLoading} />
+          {/* Meta do periodo = meta mensal / dias do mes * dias selecionados (formula
+              pedida na devolutiva). Fica em branco quando nenhuma classificacao tem
+              meta cadastrada; o subtitulo mostra o equivalente por dia. */}
+          <KPICard
+            title="Meta do Período"
+            value={data.kpis.metaPeriodoTotal === null ? '—' : formatMoney(data.kpis.metaPeriodoTotal)}
+            subtitle={
+              data.kpis.metaDiaria === null
+                ? 'sem meta cadastrada no período'
+                : `${formatMoney(data.kpis.metaDiaria)}/dia · ${data.diasPeriodo} ${data.diasPeriodo === 1 ? 'dia' : 'dias'}`
+            }
+            color="purple"
+            isLoading={isLoading}
+          />
           <KPICard title="Venda Ano Anterior" value={formatMoney(data.kpis.vendaValorAnoAnteriorTotal)} color="blue" isLoading={isLoading} />
           <KPICard title="Evolução vs A.A." value={formatPercentDelta(data.kpis.evolucaoValorPercent)} color="purple" isLoading={isLoading} />
           <KPICard title="Estoque Físico" value={formatNumber(data.kpis.estoqueFisicoTotal)} color="yellow" isLoading={isLoading} />
@@ -347,9 +363,18 @@ export default function AcompanhamentoLinhaPage() {
       )}
 
       {data && (
-        <div className="text-xs text-gray-500">
-          <span className="font-medium">Períodos:</span> Atual: {formatDate(data.periodoAtual.inicio)} a {formatDate(data.periodoAtual.fim)} |
-          {' '}Ano Anterior: {formatDate(data.periodoAnoAnterior.inicio)} a {formatDate(data.periodoAnoAnterior.fim)}
+        <div className="space-y-1 text-xs text-gray-500">
+          <div>
+            <span className="font-medium">Períodos:</span> Atual: {formatDate(data.periodoAtual.inicio)} a {formatDate(data.periodoAtual.fim)} |
+            {' '}Ano Anterior: {formatDate(data.periodoAnoAnterior.inicio)} a {formatDate(data.periodoAnoAnterior.fim)}
+          </div>
+          {/* O estoque historico do TOTVS (prd_saldo) e muito mais esparso antes de
+              2026 - a coluna A.A. subestima de forma estrutural. Avisado aqui e no
+              tooltip da coluna em vez de esconder o dado. */}
+          <div className="text-amber-700">
+            <span className="font-medium">* COB MESES A.A.:</span> o histórico de estoque anterior a 2026 é incompleto no TOTVS,
+            então essa coluna é um piso (subestima o estoque da época). Serve para tendência, não como valor absoluto.
+          </div>
         </div>
       )}
 
@@ -380,7 +405,7 @@ export default function AcompanhamentoLinhaPage() {
                 <ThSortPcp label="EVOL PÇ" sortKeyName="evolucaoPecasPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" />
                 <ThSortPcp label="PART %" sortKeyName="participacaoPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Participação no total vendido no filtro atual" />
                 <ThSortPcp label="COB MESES" sortKeyName="coberturaMesesAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura atual em meses = estoque físico / venda média mensal" />
-                <ThSortPcp label="COB MESES A.A." sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior (estoque e venda de então)" />
+                <ThSortPcp label="COB MESES A.A. *" sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior (estoque e venda de então). ATENÇÃO: o histórico de estoque anterior a 2026 é incompleto no TOTVS — a captura passou a ser muito mais densa a partir de 2026, então este número é um PISO, não o estoque real da época. Use para tendência, não como valor absoluto." />
                 <ThSortPcp label="ESTOQUE" sortKeyName="estoqueFisico" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Estoque físico disponível na loja" />
                 <ThSortPcp label="EM PRODUÇÃO" sortKeyName="pecasEmProducao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças em Ordem de Produção aberta (rede toda)" />
               </TableRow>

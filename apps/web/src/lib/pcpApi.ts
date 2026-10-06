@@ -1259,7 +1259,10 @@ export interface AcompanhamentoDiarioResponse {
     evolucaoValorPercent: number | null;
     estoqueFisicoTotal: number;
     pecasEmProducaoTotal: number;
+    metaPeriodoTotal: number | null;
+    metaDiaria: number | null;
   };
+  diasPeriodo: number;
   linhas: AcompanhamentoDiarioLinha[];
   totais: AcompanhamentoDiarioTotais;
 }
