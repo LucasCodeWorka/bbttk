@@ -31,6 +31,9 @@ const corsOrigins = [
     .map((origin) => origin.trim())
     .filter(Boolean) || []),
   ...DEFAULT_CORS_ORIGINS,
+  ...(process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+    : []),
 ];
 
 // Middlewares
