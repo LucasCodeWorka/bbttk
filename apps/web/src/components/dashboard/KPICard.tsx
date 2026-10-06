@@ -40,7 +40,7 @@ export function KPICard({ title, value, variation, subtitle, icon, color = 'red'
         {variation !== undefined && <VariationBadge value={variation} className="shrink-0" />}
       </div>
       <CardValue size={valueSize} className="truncate mt-2">{value}</CardValue>
-      {subtitle && <p className="text-xs text-gray-500 truncate mt-1">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{subtitle}</p>}
     </Card>
   );
 }

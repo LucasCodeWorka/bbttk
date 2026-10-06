@@ -25,6 +25,7 @@ const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
 const DEFAULT_CORS_ORIGINS = [
   'https://bebettk.onrender.com',
   'https://bebetenkite-web.onrender.com',
+  'https://teste-front-bebetenkite.onrender.com',
 ];
 
 const corsOrigins = [

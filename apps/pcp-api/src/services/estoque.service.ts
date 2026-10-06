@@ -145,6 +145,10 @@ function buildCoberturaFilter(cobertura?: CoberturaFiltro): Prisma.Sql {
   return Prisma.sql`AND (a.cobertura_meses >= 24 OR a.cobertura_meses IS NULL)`;
 }
 
+function buildValorEstoqueSql(): Prisma.Sql {
+  return Prisma.sql`COALESCE(a.valor_estoque_custo_producao, a.valor_estoque, 0)`;
+}
+
 function labelDias(dias: number): string {
   if (dias <= 30) return 'Ate 30 dias';
   if (dias <= 60) return '31 a 60 dias';
@@ -184,6 +188,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
     select: { maturacaoDias: true },
   });
   const maturacaoDias = config?.maturacaoDias ?? 30;
+  const valorEstoqueSql = buildValorEstoqueSql();
 
   return prisma.$queryRaw<AnaliticoRow[]>`
     WITH primeira_entrada AS (
@@ -212,7 +217,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       a.ultima_venda,
       COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
       COALESCE(a.quantidade_estoque, 0) as quantidade,
-      COALESCE(a.valor_estoque, 0) as valor,
+      ${valorEstoqueSql} as valor,
       a.cobertura_meses,
       COALESCE(a.calculated_at, a.captured_at) as atualizado_em
     FROM pcp_estoque_sem_giro_analitico a

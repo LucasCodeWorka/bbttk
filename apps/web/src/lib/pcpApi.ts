@@ -195,6 +195,7 @@ export interface DashboardEstoqueResponse {
     colecao: DashboardEstoqueBucket[];
     linha: DashboardEstoqueBucket[];
     categoria: DashboardEstoqueBucket[];
+    status: DashboardEstoqueBucket[];
     filial: DashboardEstoqueBucket[];
   };
   tiposSaldo: DashboardEstoqueSaldoTipo[];
@@ -297,6 +298,38 @@ export interface RelatorioBaseColunaFilial {
 // Drill-down da referencia: 1 linha por COR (o detalhamento por SKU foi removido do
 // payload por consumo de memoria). coresOriginais > 1 = varias cores do TOTVS unificadas
 // pelo Agrupamento de Cores nessa linha.
+export interface RelatorioBaseRow {
+  sku: string;
+  codigo: number | null;
+  referenceCode: string;
+  cor: string;
+  tamanho: string;
+  refCorTam: string;
+  descricao: string;
+  descricaoCompleta: string;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  modelo: string | null;
+  status: string | null;
+  lancamento: string | null;
+  ultimaEntrada: string | null;
+  custo: number | null;
+  pdvAtual: number | null;
+  pdvRealVar: number | null;
+  markupVar: number | null;
+  pdvRealAta: number | null;
+  markupAta: number | null;
+  estDisponivel: null;
+  emProducao: number;
+  estPrevisto: null;
+  estTt: number;
+  giroTt1: number;
+  giroTt3: number;
+  giroTt6: number;
+  branches: Record<number, RelatorioBaseColunaFilial>;
+}
+
 export interface RelatorioBaseCorRow {
   cor: string;
   refCor: string;
@@ -340,6 +373,7 @@ export interface RelatorioBaseReferenciaRow {
   giroTt3: number;
   giroTt6: number;
   branches: Record<number, RelatorioBaseColunaFilial>;
+  skus: RelatorioBaseRow[];
   cores: RelatorioBaseCorRow[];
 }
 
@@ -366,6 +400,7 @@ export interface RelatorioBaseResponse {
     linha: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
+    status: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
@@ -390,7 +425,28 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
+  ruptura: {
+    basico: RelatorioBaseRupturaLinhaKpi;
+    renovavel: RelatorioBaseRupturaLinhaKpi;
+  };
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAnaliseKpi {
+  quantidade: number;
+  referencias: number;
+  quantidadePercent: number;
+  valor: number;
+  valorPercent: number;
+}
+
+export interface RelatorioBaseRupturaLinhaKpi {
+  skus: number;
+  totalSkus: number;
+  percent: number;
 }
 
 export interface RelatorioBaseMatrizLinha {
@@ -399,6 +455,9 @@ export interface RelatorioBaseMatrizLinha {
   estoqueAtacado: number;
   estoqueTotal: number;
   valorEstoque: number;
+  vendaVarejo: number;
+  vendaAtacado: number;
+  vendaTotal: number;
   coberturaVarejo: number | null;
   coberturaAtacado: number | null;
   coberturaGeral: number | null;

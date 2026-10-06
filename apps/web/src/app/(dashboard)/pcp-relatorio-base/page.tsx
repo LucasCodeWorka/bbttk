@@ -11,16 +11,16 @@ import { Modal } from '@/components/ui/Modal';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
-import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   PcpClassificacaoDimensao,
   RelatorioBaseFiltro,
   RelatorioBaseResponse,
-  RelatorioBaseCorRow,
+  RelatorioBaseRow,
   RelatorioBaseReferenciaRow,
   RelatorioBaseMatrizLinha,
+  RelatorioBaseEstoqueAnaliseKpi,
   VisaoGeralExtrasResponse,
   relatorioBaseApi,
   visaoGeralApi,
@@ -31,13 +31,18 @@ import { exportToCsv } from '@/lib/exportCsv';
 import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const DIMENSAO_OPTIONS = [
-  { value: 'linha', label: 'Por linha (Básico/Coleção)' },
+  { value: 'linha', label: 'Por linha (Básico/Style)' },
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
+  { value: 'status', label: 'Por status' },
 ];
 
 function gapDe(valor: number | null, meta: number): number {
   return valor === null ? 0 : round1(valor - meta);
+}
+function gapPercentualDe(valor: number | null, meta: number): number {
+  if (valor === null || meta <= 0) return 0;
+  return ((valor - meta) / meta) * 100;
 }
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -50,29 +55,94 @@ function formatMeses(value: number | null | undefined, decimals: number): string
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
 }
 
+function formatVezes(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return `${formatNumber(value, Number.isInteger(value) ? 0 : 1)}x`;
+}
+
+function formatEstoqueAnaliseSubtitle(kpi: RelatorioBaseEstoqueAnaliseKpi): string {
+  return `${formatNumber(kpi.referencias)} refs | ${formatNumber(kpi.quantidadePercent, 1)}% das peças | ${formatMoney(kpi.valor)} (${formatNumber(kpi.valorPercent, 1)}% valor)`;
+}
+
+type MatrizSortKey = keyof Pick<
+  RelatorioBaseMatrizLinha,
+  | 'label'
+  | 'estoqueVarejo'
+  | 'estoqueAtacado'
+  | 'estoqueTotal'
+  | 'valorEstoque'
+  | 'vendaVarejo'
+  | 'vendaAtacado'
+  | 'vendaTotal'
+  | 'coberturaVarejo'
+  | 'coberturaAtacado'
+  | 'coberturaGeral'
+>;
+
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
+  const [sortKey, setSortKey] = useState<MatrizSortKey>('estoqueTotal');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function handleSort(key: string) {
+    const nextKey = key as MatrizSortKey;
+    if (sortKey === nextKey) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(nextKey);
+      setSortDir(nextKey === 'label' ? 'asc' : 'desc');
+    }
+  }
+
+  function sortValue(linha: RelatorioBaseMatrizLinha, key: MatrizSortKey): string | number {
+    if (key === 'label') return linha.label.toLocaleLowerCase('pt-BR');
+    return linha[key] ?? -1;
+  }
+
+  const linhasOrdenadas = useMemo(() => {
+    const totais = linhas.filter((linha) => linha.label === 'Total');
+    const linhasSemTotal = linhas.filter((linha) => linha.label !== 'Total');
+
+    linhasSemTotal.sort((a, b) => {
+      const aVal = sortValue(a, sortKey);
+      const bVal = sortValue(b, sortKey);
+      const cmp = typeof aVal === 'string' || typeof bVal === 'string'
+        ? String(aVal).localeCompare(String(bVal), 'pt-BR')
+        : Number(aVal) - Number(bVal);
+
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return [...linhasSemTotal, ...totais];
+  }, [linhas, sortDir, sortKey]);
+
   return (
     <Table>
       <TableHead>
         <TableRow>
-          <TableCell isHeader>Linha</TableCell>
-          <TableCell isHeader align="right">Est. Varejo</TableCell>
-          <TableCell isHeader align="right">Est. Atacado</TableCell>
-          <TableCell isHeader align="right">Est. Total</TableCell>
-          <TableCell isHeader align="right">Valor em Estoque</TableCell>
-          <TableCell isHeader align="right">Cob. Varejo</TableCell>
-          <TableCell isHeader align="right">Cob. Atacado</TableCell>
-          <TableCell isHeader align="right">Cob. Geral</TableCell>
+          <ThSortPcp label="Linha" sortKeyName="label" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+          <ThSortPcp label="Est. Varejo" sortKeyName="estoqueVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Est. Atacado" sortKeyName="estoqueAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Valor em Estoque" sortKeyName="valorEstoque" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Varejo 30d" sortKeyName="vendaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Atacado 30d" sortKeyName="vendaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Venda Total 30d" sortKeyName="vendaTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Varejo" sortKeyName="coberturaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Atacado" sortKeyName="coberturaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Cob. Geral" sortKeyName="coberturaGeral" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
         </TableRow>
       </TableHead>
       <TableBody>
-        {linhas.map((linha) => (
+        {linhasOrdenadas.map((linha) => (
           <TableRow key={linha.label} isHighlighted={linha.label === 'Total'}>
             <TableCell>{linha.label}</TableCell>
             <TableCell align="right">{formatNumber(linha.estoqueVarejo)}</TableCell>
             <TableCell align="right">{formatNumber(linha.estoqueAtacado)}</TableCell>
             <TableCell align="right">{formatNumber(linha.estoqueTotal)}</TableCell>
             <TableCell align="right">{formatMoney(linha.valorEstoque)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaVarejo)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaAtacado)}</TableCell>
+            <TableCell align="right">{formatNumber(linha.vendaTotal)}</TableCell>
             <TableCell align="right">{linha.coberturaVarejo === null ? '—' : `${linha.coberturaVarejo.toFixed(1)}m`}</TableCell>
             <TableCell align="right">{linha.coberturaAtacado === null ? '—' : `${linha.coberturaAtacado.toFixed(1)}m`}</TableCell>
             <TableCell align="right">{linha.coberturaGeral === null ? '—' : `${linha.coberturaGeral.toFixed(1)}m`}</TableCell>
@@ -127,12 +197,74 @@ function ThSortPcp({
 }
 
 const PAGE_SIZE = 15;
+const VISAO_GERAL_CACHE_TTL_MS = 5 * 60 * 1000;
+const VISAO_GERAL_STATE_KEY = 'pcp-visao-geral-state-v1';
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultDataPosicao(): string {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return formatDateInput(date);
+}
+
+interface VisaoGeralPageState {
+  timestamp: number;
+  produtoFiltro?: Record<string, string[] | undefined>;
+  filiaisSelecionadas?: number[];
+  search?: string;
+  dataPosicao?: string;
+  pagina?: number;
+  verPorLoja?: boolean;
+  sortKey?: string | null;
+  sortDir?: 'asc' | 'desc';
+  dimensao?: 'linha' | 'categoria' | 'genero' | 'status';
+}
+
+function readVisaoGeralPageState(): VisaoGeralPageState | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(VISAO_GERAL_STATE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as VisaoGeralPageState;
+    if (!parsed.timestamp || Date.now() - parsed.timestamp > VISAO_GERAL_CACHE_TTL_MS) {
+      window.sessionStorage.removeItem(VISAO_GERAL_STATE_KEY);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeVisaoGeralPageState(state: Omit<VisaoGeralPageState, 'timestamp'>) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.sessionStorage.setItem(
+      VISAO_GERAL_STATE_KEY,
+      JSON.stringify({
+        ...state,
+        timestamp: Date.now(),
+      })
+    );
+  } catch {
+    // Ignora falhas de sessionStorage, como quota excedida ou modo privado.
+  }
+}
 
 // Largura fixa em px de cada coluna "de identidade" (nao-filial) - tabela e larga
 // demais pra usar %, precisa de largura fixa + scroll horizontal.
-const SKU_WIDTH = 100;
-const COR_WIDTH = 140;
-const DESCRICAO_WIDTH = 200;
+const SKU_WIDTH = 110;
+const DESCRICAO_WIDTH = 220;
 
 interface ColunaFixa<T> {
   key: string;
@@ -143,12 +275,81 @@ interface ColunaFixa<T> {
   render: (row: T) => React.ReactNode;
 }
 
+type SituacaoCodigo = 'ok' | 'markup_baixo' | 'preco_custo' | 'sem_movimento';
+function pdvRealPrincipal(row: Pick<RelatorioBaseRow, 'pdvRealVar' | 'pdvRealAta'>): number | null {
+  return row.pdvRealVar ?? row.pdvRealAta ?? null;
+}
+
+function markupRealPrincipal(row: Pick<RelatorioBaseRow, 'markupVar' | 'markupAta'>): number | null {
+  return row.markupVar ?? row.markupAta ?? null;
+}
+
+function precoAbaixoCusto(row: Pick<RelatorioBaseRow, 'custo' | 'pdvAtual' | 'pdvRealVar' | 'pdvRealAta'>): boolean {
+  if (row.custo === null) return false;
+  return [row.pdvAtual, row.pdvRealVar, row.pdvRealAta].some((preco) => preco !== null && preco < row.custo!);
+}
+
+function situacaoSku(row: RelatorioBaseRow): SituacaoCodigo {
+  const markup = markupRealPrincipal(row);
+  if (precoAbaixoCusto(row)) return 'preco_custo';
+  if ((row.giroTt6 || 0) <= 0 && (row.estTt || 0) > 0) return 'sem_movimento';
+  if (markup !== null && markup < 100) return 'markup_baixo';
+  return 'ok';
+}
+
+function situacaoReferencia(row: RelatorioBaseReferenciaRow): SituacaoCodigo {
+  if (precoAbaixoCusto(row) || row.skus.some(precoAbaixoCusto)) return 'preco_custo';
+  if ((row.giroTt6 || 0) <= 0 && (row.estTt || 0) > 0) return 'sem_movimento';
+  const markup = markupRealPrincipal(row);
+  if ((markup !== null && markup < 100) || row.skus.some((sku) => {
+    const skuMarkup = markupRealPrincipal(sku);
+    return skuMarkup !== null && skuMarkup < 100;
+  })) {
+    return 'markup_baixo';
+  }
+  return 'ok';
+}
+
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  const ativo = (status || '').toUpperCase() === 'ATIVO';
+  return (
+    <span className={cn('inline-flex rounded-md px-2.5 py-1 text-xs font-bold', ativo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600')}>
+      {status || '-'}
+    </span>
+  );
+}
+
+function MarkupIndicador({ value, situacao }: { value: number | null; situacao: SituacaoCodigo }) {
+  if (value === null) {
+    return <span className="text-gray-400">-</span>;
+  }
+
+  const problem = situacao === 'markup_baixo' || situacao === 'preco_custo';
+  const neutral = situacao === 'sem_movimento';
+
+  return (
+    <span className={cn('font-semibold tabular-nums', problem ? 'text-red-600' : neutral ? 'text-gray-500' : 'text-green-700')}>
+      {formatNumber(value, 1)}%
+    </span>
+  );
+}
+
 // Colunas da tabela PRINCIPAL - 1 linha por REFERENCIA (agregando cores/tamanhos).
 // Custo/PDV/Markup mostram um valor real quando TODOS os SKUs da referencia concordam
 // (comum - preco/custo e por referencia, nao por cor/tamanho) - fica "—" so quando
 // diverge entre os SKUs (ver drill-down). Codigo sempre "—" (cada SKU tem o seu).
 const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
-  { key: 'sku', label: 'REFERÊNCIA', width: SKU_WIDTH, sticky: 'sku', render: (r) => r.referenceCode },
+  {
+    key: 'sku',
+    label: 'REFERÊNCIA',
+    width: SKU_WIDTH,
+    sticky: 'sku',
+    render: (r) => (
+      <span className="block">
+        <span className="font-bold text-gray-900">{r.referenceCode}</span>
+      </span>
+    ),
+  },
   {
     key: 'descricao',
     label: 'DESCRIÇÃO',
@@ -156,168 +357,119 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
     sticky: 'descricao',
     render: (r) => (
       <span className="block" title={r.descricaoCompleta}>
-        <span className="truncate block">{r.descricao}</span>
-        <span className="text-[9px] text-gray-400">{r.totalSkus} SKU{r.totalSkus === 1 ? '' : 's'}</span>
+        <span className="block truncate">{r.descricao}</span>
+        <span className="text-[10px] text-gray-400">{r.referenceName || r.referenceCode}</span>
       </span>
     ),
   },
-  { key: 'status', label: 'STATUS', width: 90, render: (r) => r.status || '-' },
-  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: () => '—' },
-  { key: 'categoria', label: 'CATEGORIA', width: 110, render: (r) => r.categoria || '-' },
-  { key: 'linha', label: 'LINHA', width: 100, render: (r) => r.linha || '-' },
-  { key: 'genero', label: 'GÊNERO', width: 90, render: (r) => r.genero || '-' },
-  { key: 'modelo', label: 'MODELO', width: 100, render: (r) => r.modelo || '-' },
-  { key: 'lancamento', label: 'LANÇ', width: 70, align: 'center', render: (r) => r.lancamento || '—' },
-  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 100, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '—') },
-  { key: 'custo', label: 'CUSTO', width: 80, align: 'right', render: (r) => (r.custo === null ? '—' : formatMoney(r.custo)) },
-  { key: 'pdvAtual', label: 'PDV ATUAL', width: 90, align: 'right', render: (r) => (r.pdvAtual === null ? '—' : formatMoney(r.pdvAtual)) },
-  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 100, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
-  { key: 'markupVar', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupVar === null ? '—' : formatNumber(r.markupVar)) },
-  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 100, align: 'right', render: (r) => (r.pdvRealAta === null ? '—' : formatMoney(r.pdvRealAta)) },
-  { key: 'markupAta', label: 'MKUP', width: 70, align: 'right', render: (r) => (r.markupAta === null ? '—' : formatNumber(r.markupAta)) },
-  { key: 'estTt', label: 'EST. TT', width: 80, align: 'right', render: (r) => formatNumber(r.estTt) },
-  { key: 'estDisponivel', label: 'EST. DISP', width: 80, align: 'right', render: () => '—' },
-  { key: 'emProducao', label: 'EM PROD.', width: 80, align: 'right', render: (r) => formatNumber(r.emProducao) },
-  { key: 'estPrevisto', label: 'EST. PREV', width: 80, align: 'right', render: () => '—' },
-  { key: 'giroTt1', label: 'GIRO TT 1', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt1) },
-  { key: 'giroTt3', label: 'GIRO TT 3', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt3) },
-  { key: 'giroTt6', label: 'GIRO TT 6', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt6) },
+  { key: 'status', label: 'STATUS', width: 95, render: (r) => <StatusBadge status={r.status} /> },
+  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: () => '-' },
+  { key: 'totalSkus', label: 'SKUs', width: 70, align: 'right', render: (r) => formatNumber(r.totalSkus) },
+  { key: 'categoria', label: 'CATEGORIA', width: 120, render: (r) => r.categoria || '-' },
+  { key: 'linha', label: 'LINHA', width: 120, render: (r) => r.linha || '-' },
+  { key: 'genero', label: 'GÊNERO', width: 95, render: (r) => r.genero || '-' },
+  { key: 'modelo', label: 'MODELO', width: 105, render: (r) => r.modelo || '-' },
+  { key: 'lancamento', label: 'LANÇ.', width: 80, align: 'center', render: (r) => r.lancamento || '-' },
+  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 115, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '-') },
+  { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
+  { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
+  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoReferencia(r)} /> },
+  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
+  { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
+  { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
+  { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
+  { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
+  { key: 'giroTt6', label: 'GIRO TT 6', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt6) },
 ];
 
-// Colunas do drill-down por COR (abre ao clicar na referencia). Antes era por SKU
-// (cor x tamanho), mas o detalhamento por SKU foi tirado do payload por consumo de
-// memoria - por cor e ~1 ordem de grandeza mais leve e, com o Agrupamento de Cores
-// ligado, fica menor ainda. Quem precisa da grade por tamanho usa a Analise de Grade.
-const COLUNAS_COR_DETALHE: ColunaFixa<RelatorioBaseCorRow>[] = [
+// Colunas do drill-down por SKU (abre ao clicar na referencia) - a identidade em
+// destaque aqui e Cor/Tamanho, nao o codigo do SKU (que fica pequeno/secundario
+// embaixo) - pedido explicito do usuario, mesmo padrao ja usado na Curva ABC "por SKU".
+const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
   {
-    key: 'cor',
-    label: 'COR',
-    width: COR_WIDTH,
+    key: 'sku',
+    label: 'COR / TAMANHO',
+    width: SKU_WIDTH + 40,
     sticky: 'sku',
     render: (r) => (
       <span className="block">
-        <span className="font-medium block">{r.cor}</span>
-        <span className="text-[9px] text-gray-400">
-          {r.totalSkus} {r.totalSkus === 1 ? 'SKU' : 'SKUs'}
-          {r.coresOriginais > 1 ? ` · ${r.coresOriginais} cores agrupadas` : ''}
-        </span>
+        <span className="font-medium block">{r.cor} - {r.tamanho}</span>
+        <span className="text-[9px] text-gray-400">{r.sku}</span>
       </span>
     ),
   },
-  {
-    key: 'descricao',
-    label: 'DESCRIÇÃO',
-    width: DESCRICAO_WIDTH,
-    sticky: 'descricao',
-    render: () => <span className="text-gray-400">—</span>,
-  },
-  { key: 'status', label: 'STATUS', width: 90, render: () => '—' },
-  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: () => '—' },
-  { key: 'categoria', label: 'CATEGORIA', width: 110, render: () => '—' },
-  { key: 'linha', label: 'LINHA', width: 100, render: () => '—' },
-  { key: 'genero', label: 'GÊNERO', width: 90, render: () => '—' },
-  { key: 'modelo', label: 'MODELO', width: 100, render: () => '—' },
-  { key: 'lancamento', label: 'LANÇ', width: 70, align: 'center', render: () => '—' },
-  { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 100, align: 'center', render: () => '—' },
-  { key: 'custo', label: 'CUSTO', width: 80, align: 'right', render: (r) => (r.custo === null ? '—' : formatMoney(r.custo)) },
-  { key: 'pdvAtual', label: 'PDV ATUAL', width: 90, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
-  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 100, align: 'right', render: (r) => (r.pdvRealVar === null ? '—' : formatMoney(r.pdvRealVar)) },
-  {
-    key: 'markupVar',
-    label: 'MKUP',
-    width: 70,
-    align: 'right',
-    render: (r) => (
-      <span title="Custo da última compra vs. PDV atual/real no varejo">
-        {r.markupVar === null ? '—' : formatNumber(r.markupVar)}
-      </span>
-    ),
-  },
-  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 100, align: 'right', render: (r) => (r.pdvRealAta === null ? '—' : formatMoney(r.pdvRealAta)) },
-  {
-    key: 'markupAta',
-    label: 'MKUP',
-    width: 70,
-    align: 'right',
-    render: (r) => (
-      <span title="Custo da última compra vs. PDV atual/real no atacado">
-        {r.markupAta === null ? '—' : formatNumber(r.markupAta)}
-      </span>
-    ),
-  },
-  { key: 'estTt', label: 'EST. TT', width: 80, align: 'right', render: (r) => formatNumber(r.estTt) },
-  { key: 'estDisponivel', label: 'EST. DISP', width: 80, align: 'right', render: () => '—' },
-  { key: 'emProducao', label: 'EM PROD.', width: 80, align: 'right', render: (r) => formatNumber(r.emProducao) },
-  { key: 'estPrevisto', label: 'EST. PREV', width: 80, align: 'right', render: () => '—' },
-  { key: 'giroTt1', label: 'GIRO TT 1', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt1) },
-  { key: 'giroTt3', label: 'GIRO TT 3', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt3) },
-  { key: 'giroTt6', label: 'GIRO TT 6', width: 80, align: 'right', render: (r) => formatNumber(r.giroTt6) },
+  { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: (r) => r.codigo ?? '-' },
+  { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
+  { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
+  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoSku(r)} /> },
+  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
+  { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
+  { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
+  { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
+  { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
+  { key: 'giroTt6', label: 'GIRO TT 6', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt6) },
 ];
 
 const BRANCH_SUBCOL_WIDTH = 56;
 
-function stickyStyleFor(sticky?: 'sku' | 'descricao', primeiraColunaWidth = SKU_WIDTH) {
+function stickyStyleFor(sticky?: 'sku' | 'descricao') {
   if (sticky === 'sku') return { left: 0 };
-  if (sticky === 'descricao') return { left: primeiraColunaWidth };
+  if (sticky === 'descricao') return { left: SKU_WIDTH };
   return undefined;
 }
 
-// Faixas de fundo pra separar visualmente os grupos de coluna, pedido do usuario:
-// identidade/classificacao (ate LANÇ) em azul clarinho, precificacao (ate os dois MKUP)
-// em verde clarinho - mesmo par de cores ja usado nos badges do resto do app.
-const ZONA_AZUL_KEYS = new Set(['sku', 'descricao', 'status', 'codigo', 'categoria', 'linha', 'genero', 'modelo', 'lancamento']);
-const ZONA_VERDE_KEYS = new Set(['ultimaEntrada', 'custo', 'pdvAtual', 'pdvRealVar', 'markupVar', 'pdvRealAta', 'markupAta']);
-
 function zonaBg(key: string): string {
-  if (ZONA_AZUL_KEYS.has(key)) return 'bg-blue-50';
-  if (ZONA_VERDE_KEYS.has(key)) return 'bg-green-50';
+  void key;
   return '';
 }
 
 export default function PcpRelatorioBasePage() {
   const { token, user } = useAuth();
   const { showToast } = useToast();
+  const initialPageStateRef = useRef<VisaoGeralPageState | null | undefined>(undefined);
+  if (initialPageStateRef.current === undefined) {
+    initialPageStateRef.current = readVisaoGeralPageState();
+  }
+  const initialPageState = initialPageStateRef.current;
+
   const [isLoading, setIsLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
   const [classificacoes, setClassificacoes] = useState<PcpClassificacaoDimensao[]>([]);
   const [colunasDisponiveis, setColunasDisponiveis] = useState<{ branchCode: number; label: string }[]>([]);
 
-  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>({});
-  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
-  // Busca com debounce: "search" e o valor APLICADO (dispara a consulta) e
-  // "searchInput" e o que o usuario esta digitando. Sem isso, cada tecla disparava um
-  // relatorio completo (18-26s) e a fila do pcp-api processa um por vez - digitar uma
-  // referencia inteira enfileirava mais de dez consultas.
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [dataPosicao, setDataPosicao] = useState('');
-  const [pagina, setPagina] = useState(1);
-  const [verPorLoja, setVerPorLoja] = useState(false);
+  const [produtoFiltro, setProdutoFiltro] = useState<Record<string, string[] | undefined>>(
+    () => initialPageState?.produtoFiltro || {}
+  );
+  const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>(
+    () => initialPageState?.filiaisSelecionadas || []
+  );
+  const [search, setSearch] = useState(() => initialPageState?.search || '');
+  const [dataPosicao, setDataPosicao] = useState(() => initialPageState?.dataPosicao || getDefaultDataPosicao());
+  const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
+  const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
   const [exportando, setExportando] = useState(false);
-  // Granularidade da tabela principal. "referencia" = 1 linha por referencia (o
-  // detalhe por cor abre clicando na linha); "cor"/"cor-agrupada" = a tabela em si
-  // passa a ter 1 linha por referencia+cor. Antes isso era so um checkbox que mudava
-  // exclusivamente o detalhe expandido - a tabela principal ficava identica, e por
-  // isso parecia que o agrupamento "nao funcionava".
-  const [visaoLinha, setVisaoLinha] = useState<'referencia' | 'cor' | 'cor-agrupada'>('referencia');
-  // Derivado: so o modo "cor-agrupada" pede o agrupamento ao backend. Trocar entre
-  // "referencia" e "cor" usa a MESMA resposta (muda so a renderizacao), evitando um
-  // recarregamento de 18-26s pra algo que o cliente ja tem em maos.
-  const agruparPorCorSalva = visaoLinha === 'cor-agrupada';
-  const porCor = visaoLinha !== 'referencia';
-  const requisicaoAtual = useRef(0);
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
-  const [sortKey, setSortKey] = useState<string | null>('giroTt3');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.sortKey ?? 'giroTt3');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.sortDir || 'desc');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
 
   // Indicadores extra (Analise de Grade/Estoque Sem Giro/Curva ABC) - carregados em
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
-  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero'>('linha');
+  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero' | 'status'>(
+    () => initialPageState?.dimensao || 'linha'
+  );
 
   const [metaModalAberto, setMetaModalAberto] = useState(false);
   const [meta, setMeta] = useState<PcpMetaVisaoGeral | null>(null);
@@ -326,12 +478,11 @@ export default function PcpRelatorioBasePage() {
   // Refs e estado para scroll sincronizado
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+  const ignorarPrimeiroResetPaginaRef = useRef(true);
   const [scrollWidth, setScrollWidth] = useState(0);
 
   const carregarDados = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
-    const requisicao = ++requisicaoAtual.current;
-    setErro(null);
 
     const filtro: RelatorioBaseFiltro = {
       categoria: produtoFiltro.categoria,
@@ -343,11 +494,9 @@ export default function PcpRelatorioBasePage() {
       dataPosicao: dataPosicao || undefined,
       page: pagina,
       pageSize: PAGE_SIZE,
-      agruparPorCorSalva,
     };
 
-    // Gerar chave de cache baseada nos filtros (o agruparPorCorSalva entra aqui junto,
-    // senao o modo agrupado reaproveitaria a resposta do modo normal)
+    // Gerar chave de cache baseada nos filtros
     const cacheKey = `visao-geral-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
@@ -357,7 +506,7 @@ export default function PcpRelatorioBasePage() {
         if (cached) {
           const { data: cachedData, timestamp } = JSON.parse(cached);
           // Cache válido por 5 minutos
-          if (Date.now() - timestamp < 5 * 60 * 1000) {
+          if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setData(cachedData);
             setIsLoading(false);
             return;
@@ -372,7 +521,6 @@ export default function PcpRelatorioBasePage() {
     setErro(null);
     try {
       const response = await relatorioBaseApi.getRelatorioBase(token, filtro);
-      if (requisicao !== requisicaoAtual.current) return;
       setData(response);
 
       // Salvar no cache
@@ -385,20 +533,36 @@ export default function PcpRelatorioBasePage() {
         // Ignorar erros ao salvar cache (ex: quota excedida)
       }
     } catch (error) {
-      if (requisicao !== requisicaoAtual.current) return;
-      setData(null);
       setErro(error instanceof Error ? error.message : 'Erro ao carregar o Relatorio Base');
       console.error(error);
     } finally {
-      if (requisicao === requisicaoAtual.current) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, agruparPorCorSalva]);
+  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina]);
 
   // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
   // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
   useEffect(() => {
+    if (ignorarPrimeiroResetPaginaRef.current) {
+      ignorarPrimeiroResetPaginaRef.current = false;
+      return;
+    }
     setPagina(1);
   }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao]);
+
+  useEffect(() => {
+    writeVisaoGeralPageState({
+      produtoFiltro,
+      filiaisSelecionadas,
+      search,
+      dataPosicao,
+      pagina,
+      verPorLoja,
+      sortKey,
+      sortDir,
+      dimensao,
+    });
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
@@ -421,7 +585,7 @@ export default function PcpRelatorioBasePage() {
         if (cached) {
           const { data: cachedData, timestamp } = JSON.parse(cached);
           // Cache válido por 5 minutos
-          if (Date.now() - timestamp < 5 * 60 * 1000) {
+          if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setExtras(cachedData);
             setIsLoadingExtras(false);
             return;
@@ -463,13 +627,6 @@ export default function PcpRelatorioBasePage() {
       })
       .catch((error) => console.error('Erro ao carregar filtros do Relatorio Base:', error));
   }, [token]);
-
-  // Aplica a busca so depois de meio segundo sem digitacao (ver comentario em
-  // searchInput) - o setState fica dentro do timeout, nao no corpo do effect.
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput), 500);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
 
   useEffect(() => {
     carregarDados();
@@ -581,6 +738,7 @@ export default function PcpRelatorioBasePage() {
     if (key === 'sku') return row.referenceCode || '';
     if (key === 'descricao') return row.descricao || '';
     if (key === 'status') return row.status || '';
+    if (key === 'totalSkus') return row.totalSkus || 0;
     if (key === 'codigo') return -1;
     if (key === 'categoria') return row.categoria || '';
     if (key === 'linha') return row.linha || '';
@@ -621,41 +779,9 @@ export default function PcpRelatorioBasePage() {
   // as colunas de filial nem entram no colgroup/header/corpo da tabela.
   const colunas = verPorLoja ? data?.colunas || [] : [];
 
-  // Nos modos por cor, achata cada referencia nas suas linhas de cor. A linha achatada
-  // tem o MESMO shape da linha de referencia (identidade herdada da referencia,
-  // metricas e colunas por filial vindas da cor), entao COLUNAS_REFERENCIA,
-  // getSortValue e a renderizacao da tabela continuam valendo sem duplicacao - mesmo
-  // principio do ItemCurva na Curva ABC e da heranca que o export Excel ja fazia.
-  const linhasBase = useMemo<RelatorioBaseReferenciaRow[]>(() => {
-    const refs = data?.rows || [];
-    if (!porCor) return refs;
-
-    return refs.flatMap((ref) =>
-      ref.cores.map((cor) => ({
-        ...ref,
-        referenceCode: cor.coresOriginais > 1 ? `${cor.refCor} (${cor.coresOriginais} cores)` : cor.refCor,
-        totalSkus: cor.totalSkus,
-        custo: cor.custo,
-        pdvAtual: cor.pdvRealVar,
-        pdvRealVar: cor.pdvRealVar,
-        markupVar: cor.markupVar,
-        pdvRealAta: cor.pdvRealAta,
-        markupAta: cor.markupAta,
-        emProducao: cor.emProducao,
-        estTt: cor.estTt,
-        giroTt1: cor.giroTt1,
-        giroTt3: cor.giroTt3,
-        giroTt6: cor.giroTt6,
-        branches: cor.branches,
-        // Ja estamos no grao de cor: nao existe mais detalhe pra expandir nesta linha.
-        cores: [],
-      }))
-    );
-  }, [data, porCor]);
-
   const sortedRows = useMemo(() => {
-    if (!sortKey) return linhasBase;
-    const rows = [...linhasBase];
+    if (!data || !sortKey) return data?.rows || [];
+    const rows = [...data.rows];
 
     return rows.sort((a, b) => {
       const aVal = getSortValue(a, sortKey);
@@ -670,9 +796,33 @@ export default function PcpRelatorioBasePage() {
 
       return sortDir === 'asc' ? cmp : -cmp;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linhasBase, sortKey, sortDir]);
+  }, [data, sortKey, sortDir]);
   const totalColunas = COLUNAS_REFERENCIA.length + colunas.length * 3;
+  const larguraTabelaSkuLoja = useMemo(
+    () => COLUNAS_REFERENCIA.reduce((total, coluna) => total + coluna.width, 0) + colunas.length * 3 * BRANCH_SUBCOL_WIDTH,
+    [colunas.length]
+  );
+  const larguraDetalheSkuLoja = useMemo(
+    () => COLUNAS_SKU_DETALHE.reduce((total, coluna) => total + coluna.width, 0) + colunas.length * 3 * BRANCH_SUBCOL_WIDTH,
+    [colunas.length]
+  );
+
+  const resumoSkuLoja = useMemo(() => {
+    const rows = data?.rows || [];
+    const skus = rows.flatMap((row) => row.skus);
+    const referenciasComPrecoAbaixoCusto = rows.filter((row) => situacaoReferencia(row) === 'preco_custo').length;
+    const referenciasMarkupFora = rows.filter((row) => ['markup_baixo', 'preco_custo'].includes(situacaoReferencia(row))).length;
+
+    return {
+      referencias: data?.pagination.totalReferencias || rows.length,
+      skus: data?.kpis.skuCount || skus.length,
+      precoAbaixoCusto: skus.filter(precoAbaixoCusto).length || referenciasComPrecoAbaixoCusto,
+      markupFora: skus.filter((sku) => {
+        const situacao = situacaoSku(sku);
+        return situacao === 'markup_baixo' || situacao === 'preco_custo';
+      }).length || referenciasMarkupFora,
+    };
+  }, [data]);
 
   // Cobertura fora da faixa saudavel (mesmos limites configurados no Configurador,
   // ja usados no Raio-X) pinta a celula - verde = cobertura baixa (gira rapido),
@@ -702,23 +852,20 @@ export default function PcpRelatorioBasePage() {
         status: produtoFiltro.status,
         branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
         search: search.trim() || undefined,
-        dataPosicao: dataPosicao || undefined,
         page: 1,
         pageSize: 100000,
-        agruparPorCorSalva,
       });
       const colunasExport = completo.colunas;
+      const skuRows = completo.rows.flatMap((r) => r.skus);
 
-      // Exporta no grao referencia+cor (o detalhamento por SKU nao existe mais no
-      // payload). A identidade da referencia e repetida em cada linha de cor pra
-      // planilha ficar filtravel/pivotavel sem depender de celula mesclada.
+      // Montar colunas para Excel
       const colunas: ExcelColumn[] = [
-        { key: 'referenceCode', header: 'REFERÊNCIA', width: 18, type: 'text' },
-        { key: 'cor', header: 'COR', width: 18, type: 'text' },
-        { key: 'coresOriginais', header: 'CORES AGRUPADAS', width: 16, type: 'number' },
-        { key: 'totalSkus', header: 'SKUS', width: 8, type: 'number' },
+        { key: 'sku', header: 'SKU', width: 20, type: 'text' },
+        { key: 'cor', header: 'COR', width: 15, type: 'text' },
+        { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' },
         { key: 'descricao', header: 'DESCRIÇÃO', width: 35, type: 'text' },
         { key: 'status', header: 'STATUS', width: 12, type: 'text' },
+        { key: 'codigo', header: 'CÓDIGO', width: 10, type: 'number' },
         { key: 'categoria', header: 'CATEGORIA', width: 15, type: 'text' },
         { key: 'linha', header: 'LINHA', width: 12, type: 'text' },
         { key: 'genero', header: 'GÊNERO', width: 12, type: 'text' },
@@ -726,6 +873,7 @@ export default function PcpRelatorioBasePage() {
         { key: 'lancamento', header: 'LANÇ', width: 10, type: 'text' },
         { key: 'ultimaEntrada', header: 'ÚLT. ENTRADA', width: 14, type: 'text' },
         { key: 'custo', header: 'CUSTO', width: 12, type: 'number' },
+        { key: 'pdvAtual', header: 'PDV ATUAL', width: 12, type: 'number' },
         { key: 'pdvRealVar', header: 'PDV REAL VAR', width: 14, type: 'number' },
         { key: 'markupVar', header: 'MKUP VAR', width: 12, type: 'number' },
         { key: 'pdvRealAta', header: 'PDV REAL ATA', width: 14, type: 'number' },
@@ -747,49 +895,48 @@ export default function PcpRelatorioBasePage() {
       }
 
       // Montar dados
-      const dados = completo.rows.flatMap((ref) =>
-        ref.cores.map((cor) => {
-          const row: Record<string, unknown> = {
-            referenceCode: ref.referenceCode,
-            cor: cor.cor,
-            coresOriginais: cor.coresOriginais,
-            totalSkus: cor.totalSkus,
-            descricao: ref.descricao,
-            status: ref.status || '',
-            categoria: ref.categoria || '',
-            linha: ref.linha || '',
-            genero: ref.genero || '',
-            modelo: ref.modelo || '',
-            lancamento: ref.lancamento || '',
-            ultimaEntrada: ref.ultimaEntrada ? formatDate(ref.ultimaEntrada) : '',
-            custo: cor.custo ?? '',
-            pdvRealVar: cor.pdvRealVar ?? '',
-            markupVar: cor.markupVar ?? '',
-            pdvRealAta: cor.pdvRealAta ?? '',
-            markupAta: cor.markupAta ?? '',
-            estTt: cor.estTt,
-            emProducao: cor.emProducao,
-            giroTt1: cor.giroTt1,
-            giroTt3: cor.giroTt3,
-            giroTt6: cor.giroTt6,
-          };
+      const dados = skuRows.map((r) => {
+        const row: Record<string, unknown> = {
+          sku: r.sku,
+          cor: r.cor,
+          tamanho: r.tamanho,
+          descricao: r.descricao,
+          status: r.status || '',
+          codigo: r.codigo ?? '',
+          categoria: r.categoria || '',
+          linha: r.linha || '',
+          genero: r.genero || '',
+          modelo: r.modelo || '',
+          lancamento: r.lancamento || '',
+          ultimaEntrada: r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '',
+          custo: r.custo ?? '',
+          pdvAtual: r.pdvAtual ?? '',
+          pdvRealVar: r.pdvRealVar ?? '',
+          markupVar: r.markupVar ?? '',
+          pdvRealAta: r.pdvRealAta ?? '',
+          markupAta: r.markupAta ?? '',
+          estTt: r.estTt,
+          emProducao: r.emProducao,
+          giroTt1: r.giroTt1,
+          giroTt3: r.giroTt3,
+          giroTt6: r.giroTt6,
+        };
 
-          for (const c of colunasExport) {
-            const dadosFilial = cor.branches[c.branchCode];
-            row[`giro_${c.branchCode}`] = dadosFilial?.giro ?? 0;
-            row[`est_${c.branchCode}`] = dadosFilial?.est ?? 0;
-            row[`cob_${c.branchCode}`] = dadosFilial?.cob ?? '';
-          }
+        for (const c of colunasExport) {
+          const dados = r.branches[c.branchCode];
+          row[`giro_${c.branchCode}`] = dados?.giro ?? 0;
+          row[`est_${c.branchCode}`] = dados?.est ?? 0;
+          row[`cob_${c.branchCode}`] = dados?.cob ?? '';
+        }
 
-          return row;
-        })
-      );
+        return row;
+      });
 
       const dataHoje = new Date().toISOString().split('T')[0];
       exportToExcel({
         filename: `RelatorioBase_${dataHoje}`,
         sheetName: 'Relatório Base',
-        title: `Relatório Base PCP - Estoque e Giro por Referência/Cor${agruparPorCorSalva ? ' (com Agrupamento de Cores)' : ''}`,
+        title: 'Relatório Base PCP - Estoque e Giro por SKU',
         columns: colunas,
         data: dados,
       });
@@ -819,74 +966,60 @@ export default function PcpRelatorioBasePage() {
         )}
       </div>
 
-
-      <div className="flex flex-wrap items-end gap-3">
-        {classificacoes.map((dim) => (
-          <ClassificacaoMultiSelect
-            key={dim.chave}
-            label={dim.label}
-            options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
-            selected={produtoFiltro[dim.chave] || []}
-            onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
-            className="w-44"
+      <Card className="p-3">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(260px,1.4fr)_repeat(4,minmax(130px,0.75fr))_auto_auto] xl:items-end">
+          <Input
+            label="Buscar"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Referência, descrição ou código..."
           />
-        ))}
-        <FilialMultiSelect
-          selected={filiaisSelecionadas}
-          onChange={setFiliaisSelecionadas}
-          options={filialOptions}
-          label="Loja"
-          className="w-52"
-        />
-        <Input
-          label="Buscar referência/SKU/descrição"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          className="w-52"
-          placeholder="Ex: 7800..."
-        />
-        <Input
-          label="Data"
-          type="date"
-          value={dataPosicao}
-          onChange={(e) => setDataPosicao(e.target.value)}
-          className="w-40"
-        />
-        {/* Granularidade da tabela. POR COR AGRUPADA é o único modo que recarrega
-            (pede o agrupamento ao backend); POR REFERÊNCIA ↔ POR COR usam a mesma
-            resposta e trocam na hora. */}
-        <div className="pb-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Detalhar</label>
-          <div className="inline-grid grid-cols-3 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
-            {([
-              { value: 'referencia', label: 'POR REFERÊNCIA', title: 'Uma linha por referência (clique na linha para ver as cores)' },
-              { value: 'cor', label: 'POR COR', title: 'Uma linha por referência + cor original do TOTVS' },
-              { value: 'cor-agrupada', label: 'POR COR AGRUPADA', title: 'Uma linha por referência + cor, juntando as cores unificadas no Agrupamento de Cores' },
-            ] as const).map((opcao) => (
-              <button
-                key={opcao.value}
-                type="button"
-                title={opcao.title}
-                disabled={isLoading}
-                onClick={() => setVisaoLinha(opcao.value)}
-                className={cn(
-                  'min-w-32 px-3 py-2 text-xs font-bold',
-                  opcao.value === visaoLinha
-                    ? 'bg-[var(--bbtk-red)] text-white'
-                    : 'text-gray-600 hover:bg-gray-50',
-                  isLoading && 'cursor-not-allowed opacity-60'
-                )}
-              >
-                {opcao.label}
-              </button>
-            ))}
-          </div>
+          {(['categoria', 'linha', 'status'] as const).map((chave) => {
+            const dim = classificacoes.find((item) => item.chave === chave);
+            if (!dim) return null;
+            return (
+              <ClassificacaoMultiSelect
+                key={dim.chave}
+                label={dim.label}
+                options={dim.opcoes.map((option) => ({ value: option.valor, label: option.valor }))}
+                selected={produtoFiltro[dim.chave] || []}
+                onChange={(valores) => atualizarProdutoFiltro(dim.chave, valores)}
+              />
+            );
+          })}
+          <Input
+            label="Data"
+            type="date"
+            value={dataPosicao}
+            onChange={(e) => setDataPosicao(e.target.value)}
+          />
+          <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>
+            Atualizar
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setProdutoFiltro({});
+              setFiliaisSelecionadas([]);
+              setSearch('');
+            }}
+          >
+            Limpar filtros
+          </Button>
         </div>
-        <Button onClick={() => { carregarDados(true); }} isLoading={isLoading || isLoadingExtras}>Atualizar</Button>
-        <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={isLoading || !data || data.rows.length === 0}>
-          Exportar Excel
-        </Button>
-      </div>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <FilialMultiSelect
+            selected={filiaisSelecionadas}
+            onChange={setFiliaisSelecionadas}
+            options={filialOptions}
+            label="Loja"
+            className="w-full sm:w-64"
+          />
+          <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
+            Exportar Excel
+          </Button>
+        </div>
+      </Card>
 
       {erro && (
         <Card className="border-red-200 bg-red-50">
@@ -895,20 +1028,17 @@ export default function PcpRelatorioBasePage() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPIMetaCard
-          title="Cobertura geral"
-          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
-          meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
-          invertido
-          isLoading={isLoading || isLoadingExtras}
-        />
-        <KPIMetaCard
-          title="Giro anualizado"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
-          meta={`${extras?.meta.metaGiroAnualizado.toFixed(1) ?? '—'}x`}
-          gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
-          isLoading={isLoading || isLoadingExtras}
+        <KPICard
+          title="Estoque Total"
+          value={formatNumber(data?.kpis.estTt || 0)}
+          subtitle={
+            data
+              ? `${formatNumber(data.kpisExtra.referenciasComEstoque || 0)} referências com estoque | ${formatNumber(data.kpis.skuCount || 0)} SKUs`
+              : undefined
+          }
+          color="blue"
+          valueSize="sm"
+          isLoading={isLoading}
         />
         <KPICard
           title="Valor em Estoque"
@@ -920,100 +1050,108 @@ export default function PcpRelatorioBasePage() {
           isLoading={isLoading}
         />
         <KPIMetaCard
-          title="Estoque morto (Fora de Linha)"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.estoqueMortoPercent.toFixed(1)}%`}
-          meta={`${extras?.meta.metaEstoqueMortoPercent.toFixed(1) ?? '—'}%`}
-          gap={gapDe(data?.kpisExtra.estoqueMortoPercent ?? null, extras?.meta.metaEstoqueMortoPercent ?? 0)}
+          title="Cobertura geral"
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
+          gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
           invertido
-          subtitle={data ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)}` : undefined}
+          isLoading={isLoading || isLoadingExtras}
+        />
+        <KPIMetaCard
+          title="Giro anual"
+          value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
+          meta={formatVezes(extras?.meta.metaGiroAnualizado)}
+          gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
           isLoading={isLoading || isLoadingExtras}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPICard
-          title="Fora de Linha em Promoção"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.estoquePromocaoPercent.toFixed(1)}%`}
-          subtitle={
-            data
-              ? `${formatNumber(data.kpisExtra.estoquePromocaoQtd)} peças | ${formatMoney(data.kpisExtra.estoquePromocaoValor)}`
-              : undefined
-          }
-          color="yellow"
-          valueSize="md"
-          isLoading={isLoading}
-        />
+        <KPICard title="Peças Vendidas 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPIMetaCard
           title="Cobertura Básico"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
-          title="Cobertura Básico Renovável"
+          title="Cobertura Renovável"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasicoRenovavel, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
         <KPIMetaCard
-          title="Cobertura Coleção"
+          title="Cobertura Style"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaColecao, 1)}
           meta={formatMeses(extras?.meta.metaCoberturaColecaoMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
+          gap={gapPercentualDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
+          gapFormato="percentual"
+          gapNegativoCor="azul"
           invertido
           isLoading={isLoading || isLoadingExtras}
         />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-        <KPICard title="SKUs" value={formatNumber(data?.kpis.skuCount || 0)} color="red" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Estoque Total" value={formatNumber(data?.kpis.estTt || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Referências com Estoque" value={formatNumber(data?.kpisExtra.referenciasComEstoque || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 60 dias" value={formatNumber(data?.kpis.giroTt60 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt60, data?.kpis.estTt)} color="yellow" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Giro TT 90 dias" value={formatNumber(data?.kpis.giroTt90 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt90, data?.kpis.estTt)} color="purple" valueSize="sm" isLoading={isLoading} />
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         <KPICard
-          title={`SKUs em risco${extras ? ` (${extras.skusEmRisco.skusEmRiscoTotal}/${extras.skusEmRisco.totalSkus})` : ''}`}
-          value={isLoadingExtras || !extras ? '—' : `${extras.skusEmRisco.percent.toFixed(1)}%`}
-          color="yellow"
-          valueSize="md"
-          isLoading={isLoadingExtras}
-        />
-        <KPICard
-          title="Referências críticas"
-          value={formatNumber(extras?.skusEmRisco.referenciasCriticas || 0)}
+          title="Estoque crítico"
+          value={isLoading || !data ? '—' : `${data.kpisExtra.estoqueMortoPercent.toFixed(1)}%`}
+          subtitle={
+            data
+              ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)} a custo (${data.kpisExtra.estoqueMortoPercent.toFixed(1)}% do total)`
+              : undefined
+          }
           color="red"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
         <KPICard
-          title={`Estoque sem giro 90+ dias${extras ? ` (${formatNumber(extras.estoqueSemGiro.find((r) => r.dias === 91)?.sku_count || 0)} SKUs)` : ''}`}
-          value={
-            isLoadingExtras || !extras
-              ? '—'
-              : formatMoney(extras.estoqueSemGiro.find((r) => r.dias === 91)?.valor || 0)
-          }
+          title="Itens sem venda"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensSemVenda30d.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensSemVenda30d) : undefined}
+          color="yellow"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Itens envelhecidos 60/90 dias"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos60a90d.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos60a90d) : undefined}
           color="purple"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
         <KPICard
-          title="Curva A (% do valor vendido)"
+          title="Itens envelhecidos >90 dias"
+          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos90Mais.quantidade)}
+          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos90Mais) : undefined}
+          color="red"
+          valueSize="md"
+          isLoading={isLoading}
+        />
+        <KPICard
+          title="Ruptura"
           value={
-            isLoadingExtras || !extras
+            isLoading || !data
               ? '—'
-              : `${extras.curvaAbc.find((c) => c.curva === 'A')?.percentDoTotal.toFixed(1) ?? 0}%`
+              : `${formatNumber(data.kpisExtra.ruptura.basico.skus + data.kpisExtra.ruptura.renovavel.skus)} SKUs`
+          }
+          subtitle={
+            data
+              ? `Básico: ${formatNumber(data.kpisExtra.ruptura.basico.skus)} (${formatNumber(data.kpisExtra.ruptura.basico.percent, 1)}%) | Renovável: ${formatNumber(data.kpisExtra.ruptura.renovavel.skus)} (${formatNumber(data.kpisExtra.ruptura.renovavel.percent, 1)}%)`
+              : undefined
           }
           color="green"
           valueSize="md"
-          isLoading={isLoadingExtras}
+          isLoading={isLoading}
         />
       </div>
 
@@ -1022,7 +1160,7 @@ export default function PcpRelatorioBasePage() {
           <CardTitle>Cobertura por linha/categoria/gênero × canal</CardTitle>
           <Select
             value={dimensao}
-            onChange={(e) => setDimensao(e.target.value as 'linha' | 'categoria' | 'genero')}
+            onChange={(e) => setDimensao(e.target.value as 'linha' | 'categoria' | 'genero' | 'status')}
             options={DIMENSAO_OPTIONS}
             className="w-64"
           />
@@ -1034,57 +1172,76 @@ export default function PcpRelatorioBasePage() {
         )}
       </Card>
 
-      <LoadingOverlay active={isLoading}>
       <Card>
         <CardHeader>
-          <CardTitle>{porCor ? 'Referência + Cor x Loja' : 'SKU x Loja'}</CardTitle>
-          <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={verPorLoja}
-                onChange={(e) => setVerPorLoja(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-[var(--bbtk-purple)] focus:ring-[var(--bbtk-purple)]"
-              />
-              Ver por loja
-            </label>
-            {data && (
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.max(1, p - 1))}
-                  disabled={isLoading || data.pagination.page <= 1}
-                >
-                  ‹ Anterior
-                </Button>
-                <span className="whitespace-nowrap">
-                  Página {data.pagination.page} de {data.pagination.totalPages} · {formatNumber(data.pagination.totalReferencias)} referências
-                  {porCor && ` · ${formatNumber(sortedRows.length)} linhas de cor nesta página`}
-                </span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.min(data.pagination.totalPages, p + 1))}
-                  disabled={isLoading || data.pagination.page >= data.pagination.totalPages}
-                >
-                  Próxima ›
-                </Button>
-              </div>
-            )}
+          <div>
+            <CardTitle>SKU x Loja</CardTitle>
+            <p className="mt-1 text-sm text-gray-500">Visão por referência e variações</p>
           </div>
+          {data && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+              <label className="flex cursor-pointer select-none items-center gap-2 font-medium">
+                <input
+                  type="checkbox"
+                  checked={verPorLoja}
+                  onChange={(e) => setVerPorLoja(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-[var(--bbtk-purple)] focus:ring-[var(--bbtk-purple)]"
+                />
+                Ver por loja
+              </label>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                disabled={isLoading || data.pagination.page <= 1}
+              >
+                ‹ Anterior
+              </Button>
+              <span className="whitespace-nowrap">
+                Página {data.pagination.page} de {data.pagination.totalPages} · {formatNumber(data.pagination.totalReferencias)} referências
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setPagina((p) => Math.min(data.pagination.totalPages, p + 1))}
+                disabled={isLoading || data.pagination.page >= data.pagination.totalPages}
+              >
+                Próxima ›
+              </Button>
+            </div>
+          )}
         </CardHeader>
 
+        <div className="mb-4 grid grid-cols-1 gap-3 px-1 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg bg-blue-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Referências</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.referencias)}</p>
+          </div>
+          <div className="rounded-lg bg-violet-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-500">SKUs</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.skus)}</p>
+          </div>
+          <div className="rounded-lg bg-red-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Preço abaixo do custo</p>
+            <p className="mt-1 text-2xl font-black text-red-700">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.precoAbaixoCusto)}</p>
+          </div>
+          <div className="rounded-lg bg-amber-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">MKUP fora da faixa</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.markupFora)}</p>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div
           ref={topScrollRef}
           onScroll={sincronizarScrollPeloTopo}
-          className="mb-2 overflow-x-auto overflow-y-hidden"
+          className="h-5 overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-gray-50"
         >
-          <div style={{ width: scrollWidth || '100%', height: 1 }} />
+          <div style={{ width: Math.max(scrollWidth, larguraTabelaSkuLoja), height: 8 }} />
         </div>
 
-        <div ref={tabelaScrollRef} className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <Table tableClassName="table-fixed text-xs">
+        <div ref={tabelaScrollRef} className="overflow-x-hidden">
+        <table className="table-fixed text-xs" style={{ width: larguraTabelaSkuLoja, minWidth: larguraTabelaSkuLoja }}>
           <colgroup>
             {COLUNAS_REFERENCIA.map((c) => (
               <col key={c.key} style={{ width: `${c.width}px` }} />
@@ -1095,7 +1252,7 @@ export default function PcpRelatorioBasePage() {
               <col key={`${c.branchCode}-cob`} style={{ width: `${BRANCH_SUBCOL_WIDTH}px` }} />,
             ])}
           </colgroup>
-          <TableHead className="sticky top-0 z-10">
+          <TableHead className="sticky top-0 z-10 bg-white">
             <TableRow>
               {COLUNAS_REFERENCIA.map((c) => (
                 <ThSortPcp
@@ -1106,7 +1263,7 @@ export default function PcpRelatorioBasePage() {
                   sortDir={sortDir}
                   onSort={handleSort}
                   align={c.align}
-                  className={cn('!px-2.5 !py-2.5 whitespace-nowrap', zonaBg(c.key) || (c.sticky ? 'bg-gray-50' : ''), c.sticky && 'sticky z-20')}
+                  className={cn('!px-3 !py-3 whitespace-nowrap border-b border-gray-200 bg-white text-gray-500', c.sticky && 'sticky z-20')}
                   style={stickyStyleFor(c.sticky)}
                 />
               ))}
@@ -1116,7 +1273,7 @@ export default function PcpRelatorioBasePage() {
                   isHeader
                   colSpan={3}
                   align="center"
-                  className="bg-blue-50 text-blue-800 !px-1.5 !py-2.5 whitespace-nowrap"
+                  className="border-b border-gray-200 bg-gray-50 text-gray-600 !px-1.5 !py-3 whitespace-nowrap"
                   title={c.branchCode < 0 ? 'Estoque = Fábrica inteira; Giro = só canal Atacado' : undefined}
                 >
                   {c.label}
@@ -1128,7 +1285,7 @@ export default function PcpRelatorioBasePage() {
                 <TableCell
                   key={c.key}
                   isHeader
-                  className={cn(zonaBg(c.key) || 'bg-gray-50', '!px-2.5 !py-1.5', c.sticky && 'sticky z-20')}
+                  className={cn('border-b border-gray-200 bg-white !px-3 !py-1.5', c.sticky && 'sticky z-20')}
                   style={stickyStyleFor(c.sticky)}
                 />
               ))}
@@ -1141,7 +1298,7 @@ export default function PcpRelatorioBasePage() {
                     sortDir={sortDir}
                     onSort={handleSort}
                     align="center"
-                    className="bg-blue-50/60 text-blue-800 !px-1.5 !py-1.5"
+                    className="border-b border-gray-200 bg-gray-50 text-gray-500 !px-1.5 !py-1.5"
                   />
                   <ThSortPcp
                     label="EST"
@@ -1150,7 +1307,7 @@ export default function PcpRelatorioBasePage() {
                     sortDir={sortDir}
                     onSort={handleSort}
                     align="center"
-                    className="bg-blue-50/60 text-blue-800 !px-1.5 !py-1.5"
+                    className="border-b border-gray-200 bg-gray-50 text-gray-500 !px-1.5 !py-1.5"
                   />
                   <ThSortPcp
                     label="COB"
@@ -1159,16 +1316,14 @@ export default function PcpRelatorioBasePage() {
                     sortDir={sortDir}
                     onSort={handleSort}
                     align="center"
-                    className="bg-blue-50/60 text-blue-800 !px-1.5 !py-1.5"
+                    className="border-b border-gray-200 bg-gray-50 text-gray-500 !px-1.5 !py-1.5"
                   />
                 </Fragment>
               ))}
             </TableRow>
           </TableHead>
           <TableBody>
-            {/* Primeiro load (sem nada na tela) avisa no corpo; recarregamento fica
-                sob o LoadingOverlay, preservando a linha expandida na tela. */}
-            {isLoading && sortedRows.length === 0 ? (
+            {isLoading ? (
               <TableRow>
                 <TableCell colSpan={totalColunas} align="center" className="py-10 text-gray-500">
                   Carregando...
@@ -1182,23 +1337,21 @@ export default function PcpRelatorioBasePage() {
               </TableRow>
             ) : (
               sortedRows.map((row) => {
-                // Nos modos por cor a tabela ja esta no grao de cor: nao ha detalhe
-                // pra abrir, entao a linha nao e clicavel nem mostra a seta.
-                const expandida = !porCor && referenciaExpandida === row.referenceCode;
+                const expandida = referenciaExpandida === row.referenceCode;
                 return (
                   <Fragment key={row.referenceCode}>
                     <TableRow
-                      className={porCor ? undefined : 'cursor-pointer hover:bg-gray-50'}
-                      onClick={porCor ? undefined : () => setReferenciaExpandida(expandida ? null : row.referenceCode)}
+                      className={cn('cursor-pointer bg-white hover:bg-gray-50', expandida && 'bg-blue-50/70 hover:bg-blue-50')}
+                      onClick={() => setReferenciaExpandida(expandida ? null : row.referenceCode)}
                     >
                       {COLUNAS_REFERENCIA.map((c, idx) => (
                         <TableCell
                           key={c.key}
                           align={c.align}
-                          className={cn('!px-2.5 !py-2', zonaBg(c.key) || (c.sticky ? 'bg-white' : ''), c.sticky && 'sticky z-10')}
+                          className={cn('border-b border-gray-100 !px-3 !py-2.5', c.sticky && 'sticky z-10', c.sticky && (expandida ? 'bg-blue-50' : 'bg-white'))}
                           style={stickyStyleFor(c.sticky)}
                         >
-                          {idx === 0 && !porCor && <span className="mr-1 text-gray-400">{expandida ? '▼' : '▶'}</span>}
+                          {idx === 0 && <span className="mr-2 text-lg leading-none text-gray-500">{expandida ? '⌄' : '›'}</span>}
                           {c.render(row)}
                         </TableCell>
                       ))}
@@ -1221,11 +1374,12 @@ export default function PcpRelatorioBasePage() {
                     </TableRow>
                     {expandida && (
                       <TableRow>
-                        <TableCell colSpan={totalColunas} className="!p-0 bg-gray-50/60">
-                          <div className="p-2">
-                            <Table tableClassName="table-fixed text-xs">
+                        <TableCell colSpan={totalColunas} className="!p-0 bg-blue-50/30">
+                          <div className="overflow-hidden p-3">
+                            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+                            <table className="table-fixed text-xs" style={{ width: larguraDetalheSkuLoja, minWidth: larguraDetalheSkuLoja }}>
                               <colgroup>
-                                {COLUNAS_COR_DETALHE.map((c) => (
+                                {COLUNAS_SKU_DETALHE.map((c) => (
                                   <col key={c.key} style={{ width: `${c.width}px` }} />
                                 ))}
                                 {colunas.flatMap((c) => [
@@ -1234,15 +1388,15 @@ export default function PcpRelatorioBasePage() {
                                   <col key={`${c.branchCode}-cob`} style={{ width: `${BRANCH_SUBCOL_WIDTH}px` }} />,
                                 ])}
                               </colgroup>
-                              <TableHead>
+                              <TableHead className="bg-white">
                                 <TableRow>
-                                  {COLUNAS_COR_DETALHE.map((c) => (
+                                  {COLUNAS_SKU_DETALHE.map((c) => (
                                     <TableCell
                                       key={c.key}
                                       isHeader
                                       align={c.align}
-                                      className={cn('!px-2.5 !py-2 whitespace-nowrap', zonaBg(c.key) || 'bg-gray-100', c.sticky && 'sticky z-20')}
-                                      style={stickyStyleFor(c.sticky, COR_WIDTH)}
+                                      className={cn('border-b border-gray-200 bg-white !px-3 !py-2 whitespace-nowrap text-gray-500', c.sticky && 'sticky z-20')}
+                                      style={stickyStyleFor(c.sticky)}
                                     >
                                       {c.label}
                                     </TableCell>
@@ -1253,7 +1407,7 @@ export default function PcpRelatorioBasePage() {
                                       isHeader
                                       colSpan={3}
                                       align="center"
-                                      className="bg-blue-50 text-blue-800 !px-1.5 !py-2 whitespace-nowrap"
+                                      className="border-b border-gray-200 bg-gray-50 text-gray-500 !px-1.5 !py-2 whitespace-nowrap"
                                     >
                                       {c.label}
                                     </TableCell>
@@ -1261,20 +1415,26 @@ export default function PcpRelatorioBasePage() {
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {row.cores.map((cor) => (
-                                  <TableRow key={cor.cor}>
-                                    {COLUNAS_COR_DETALHE.map((c) => (
+                                {row.skus.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell colSpan={COLUNAS_SKU_DETALHE.length + colunas.length * 3} align="center" className="py-6 text-gray-500">
+                                      Nenhum SKU detalhado retornado para esta referÃªncia
+                                    </TableCell>
+                                  </TableRow>
+                                ) : row.skus.map((sku) => (
+                                  <TableRow key={sku.sku}>
+                                    {COLUNAS_SKU_DETALHE.map((c) => (
                                       <TableCell
                                         key={c.key}
                                         align={c.align}
-                                        className={cn('!px-2.5 !py-2', zonaBg(c.key) || (c.sticky ? 'bg-white' : ''), c.sticky && 'sticky z-10')}
-                                        style={stickyStyleFor(c.sticky, COR_WIDTH)}
+                                        className={cn('!px-3 !py-2.5', c.sticky && 'sticky z-10 bg-white')}
+                                        style={stickyStyleFor(c.sticky)}
                                       >
-                                        {c.render(cor)}
+                                        {c.render(sku)}
                                       </TableCell>
                                     ))}
                                     {colunas.map((c) => {
-                                      const dados = cor.branches[c.branchCode];
+                                      const dados = sku.branches[c.branchCode];
                                       return (
                                         <Fragment key={c.branchCode}>
                                           <TableCell align="right" className={cn('!px-1.5 !py-2', corGiro(dados?.giro, dados?.est))}>
@@ -1292,7 +1452,8 @@ export default function PcpRelatorioBasePage() {
                                   </TableRow>
                                 ))}
                               </TableBody>
-                            </Table>
+                            </table>
+                            </div>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1302,10 +1463,10 @@ export default function PcpRelatorioBasePage() {
               })
             )}
           </TableBody>
-        </Table>
+        </table>
+        </div>
         </div>
       </Card>
-      </LoadingOverlay>
 
       <Modal isOpen={metaModalAberto} onClose={() => setMetaModalAberto(false)} title="Editar metas da Visão Geral" size="md">
         {meta && (
@@ -1326,13 +1487,6 @@ export default function PcpRelatorioBasePage() {
                 onChange={(e) => setMeta({ ...meta, metaGiroAnualizado: Number(e.target.value) })}
               />
               <Input
-                label="Meta estoque morto (%)"
-                type="number"
-                step="0.1"
-                value={meta.metaEstoqueMortoPercent}
-                onChange={(e) => setMeta({ ...meta, metaEstoqueMortoPercent: Number(e.target.value) })}
-              />
-              <Input
                 label="Meta cobertura Básico/Renovável (meses)"
                 type="number"
                 step="0.1"
@@ -1340,7 +1494,7 @@ export default function PcpRelatorioBasePage() {
                 onChange={(e) => setMeta({ ...meta, metaCoberturaBasicoMeses: Number(e.target.value) })}
               />
               <Input
-                label="Meta cobertura Coleção (meses)"
+                label="Meta cobertura Style (meses)"
                 type="number"
                 step="0.1"
                 value={meta.metaCoberturaColecaoMeses}

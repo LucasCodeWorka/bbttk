@@ -15,6 +15,7 @@ import { formatMoney } from '@/lib/utils';
 interface DataPoint {
   name: string;
   value: number;
+  displayValue?: string;
   color?: string;
 }
 
@@ -65,7 +66,7 @@ function RankedBarList({
                 {truncar(d.name, 26)}
               </span>
               <span className="text-gray-600 whitespace-nowrap text-xs font-semibold">
-                {formatValue(d.value)}
+                {d.displayValue || formatValue(d.value)}
               </span>
             </div>
             <div className="h-2 rounded-full bg-gray-100 overflow-hidden">

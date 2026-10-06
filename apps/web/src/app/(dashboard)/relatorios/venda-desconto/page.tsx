@@ -233,7 +233,7 @@ export default function VendaDescontoPage() {
         { header: 'Linha', key: 'linha', width: 15 },
         { header: 'Status', key: 'status', width: 15 },
         { header: 'Coleção', key: 'colecao', width: 15 },
-        { header: 'Custo Produção', key: 'custoProducao', width: 14, type: 'currency' },
+        { header: 'Custo Selecionado', key: 'custoProducao', width: 14, type: 'currency' },
         { header: 'PDV Original', key: 'pdvOriginal', width: 14, type: 'currency' },
         { header: 'PDV Atual', key: 'pdvAtual', width: 14, type: 'currency' },
         { header: 'Markup', key: 'markup', width: 10, type: 'number' },
@@ -419,7 +419,7 @@ export default function VendaDescontoPage() {
                 <ThSortPcp label="Linha" sortKeyName="linha" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Status" sortKeyName="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
                 <ThSortPcp label="Coleção" sortKeyName="colecao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
-                <ThSortPcp label="Custo Prod." sortKeyName="custoProducao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Custo de Produção" />
+                <ThSortPcp label="Custo" sortKeyName="custoProducao" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Custo selecionado no configurador PCP" />
                 <ThSortPcp label="PDV Orig." sortKeyName="pdvOriginal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="PDV Original" />
                 <ThSortPcp label="PDV Atual" sortKeyName="pdvAtual" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
                 <ThSortPcp label="Markup" sortKeyName="markup" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />

@@ -29,6 +29,7 @@ export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(t
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';
 const MATRIZ_SEM_CLASSIFICACAO = 'Nao classificado';
+const COBERTURA_CRITICA_MESES = 5; // 150 dias na base de 30 dias.
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -38,6 +39,60 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 
 function round(value: number, decimals = 2): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+}
+
+function temCoberturaCritica(estoque: number, venda30Dias: number): boolean {
+  if (estoque <= 0) return false;
+  if (venda30Dias <= 0) return true;
+  return estoque / venda30Dias >= COBERTURA_CRITICA_MESES;
+}
+
+function statusAtivo(status: string | null): boolean {
+  return status?.trim().replace(/\s+/g, ' ').toUpperCase() === 'ATIVO';
+}
+
+interface EstoqueAnaliseAcc {
+  quantidade: number;
+  valor: number;
+  referencias: Set<string>;
+}
+
+function estoqueAnaliseAccVazio(): EstoqueAnaliseAcc {
+  return { quantidade: 0, valor: 0, referencias: new Set<string>() };
+}
+
+function acumularEstoqueAnalise(acc: EstoqueAnaliseAcc, referenceCode: string, quantidade: number, valor: number) {
+  if (quantidade <= 0) return;
+  acc.quantidade += quantidade;
+  acc.valor += valor;
+  acc.referencias.add(referenceCode);
+}
+
+function montarEstoqueAnaliseKpi(acc: EstoqueAnaliseAcc, estoqueTotal: number, valorEstoqueTotal: number): RelatorioBaseEstoqueAnaliseKpi {
+  return {
+    quantidade: round(acc.quantidade, 0),
+    referencias: acc.referencias.size,
+    quantidadePercent: estoqueTotal > 0 ? round((acc.quantidade / estoqueTotal) * 100, 1) : 0,
+    valor: round(acc.valor, 2),
+    valorPercent: valorEstoqueTotal > 0 ? round((acc.valor / valorEstoqueTotal) * 100, 1) : 0,
+  };
+}
+
+interface RupturaLinhaAcc {
+  skus: number;
+  totalSkus: number;
+}
+
+function rupturaLinhaAccVazio(): RupturaLinhaAcc {
+  return { skus: 0, totalSkus: 0 };
+}
+
+function montarRupturaLinhaKpi(acc: RupturaLinhaAcc): RelatorioBaseRupturaLinhaKpi {
+  return {
+    skus: acc.skus,
+    totalSkus: acc.totalSkus,
+    percent: acc.totalSkus > 0 ? round((acc.skus / acc.totalSkus) * 100, 1) : 0,
+  };
 }
 
 export interface RelatorioBaseFiltro {
@@ -165,6 +220,7 @@ export interface RelatorioBaseReferenciaRow {
   giroTt3: number;
   giroTt6: number;
   branches: Record<number, RelatorioBaseColunaFilial>;
+  skus: RelatorioBaseRow[];
   cores: RelatorioBaseCorRow[];
 }
 
@@ -180,7 +236,7 @@ export interface RelatorioBaseKpisExtra {
   valorEstoqueTotal: number;
   valorEstoqueAnoAnterior: number;
   valorEstoqueVariacaoPercent: number | null;
-  // Fora de linha cheio = status TOTVS exatamente "FORA DE LINHA".
+  // Critico = estoque com cobertura >= 150 dias, usando venda dos ultimos 30 dias.
   // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
@@ -192,9 +248,30 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
+  itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
+  ruptura: {
+    basico: RelatorioBaseRupturaLinhaKpi;
+    renovavel: RelatorioBaseRupturaLinhaKpi;
+  };
   // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
   // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAnaliseKpi {
+  quantidade: number;
+  referencias: number;
+  quantidadePercent: number;
+  valor: number;
+  valorPercent: number;
+}
+
+export interface RelatorioBaseRupturaLinhaKpi {
+  skus: number;
+  totalSkus: number;
+  percent: number;
 }
 
 export interface RelatorioBaseMatrizLinha {
@@ -203,6 +280,9 @@ export interface RelatorioBaseMatrizLinha {
   estoqueAtacado: number;
   estoqueTotal: number;
   valorEstoque: number;
+  vendaVarejo: number;
+  vendaAtacado: number;
+  vendaTotal: number;
   coberturaVarejo: number | null;
   coberturaAtacado: number | null;
   coberturaGeral: number | null;
@@ -231,6 +311,7 @@ export interface RelatorioBaseResponse {
     linha: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
+    status: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
@@ -681,7 +762,7 @@ interface CustoPrecoRow {
 // Custo/PDV real (var/ata) por product_code, na "loja de referencia" configurada -
 // custo/preco no TOTVS sao por filial, mas o Relatorio Base mostra 1 valor so por SKU
 // (decisao do Configurador do PCP: apps/web/.../pcp/relatorio-base-config/page.tsx).
-async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number, pdvVarejoCode: number, pdvAtacadoCode: number, productCodes: number[] | null): Promise<CustoPrecoRow[]> {
+async function getCustoPrecoRows(precoCustoBranchCode: number, pdvVarejoCode: number, pdvAtacadoCode: number, productCodes: number[] | null): Promise<CustoPrecoRow[]> {
   return prisma.$queryRaw<CustoPrecoRow[]>`
     SELECT
       base.product_code,
@@ -689,11 +770,11 @@ async function getCustoPrecoRows(precoCustoBranchCode: number, custoCode: number
       pv.valor AS pdv_var,
       pa.valor AS pdv_ata
     FROM (
-      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
+      SELECT DISTINCT product_code FROM produto_custos WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} ${filtroProductCode(productCodes)}
       UNION
       SELECT DISTINCT product_code FROM produto_precos WHERE branch_code = ${precoCustoBranchCode} ${filtroProductCode(productCodes)}
     ) base
-    LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${precoCustoBranchCode} AND c.cost_code = ${custoCode}
+    LEFT JOIN produto_custos c ON c.product_code = base.product_code AND c.branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND c.cost_code = ${CUSTO_PRODUCAO_CODE}
     LEFT JOIN produto_precos pv ON pv.product_code = base.product_code AND pv.branch_code = ${precoCustoBranchCode} AND pv.price_code = ${pdvVarejoCode}
     LEFT JOIN produto_precos pa ON pa.product_code = base.product_code AND pa.branch_code = ${precoCustoBranchCode} AND pa.price_code = ${pdvAtacadoCode}
   `;
@@ -713,13 +794,19 @@ export function markupPercentual(preco: number | null, custo: number | null): nu
 // real (transacao de verdade, com desconto ja aplicado) em vez do PDV Real/Atual -
 // trocado por pedido do usuario, pra nao variar com o desconto de cada venda.
 export const CUSTO_ULTIMA_COMPRA_CODE = 2;
+export const CUSTO_PRODUCAO_CODE = 1;
+export const CUSTO_PRODUCAO_BRANCH_CODE = 1;
 
-export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoRows(precoCustoBranchCode: number, custoCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
-    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_ULTIMA_COMPRA_CODE}
+    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${custoCode}
       ${filtroProductCode(productCodes)}
   `;
+}
+
+export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+  return getCustoRows(precoCustoBranchCode, CUSTO_ULTIMA_COMPRA_CODE, productCodes);
 }
 
 // Custo de PRODUCAO (costCode=1, fixo) - achado na investigacao do Performance Colecao
@@ -728,12 +815,10 @@ export async function getCustoUltimaCompraRows(precoCustoBranchCode: number, pro
 // cost_code=1 ("PRODUCAO" no TOTVS) tem cobertura quase total (99,8% dos produtos,
 // branch_code=1) e e semanticamente o que um relatorio de PCP quer (custo de produzir
 // a peca, nao preco da ultima compra de matéria-prima/mercadoria).
-export const CUSTO_PRODUCAO_CODE = 1;
-
-export async function getCustoProducaoRows(precoCustoBranchCode: number, productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
+export async function getCustoProducaoRows(productCodes: number[] | null): Promise<Array<{ product_code: number; valor: Decimal }>> {
   return prisma.$queryRaw<Array<{ product_code: number; valor: Decimal }>>`
     SELECT product_code, valor FROM produto_custos
-    WHERE branch_code = ${precoCustoBranchCode} AND cost_code = ${CUSTO_PRODUCAO_CODE}
+    WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND cost_code = ${CUSTO_PRODUCAO_CODE}
       ${filtroProductCode(productCodes)}
   `;
 }
@@ -753,6 +838,23 @@ export async function getUltimaEntradaRows(productCodes: number[] | null, dataPo
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
     WHERE t.status = 4 AND co.operations_type = 'E'
+      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+      ${filtroProductCodeTi(productCodes)}
+    GROUP BY ti.product_code
+  `;
+}
+
+async function getEntradaDpaRows(productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; ultima_entrada_dpa: Date }>> {
+  const dataBase = dataBaseSql(dataPosicao);
+  return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada_dpa: Date }>>`
+    SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada_dpa
+    FROM transacoes t
+    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
+    ${OPERACAO_JOIN}
+    WHERE t.status = 4
+      AND co.operations_type = 'E'
+      AND t.branch_code = ${FABRICA_BRANCH_CODE}
+      AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%'
       AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
@@ -791,6 +893,41 @@ interface IdentidadeRow {
   lancamento: string | null;
 }
 
+interface RelatorioBaseAnaliticoRow {
+  data_posicao: string;
+  product_sku: string;
+  product_code: number | null;
+  reference_code: string | null;
+  reference_name: string | null;
+  product_name: string | null;
+  descricao_completa: string | null;
+  color_code: string | null;
+  color_name: string | null;
+  size: string | null;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  modelo: string | null;
+  status: string | null;
+  lancamento: string | null;
+  branch_code: number;
+  estoque: Decimal | null;
+  estoque_ano_anterior: Decimal | null;
+  giro_30d: Decimal | null;
+  giro_60d: Decimal | null;
+  giro_90d: Decimal | null;
+  giro_1m: Decimal | null;
+  giro_3m: Decimal | null;
+  giro_6m: Decimal | null;
+  venda_cobertura_periodo: Decimal | null;
+  custo_producao: Decimal | null;
+  pdv_varejo: Decimal | null;
+  pdv_atacado: Decimal | null;
+  ultima_entrada: Date | null;
+  em_producao: Decimal | null;
+  valor_estoque_custo_producao: Decimal | null;
+}
+
 function buildRefCorTam(referenceCode: string, cor: string, tamanho: string): string {
   return [referenceCode, cor, tamanho].join(' - ');
 }
@@ -806,14 +943,27 @@ export function formatarLancamento(valor: string | null): string | null {
   return `${match[1]}/${match[2]}`;
 }
 
+function normalizarClassificacao(valor: string | null): string {
+  return (valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+const LINHA_BUCKET_BASICO = 'B\u00e1sico';
+const LINHA_BUCKET_BASICO_RENOVAVEL = 'B\u00e1sico Renov\u00e1vel';
+const LINHA_BUCKET_COLECAO = 'Style';
+
 // Básico Renovável entra separado de Básico (pedido do usuario); resto da linha
 // (TEENKIS/PROMOCOES/BRINDE/MODA PRAIA/EMBALAGEM/CASUAL/PROTECAO) fica de fora da
 // matriz por linha, mesma politica que ja existia no visaoGeral.service.ts antigo.
 export function linhaBucket(linha: string | null): string | null {
-  const l = linha?.trim().toUpperCase();
-  if (l === 'BASICA') return 'Básico';
-  if (l === 'BASICA RENOVAVEL') return 'Básico Renovável';
-  if (l === 'STYLE') return 'Coleção';
+  const l = normalizarClassificacao(linha);
+  if (l === 'BASICA' || l === 'BASICO') return LINHA_BUCKET_BASICO;
+  if (l === 'BASICA RENOVAVEL' || l === 'BASICO RENOVAVEL') return LINHA_BUCKET_BASICO_RENOVAVEL;
+  if (l === 'STYLE' || l === 'COLECAO') return LINHA_BUCKET_COLECAO;
   return null;
 }
 
@@ -826,6 +976,26 @@ function buildIdentidadeFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
     condicoes.push(Prisma.sql`(a.reference_code ILIKE ${termo} OR a.product_sku ILIKE ${termo} OR a.reference_name ILIKE ${termo} OR a.product_name ILIKE ${termo})`);
+  }
+  if (condicoes.length === 0) return Prisma.empty;
+  return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
+}
+
+function buildAnaliticoFiltro(filtro: RelatorioBaseFiltro): Prisma.Sql {
+  const condicoes: Prisma.Sql[] = [];
+  if (filtro.categoria?.length) condicoes.push(Prisma.sql`TRIM(rb.categoria) IN (${Prisma.join(filtro.categoria)})`);
+  if (filtro.linha?.length) condicoes.push(Prisma.sql`TRIM(rb.linha) IN (${Prisma.join(filtro.linha)})`);
+  if (filtro.genero?.length) condicoes.push(Prisma.sql`TRIM(rb.genero) IN (${Prisma.join(filtro.genero)})`);
+  if (filtro.status?.length) condicoes.push(Prisma.sql`TRIM(rb.status) IN (${Prisma.join(filtro.status)})`);
+  if (filtro.branches?.length) condicoes.push(Prisma.sql`rb.branch_code IN (${Prisma.join(filtro.branches)})`);
+  if (filtro.search?.trim()) {
+    const termo = `%${filtro.search.trim()}%`;
+    condicoes.push(Prisma.sql`(
+      rb.product_sku ILIKE ${termo}
+      OR rb.reference_code ILIKE ${termo}
+      OR rb.reference_name ILIKE ${termo}
+      OR rb.product_name ILIKE ${termo}
+    )`);
   }
   if (condicoes.length === 0) return Prisma.empty;
   return Prisma.sql`AND ${Prisma.join(condicoes, ' AND ')}`;
@@ -931,8 +1101,620 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
   `;
 }
 
+async function resolveDataAnalitica(filtro: RelatorioBaseFiltro): Promise<string | null> {
+  if (filtro.dataPosicao) {
+    const rows = await prisma.$queryRaw<Array<{ data_posicao: string }>>`
+      SELECT to_char(data_posicao, 'YYYY-MM-DD') AS data_posicao
+      FROM pcp_relatorio_base_analitico_diario
+      WHERE data_posicao = ${filtro.dataPosicao}::date
+      LIMIT 1
+    `;
+    return rows[0]?.data_posicao || null;
+  }
+
+  const rows = await prisma.$queryRaw<Array<{ data_posicao: string | null }>>`
+    SELECT to_char(MAX(data_posicao), 'YYYY-MM-DD') AS data_posicao
+    FROM pcp_relatorio_base_analitico_diario
+    WHERE data_posicao < CURRENT_DATE
+  `;
+  return rows[0]?.data_posicao || null;
+}
+
+function giroAnaliticoDaConfig(row: RelatorioBaseAnaliticoRow, dias: number): number {
+  if (dias <= 30) return decimalToNumber(row.giro_30d);
+  if (dias <= 60) return decimalToNumber(row.giro_60d);
+  return decimalToNumber(row.giro_90d);
+}
+
+function dateToIsoDate(value: Date | string | null): string | null {
+  if (!value) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  return value.toISOString().slice(0, 10);
+}
+
+async function getRelatorioBaseAnalitico(
+  filtro: RelatorioBaseFiltro,
+  config: Awaited<ReturnType<typeof getConfig>>
+): Promise<RelatorioBaseResponse | null> {
+  const dataAnalitica = await resolveDataAnalitica(filtro);
+  if (!dataAnalitica) return null;
+
+  const filtroSql = buildAnaliticoFiltro(filtro);
+  const rowsAnaliticas = await prisma.$queryRaw<RelatorioBaseAnaliticoRow[]>`
+    SELECT
+      to_char(rb.data_posicao, 'YYYY-MM-DD') AS data_posicao,
+      rb.product_sku,
+      rb.product_code,
+      rb.reference_code,
+      rb.reference_name,
+      rb.product_name,
+      COALESCE(NULLIF(TRIM(a.description), ''), NULLIF(TRIM(rb.product_name), ''), NULLIF(TRIM(rb.reference_name), ''), rb.product_sku) AS descricao_completa,
+      NULLIF(TRIM(a.color_code), '') AS color_code,
+      NULLIF(TRIM(a.color_name), '') AS color_name,
+      NULLIF(TRIM(a.size), '') AS size,
+      rb.categoria,
+      rb.linha,
+      rb.genero,
+      rb.modelo,
+      rb.status,
+      rb.lancamento,
+      rb.branch_code,
+      rb.estoque,
+      rb.estoque_ano_anterior,
+      rb.giro_30d,
+      rb.giro_60d,
+      rb.giro_90d,
+      rb.giro_1m,
+      rb.giro_3m,
+      rb.giro_6m,
+      rb.venda_cobertura_periodo,
+      rb.custo_producao,
+      rb.pdv_varejo,
+      rb.pdv_atacado,
+      rb.ultima_entrada,
+      rb.em_producao,
+      rb.valor_estoque_custo_producao
+    FROM pcp_relatorio_base_analitico_diario rb
+    LEFT JOIN produto_analitico a ON a.product_sku = rb.product_sku
+    WHERE rb.data_posicao = ${dataAnalitica}::date
+      ${filtroSql}
+  `;
+
+  const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
+  const colunasAtivas = branchFiltro
+    ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
+    : RELATORIO_BASE_BRANCH_ORDER;
+
+  function coberturaDe(estoque: number, mediaMensal: number): number | null {
+    if (mediaMensal <= 0) return null;
+    return round(estoque / mediaMensal, 2);
+  }
+
+  interface BucketAcc {
+    estVarejo: number;
+    estAtacado: number;
+    vendaVarejo: number;
+    vendaAtacado: number;
+    valorEstoque: number;
+  }
+  function bucketVazio(): BucketAcc {
+    return { estVarejo: 0, estAtacado: 0, vendaVarejo: 0, vendaAtacado: 0, valorEstoque: 0 };
+  }
+  function acumularBucket(mapa: Map<string, BucketAcc>, chave: string | null, valores: BucketAcc) {
+    const bucket = chave?.trim() || MATRIZ_SEM_CLASSIFICACAO;
+    const acc = mapa.get(bucket) || bucketVazio();
+    acc.estVarejo += valores.estVarejo;
+    acc.estAtacado += valores.estAtacado;
+    acc.vendaVarejo += valores.vendaVarejo;
+    acc.vendaAtacado += valores.vendaAtacado;
+    acc.valorEstoque += valores.valorEstoque;
+    mapa.set(bucket, acc);
+  }
+
+  interface ConsistencyState {
+    value: number | null | undefined;
+    inconsistent: boolean;
+  }
+  type ConsistencyKey = 'custo' | 'pdvAtual' | 'pdvRealVar' | 'markupVar' | 'pdvRealAta' | 'markupAta';
+  function emptyConsistency(): Record<ConsistencyKey, ConsistencyState> {
+    return {
+      custo: { value: undefined, inconsistent: false },
+      pdvAtual: { value: undefined, inconsistent: false },
+      pdvRealVar: { value: undefined, inconsistent: false },
+      markupVar: { value: undefined, inconsistent: false },
+      pdvRealAta: { value: undefined, inconsistent: false },
+      markupAta: { value: undefined, inconsistent: false },
+    };
+  }
+  function addConsistency(state: ConsistencyState, value: number | null) {
+    if (value === null || state.inconsistent) return;
+    if (state.value === undefined) state.value = value;
+    else if (state.value !== value) state.inconsistent = true;
+  }
+  function getConsistency(state: ConsistencyState): number | null {
+    if (state.inconsistent) return null;
+    return state.value ?? null;
+  }
+
+  interface SkuAgg {
+    productSku: string;
+    productCode: number | null;
+    referenceCode: string;
+    referenceName: string;
+    productName: string;
+    descricaoCompleta: string;
+    cor: string;
+    tamanho: string;
+    categoria: string | null;
+    linha: string | null;
+    genero: string | null;
+    modelo: string | null;
+    status: string | null;
+    lancamento: string | null;
+    ultimaEntrada: string | null;
+    custo: number | null;
+    pdvVar: number | null;
+    pdvAta: number | null;
+    emProducao: number;
+    estTt: number;
+    estoqueAnoAnterior: number;
+    valorEstoque: number;
+    valorEstoqueAnoAnterior: number;
+    giro30: number;
+    giro60: number;
+    giro90: number;
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    branchesAgg: Map<number, { est: number; giro: number; vendaCobertura: number; giro30: number }>;
+  }
+
+  const skus = new Map<string, SkuAgg>();
+  for (const row of rowsAnaliticas) {
+    const sku = row.product_sku;
+    const referenceCode = row.reference_code || sku;
+    const referenceName = row.reference_name || referenceCode;
+    const custo = row.custo_producao !== null ? decimalToNumber(row.custo_producao) : null;
+    const estoque = decimalToNumber(row.estoque);
+    const vendaCobertura = decimalToNumber(row.venda_cobertura_periodo);
+    const valorEstoque = row.valor_estoque_custo_producao !== null
+      ? decimalToNumber(row.valor_estoque_custo_producao)
+      : estoque * (custo ?? 0);
+    const valorEstoqueAnoAnterior = decimalToNumber(row.estoque_ano_anterior) * (custo ?? 0);
+    const ultimaEntrada = dateToIsoDate(row.ultima_entrada);
+
+    const agg = skus.get(sku) || {
+      productSku: sku,
+      productCode: row.product_code,
+      referenceCode,
+      referenceName,
+      productName: row.product_name || referenceName,
+      descricaoCompleta: row.descricao_completa || row.product_name || referenceName,
+      cor: row.color_name || row.color_code || '-',
+      tamanho: row.size || '-',
+      categoria: row.categoria,
+      linha: row.linha,
+      genero: row.genero,
+      modelo: row.modelo,
+      status: row.status,
+      lancamento: formatarLancamento(row.lancamento),
+      ultimaEntrada: null,
+      custo,
+      pdvVar: row.pdv_varejo !== null ? decimalToNumber(row.pdv_varejo) : null,
+      pdvAta: row.pdv_atacado !== null ? decimalToNumber(row.pdv_atacado) : null,
+      emProducao: decimalToNumber(row.em_producao),
+      estTt: 0,
+      estoqueAnoAnterior: 0,
+      valorEstoque: 0,
+      valorEstoqueAnoAnterior: 0,
+      giro30: 0,
+      giro60: 0,
+      giro90: 0,
+      giroTt1: 0,
+      giroTt3: 0,
+      giroTt6: 0,
+      branchesAgg: new Map<number, { est: number; giro: number; vendaCobertura: number; giro30: number }>(),
+    };
+
+    agg.estTt += estoque;
+    agg.estoqueAnoAnterior += decimalToNumber(row.estoque_ano_anterior);
+    agg.valorEstoque += valorEstoque;
+    agg.valorEstoqueAnoAnterior += valorEstoqueAnoAnterior;
+    agg.giro30 += decimalToNumber(row.giro_30d);
+    agg.giro60 += decimalToNumber(row.giro_60d);
+    agg.giro90 += decimalToNumber(row.giro_90d);
+    agg.giroTt1 += decimalToNumber(row.giro_1m);
+    agg.giroTt3 += decimalToNumber(row.giro_3m);
+    agg.giroTt6 += decimalToNumber(row.giro_6m);
+    if (ultimaEntrada && (!agg.ultimaEntrada || ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = ultimaEntrada;
+    if (agg.custo === null && custo !== null) agg.custo = custo;
+    if (agg.pdvVar === null && row.pdv_varejo !== null) agg.pdvVar = decimalToNumber(row.pdv_varejo);
+    if (agg.pdvAta === null && row.pdv_atacado !== null) agg.pdvAta = decimalToNumber(row.pdv_atacado);
+
+    const branch = agg.branchesAgg.get(row.branch_code) || { est: 0, giro: 0, vendaCobertura: 0, giro30: 0 };
+    branch.est += estoque;
+    branch.giro += giroAnaliticoDaConfig(row, config.giroDias);
+    branch.vendaCobertura += vendaCobertura;
+    branch.giro30 += decimalToNumber(row.giro_30d);
+    agg.branchesAgg.set(row.branch_code, branch);
+
+    skus.set(sku, agg);
+  }
+
+  const matrizLinhaAgg = new Map<string, BucketAcc>();
+  const matrizCategoriaAgg = new Map<string, BucketAcc>();
+  const matrizGeneroAgg = new Map<string, BucketAcc>();
+  const matrizStatusAgg = new Map<string, BucketAcc>();
+  const statusAgg = new Map<string, number>();
+  let valorEstoqueTotal = 0;
+  let valorEstoqueAnoAnterior = 0;
+  let estVarejoTotal = 0;
+  let estAtacadoTotal = 0;
+  let vendaVarejoTotal = 0;
+  let vendaAtacadoTotal = 0;
+  let estoqueMortoQtd = 0;
+  let estoqueMortoValor = 0;
+  let estoquePromocaoQtd = 0;
+  let estoquePromocaoValor = 0;
+  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const rupturaBasicoAcc = rupturaLinhaAccVazio();
+  const rupturaRenovavelAcc = rupturaLinhaAccVazio();
+  const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
+
+  interface RefAgg {
+    referenceName: string;
+    categoria: string | null;
+    linha: string | null;
+    genero: string | null;
+    modelo: string | null;
+    status: string | null;
+    lancamento: string | null;
+    ultimaEntrada: string | null;
+    emProducao: number;
+    estTt: number;
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    totalSkus: number;
+    consistency: Record<ConsistencyKey, ConsistencyState>;
+    branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+  }
+  const referenciaAgg = new Map<string, RefAgg>();
+
+  for (const sku of skus.values()) {
+    const estAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.est ?? 0;
+    let estVarejoSku = 0;
+    let vendaVarejoSku = 0;
+    for (const [branchCode, valores] of sku.branchesAgg) {
+      if (branchCode === ATACADO_BRANCH_CODE) continue;
+      estVarejoSku += valores.est;
+      vendaVarejoSku += valores.giro30;
+    }
+    const vendaAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.giro30 ?? 0;
+    const custo = sku.custo;
+
+    valorEstoqueTotal += sku.valorEstoque;
+    valorEstoqueAnoAnterior += sku.valorEstoqueAnoAnterior;
+    estVarejoTotal += estVarejoSku;
+    estAtacadoTotal += estAtacadoSku;
+    vendaVarejoTotal += vendaVarejoSku;
+    vendaAtacadoTotal += vendaAtacadoSku;
+
+    kpis.giroTt1 += round(sku.giroTt1, 0);
+    kpis.giroTt3 += round(sku.giroTt3, 0);
+    kpis.giroTt6 += round(sku.giroTt6, 0);
+    kpis.estTt += round(sku.estTt, 0);
+    kpis.skuCount += 1;
+    kpis.giroTt30 += sku.giro30;
+    kpis.giroTt60 += sku.giro60;
+    kpis.giroTt90 += sku.giro90;
+
+    const statusTrim = sku.status?.trim().replace(/\s+/g, ' ').toUpperCase() || null;
+    let statusBucketKey: string;
+    if (statusTrim === 'FORA DE LINHA') statusBucketKey = 'FORA DE LINHA';
+    else if (statusTrim?.startsWith('FORA DE LINHA')) statusBucketKey = 'FORA DE LINHA PROMOCAO';
+    else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
+    else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
+    else statusBucketKey = 'OUTROS';
+    statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + sku.estTt);
+    if (temCoberturaCritica(sku.estTt, sku.giro30)) {
+      estoqueMortoQtd += sku.estTt;
+      estoqueMortoValor += sku.valorEstoque;
+    }
+    if (sku.giro30 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    if (sku.giro60 <= 0 && sku.giro90 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    if (sku.giro90 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
+    const linhaSku = linhaBucket(sku.linha);
+    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
+    if (rupturaAcc && statusAtivo(sku.status) && sku.ultimaEntrada) {
+      rupturaAcc.totalSkus += 1;
+      if (sku.estTt <= 0) rupturaAcc.skus += 1;
+    }
+    if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+      estoquePromocaoQtd += sku.estTt;
+      estoquePromocaoValor += sku.valorEstoque;
+    }
+
+    const bucketValores: BucketAcc = {
+      estVarejo: estVarejoSku,
+      estAtacado: estAtacadoSku,
+      vendaVarejo: vendaVarejoSku,
+      vendaAtacado: vendaAtacadoSku,
+      valorEstoque: sku.valorEstoque,
+    };
+    acumularBucket(matrizLinhaAgg, linhaBucket(sku.linha), bucketValores);
+    acumularBucket(matrizCategoriaAgg, sku.categoria?.trim() || null, bucketValores);
+    acumularBucket(matrizGeneroAgg, sku.genero?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, sku.status?.trim() || null, bucketValores);
+
+    const referenceCode = sku.referenceCode;
+    const markupVar = markupPercentual(sku.pdvVar, custo);
+    const markupAta = markupPercentual(sku.pdvAta, custo);
+    const agg = referenciaAgg.get(referenceCode) || {
+      referenceName: sku.referenceName,
+      categoria: sku.categoria,
+      linha: sku.linha,
+      genero: sku.genero,
+      modelo: sku.modelo,
+      status: sku.status,
+      lancamento: sku.lancamento,
+      ultimaEntrada: null,
+      emProducao: 0,
+      estTt: 0,
+      giroTt1: 0,
+      giroTt3: 0,
+      giroTt6: 0,
+      totalSkus: 0,
+      consistency: emptyConsistency(),
+      branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+    };
+    agg.emProducao += round(sku.emProducao, 0);
+    agg.estTt += round(sku.estTt, 0);
+    agg.giroTt1 += round(sku.giroTt1, 0);
+    agg.giroTt3 += round(sku.giroTt3, 0);
+    agg.giroTt6 += round(sku.giroTt6, 0);
+    agg.totalSkus += 1;
+    addConsistency(agg.consistency.custo, custo);
+    addConsistency(agg.consistency.pdvAtual, sku.pdvVar);
+    addConsistency(agg.consistency.pdvRealVar, sku.pdvVar);
+    addConsistency(agg.consistency.markupVar, markupVar);
+    addConsistency(agg.consistency.pdvRealAta, sku.pdvAta);
+    addConsistency(agg.consistency.markupAta, markupAta);
+    if (sku.ultimaEntrada && (!agg.ultimaEntrada || sku.ultimaEntrada > agg.ultimaEntrada)) agg.ultimaEntrada = sku.ultimaEntrada;
+    for (const [branchCode, valores] of sku.branchesAgg) {
+      const acumulado = agg.branchesAgg.get(branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+      acumulado.est += valores.est;
+      acumulado.giro += valores.giro;
+      acumulado.mediaMensalSum += valores.giro30;
+      agg.branchesAgg.set(branchCode, acumulado);
+    }
+    referenciaAgg.set(referenceCode, agg);
+  }
+
+  const rows: RelatorioBaseReferenciaRow[] = [];
+  for (const [referenceCode, agg] of referenciaAgg) {
+    const branches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const coluna of colunasAtivas) {
+      const valores = agg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+      branches[coluna.branchCode] = {
+        est: round(valores.est, 0),
+        giro: round(valores.giro, 0),
+        cob: coberturaDe(valores.est, valores.mediaMensalSum),
+      };
+    }
+    rows.push({
+      referenceCode,
+      referenceName: agg.referenceName,
+      totalSkus: agg.totalSkus,
+      descricao: agg.referenceName,
+      descricaoCompleta: agg.referenceName,
+      categoria: agg.categoria,
+      linha: agg.linha,
+      genero: agg.genero,
+      modelo: agg.modelo,
+      status: agg.status,
+      lancamento: agg.lancamento,
+      ultimaEntrada: agg.ultimaEntrada,
+      custo: getConsistency(agg.consistency.custo),
+      pdvAtual: getConsistency(agg.consistency.pdvAtual),
+      pdvRealVar: getConsistency(agg.consistency.pdvRealVar),
+      markupVar: getConsistency(agg.consistency.markupVar),
+      pdvRealAta: getConsistency(agg.consistency.pdvRealAta),
+      markupAta: getConsistency(agg.consistency.markupAta),
+      emProducao: round(agg.emProducao, 0),
+      estTt: round(agg.estTt, 0),
+      giroTt1: round(agg.giroTt1, 0),
+      giroTt3: round(agg.giroTt3, 0),
+      giroTt6: round(agg.giroTt6, 0),
+      branches,
+      skus: [],
+      cores: [],
+    });
+  }
+
+  rows.sort((a, b) => b.giroTt3 - a.giroTt3);
+  const pageSize = filtro.pageSize && filtro.pageSize > 0 ? filtro.pageSize : 15;
+  const totalReferencias = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
+  const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
+  const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
+  for (const sku of skus.values()) {
+    const row = rowsPorReferencia.get(sku.referenceCode);
+    if (!row) continue;
+
+    const custo = sku.custo;
+    const markupVar = markupPercentual(sku.pdvVar, custo);
+    const markupAta = markupPercentual(sku.pdvAta, custo);
+    const skuBranches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const coluna of colunasAtivas) {
+      const valores = sku.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, vendaCobertura: 0, giro30: 0 };
+      skuBranches[coluna.branchCode] = {
+        est: round(valores.est, 0),
+        giro: round(valores.giro, 0),
+        cob: coberturaDe(valores.est, valores.giro30),
+      };
+    }
+
+    row.skus.push({
+      sku: sku.productSku,
+      codigo: sku.productCode,
+      referenceCode: sku.referenceCode,
+      cor: sku.cor,
+      tamanho: sku.tamanho,
+      refCorTam: buildRefCorTam(sku.referenceCode, sku.cor, sku.tamanho),
+      descricao: sku.productName,
+      descricaoCompleta: sku.descricaoCompleta,
+      categoria: sku.categoria,
+      linha: sku.linha,
+      genero: sku.genero,
+      modelo: sku.modelo,
+      status: sku.status,
+      lancamento: sku.lancamento,
+      ultimaEntrada: sku.ultimaEntrada,
+      custo,
+      pdvAtual: sku.pdvVar,
+      pdvRealVar: sku.pdvVar,
+      markupVar,
+      pdvRealAta: sku.pdvAta,
+      markupAta,
+      estDisponivel: null,
+      emProducao: round(sku.emProducao, 0),
+      estPrevisto: null,
+      estTt: round(sku.estTt, 0),
+      giroTt1: round(sku.giroTt1, 0),
+      giroTt3: round(sku.giroTt3, 0),
+      giroTt6: round(sku.giroTt6, 0),
+      branches: skuBranches,
+    });
+  }
+  for (const row of rowsPaginadas) {
+    row.skus.sort((a, b) => a.sku.localeCompare(b.sku));
+  }
+
+  function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
+    const mediaMensalVarejo = acc.vendaVarejo;
+    const mediaMensalAtacado = acc.vendaAtacado;
+    const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
+    return {
+      label,
+      estoqueVarejo: round(acc.estVarejo, 0),
+      estoqueAtacado: round(acc.estAtacado, 0),
+      estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
+      valorEstoque: round(acc.valorEstoque, 2),
+      vendaVarejo: round(acc.vendaVarejo, 0),
+      vendaAtacado: round(acc.vendaAtacado, 0),
+      vendaTotal: round(acc.vendaVarejo + acc.vendaAtacado, 0),
+      coberturaVarejo: coberturaDe(acc.estVarejo, mediaMensalVarejo),
+      coberturaAtacado: coberturaDe(acc.estAtacado, mediaMensalAtacado),
+      coberturaGeral: coberturaDe(acc.estVarejo + acc.estAtacado, mediaMensalGeral),
+    };
+  }
+
+  function buildMatriz(agg: Map<string, BucketAcc>): RelatorioBaseMatrizLinha[] {
+    const entradas = [...agg.entries()].sort(
+      (a, b) => b[1].vendaVarejo + b[1].vendaAtacado - (a[1].vendaVarejo + a[1].vendaAtacado)
+    );
+    const linhas = entradas.map(([label, acc]) => montarLinhaMatriz(label, acc));
+    const totalAcc = entradas.reduce<BucketAcc>(
+      (acc, [, v]) => ({
+        estVarejo: acc.estVarejo + v.estVarejo,
+        estAtacado: acc.estAtacado + v.estAtacado,
+        vendaVarejo: acc.vendaVarejo + v.vendaVarejo,
+        vendaAtacado: acc.vendaAtacado + v.vendaAtacado,
+        valorEstoque: acc.valorEstoque + v.valorEstoque,
+      }),
+      bucketVazio()
+    );
+    linhas.push(montarLinhaMatriz('Total', totalAcc));
+    return linhas;
+  }
+
+  const matrizLinha = buildMatriz(matrizLinhaAgg);
+  const matrizCategoria = buildMatriz(matrizCategoriaAgg);
+  const matrizGenero = buildMatriz(matrizGeneroAgg);
+  const matrizStatus = buildMatriz(matrizStatusAgg);
+  function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
+    const labelNormalizado = normalizarClassificacao(label);
+    return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
+  }
+
+  const statusBreakdown = [...statusAgg.entries()]
+    .map(([status, qtd]) => ({
+      status,
+      estTt: round(qtd, 0),
+      percent: kpis.estTt > 0 ? round((qtd / kpis.estTt) * 100, 1) : 0,
+    }))
+    .sort((a, b) => b.estTt - a.estTt);
+  const giroAnualizado =
+    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
+  const valorEstoqueVariacaoPercent =
+    valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
+
+  return {
+    config: {
+      giroDias: config.giroDias,
+      coberturaMeses: config.coberturaMeses,
+      atacadoCoberturaBase: config.atacadoCoberturaBase,
+      coberturaLimiteVerde: decimalToNumber(config.coberturaLimiteVerde),
+      coberturaLimiteVermelho: decimalToNumber(config.coberturaLimiteVermelho),
+    },
+    kpis: {
+      giroTt1: round(kpis.giroTt1, 0),
+      giroTt3: round(kpis.giroTt3, 0),
+      giroTt6: round(kpis.giroTt6, 0),
+      giroTt30: round(kpis.giroTt30, 0),
+      giroTt60: round(kpis.giroTt60, 0),
+      giroTt90: round(kpis.giroTt90, 0),
+      estTt: round(kpis.estTt, 0),
+      skuCount: kpis.skuCount,
+    },
+    kpisExtra: {
+      coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
+      coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal),
+      coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
+      giroAnualizado,
+      valorEstoqueTotal: round(valorEstoqueTotal, 2),
+      valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
+      valorEstoqueVariacaoPercent,
+      estoqueMortoQtd: round(estoqueMortoQtd, 0),
+      estoqueMortoValor: round(estoqueMortoValor, 2),
+      estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+      estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
+      estoquePromocaoValor: round(estoquePromocaoValor, 2),
+      estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
+      coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
+      coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
+      coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
+      referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
+      itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
+      itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
+      itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+      ruptura: {
+        basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
+        renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
+      },
+      statusBreakdown,
+    },
+    matriz: {
+      linha: matrizLinha,
+      categoria: matrizCategoria,
+      genero: matrizGenero,
+      status: matrizStatus,
+    },
+    pagination: { page, pageSize, totalReferencias, totalPages },
+    colunas: colunasAtivas,
+    rows: rowsPaginadas,
+  };
+}
+
 export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<RelatorioBaseResponse> {
   const config = await getConfig();
+  const analitico = await getRelatorioBaseAnalitico(filtro, config);
+  if (analitico) return analitico;
+
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
 
   // Mapeamento de branch para busca de dados: ATACADO_BRANCH_CODE (-2) é um código sintético
@@ -974,16 +1756,18 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTotalDias(30, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTotalDias(60, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
   ]);
-  const [giroTt90Total, giroTt1Rows, giroTt3Rows, giroTt6Rows] = await Promise.all([
+  const [giroTt90Total, giroTt1Rows, giroTt2Rows, giroTt3Rows, giroTt6Rows] = await Promise.all([
     getGiroTotalDias(90, productCodesFiltro, filtro.branches || null, filtro.dataPosicao),
     getGiroTtRows(1, productCodesFiltro, filtro.dataPosicao),
+    getGiroTtRows(2, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
   ]);
-  const [custoPrecoRows, ultimaEntradaRows, custoUltimaCompraRows, emProducaoRows] = await Promise.all([
-    getCustoPrecoRows(config.precoCustoBranchCode, config.custoCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
+  const [custoPrecoRows, ultimaEntradaRows, entradaDpaRows, custoSelecionadoRows, emProducaoRows] = await Promise.all([
+    getCustoPrecoRows(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
-    getCustoUltimaCompraRows(config.precoCustoBranchCode, productCodesFiltro),
+    getEntradaDpaRows(productCodesFiltro, filtro.dataPosicao),
+    getCustoProducaoRows(productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
 
@@ -1030,6 +1814,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     mapa.set(r.branch_code, decimalToNumber(r.quantidade));
     giroTt1PorProductCode.set(r.product_code, mapa);
   }
+  const giroTt2PorProductCode = new Map<number, Map<number, number>>();
+  for (const r of giroTt2Rows) {
+    const mapa = giroTt2PorProductCode.get(r.product_code) || new Map<number, number>();
+    mapa.set(r.branch_code, decimalToNumber(r.quantidade));
+    giroTt2PorProductCode.set(r.product_code, mapa);
+  }
   const giroTt3PorProductCode = new Map<number, Map<number, number>>();
   for (const r of giroTt3Rows) {
     const mapa = giroTt3PorProductCode.get(r.product_code) || new Map<number, number>();
@@ -1055,8 +1845,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const ultimaEntradaPorProductCode = new Map<number, Date>();
   for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
 
-  const custoUltimaCompraPorProductCode = new Map<number, number>();
-  for (const r of custoUltimaCompraRows) custoUltimaCompraPorProductCode.set(r.product_code, decimalToNumber(r.valor));
+  const entradaDpaProductCodes = new Set<number>();
+  for (const r of entradaDpaRows) entradaDpaProductCodes.add(r.product_code);
+
+  const custoSelecionadoPorProductCode = new Map<number, number>();
+  for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
 
   const emProducaoPorProductCode = new Map<number, number>();
   for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
@@ -1107,6 +1900,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizLinhaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
+  const matrizStatusAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
   let valorEstoqueAnoAnterior = 0;
@@ -1118,6 +1912,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   let estoqueMortoValor = 0;
   let estoquePromocaoQtd = 0;
   let estoquePromocaoValor = 0;
+  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
+  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const rupturaBasicoAcc = rupturaLinhaAccVazio();
+  const rupturaRenovavelAcc = rupturaLinhaAccVazio();
 
   const colunasAtivas = branchFiltro
     ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
@@ -1223,6 +2022,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
     const mediaMensalPorBranchDoSku = new Map<number, number>();
+    const venda30PorBranchDoSku = new Map<number, number>();
+    const giroTt1DoProduto = productCode !== null ? giroTt1PorProductCode.get(productCode) : undefined;
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) {
         const estFabrica = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
@@ -1238,6 +2039,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
           cob: coberturaDe(estFabrica, mediaMensalAtacado),
         };
         mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensalAtacado);
+        venda30PorBranchDoSku.set(coluna.branchCode, giroTt1DoProduto?.get(ATACADO_BRANCH_CODE) || 0);
         continue;
       }
 
@@ -1251,12 +2053,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
         cob: coberturaDe(est, mediaMensal),
       };
       mediaMensalPorBranchDoSku.set(coluna.branchCode, mediaMensal);
+      venda30PorBranchDoSku.set(coluna.branchCode, giroTt1DoProduto?.get(coluna.branchCode) || 0);
     }
 
     // Giro TT respeita o filtro de loja - se filtrado por branch, soma so o giro das
     // lojas selecionadas. Assim os cards "Giro TT 1/3/6" ficam coerentes com "Estoque Total".
     // Usa branchFiltroParaDados que mapeia ATACADO (-2) -> FABRICA (2).
     const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt2 = productCode !== null ? somaMapaFiltrado(giroTt2PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
 
@@ -1268,7 +2072,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
 
-    const custoUltimaCompra = productCode !== null ? custoUltimaCompraPorProductCode.get(productCode) ?? null : null;
+    const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
     const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
@@ -1280,9 +2084,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     for (const coluna of colunasAtivas) {
       if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
-      vendaVarejoSku += (mediaMensalPorBranchDoSku.get(coluna.branchCode) || 0) * config.coberturaMeses;
+      vendaVarejoSku += venda30PorBranchDoSku.get(coluna.branchCode) || 0;
     }
-    const vendaAtacadoSku = (mediaMensalPorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0) * config.coberturaMeses;
+    const vendaAtacadoSku = venda30PorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0;
     const valorEstoqueSku = estTt * (custo ?? 0);
     const valorEstoqueAnoAnteriorSku = estTtAnoAnterior * (custo ?? 0);
 
@@ -1301,10 +2105,21 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
     statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + estTt);
-    if (statusBucketKey === 'FORA DE LINHA') {
+    if (temCoberturaCritica(estTt, giroTt1)) {
       estoqueMortoQtd += estTt;
       estoqueMortoValor += valorEstoqueSku;
-    } else if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
+    }
+    const referenceCodeParaKpi = identidade.reference_code || sku;
+    if (giroTt1 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    if (giroTt2 <= 0 && giroTt3 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    if (giroTt3 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
+    const linhaSku = linhaBucket(identidade.linha);
+    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
+    if (rupturaAcc && productCode !== null && statusAtivo(identidade.status) && entradaDpaProductCodes.has(productCode)) {
+      rupturaAcc.totalSkus += 1;
+      if (estTt <= 0) rupturaAcc.skus += 1;
+    }
+    if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += estTt;
       estoquePromocaoValor += valorEstoqueSku;
     }
@@ -1319,6 +2134,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acumularBucket(matrizLinhaAgg, linhaBucket(identidade.linha), bucketValores);
     acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, identidade.status?.trim() || null, bucketValores);
 
     // Referencia/cor/tamanho vem do produto_analitico - fallback pro proprio SKU quando
     // reference_code vier nulo (dado incompleto), pra nao perder a linha, so vira uma
@@ -1330,8 +2146,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1Round = round(giroTt1, 0);
     const giroTt3Round = round(giroTt3, 0);
     const giroTt6Round = round(giroTt6, 0);
-    const markupVar = markupPercentual(pdvRealVar, custoUltimaCompra);
-    const markupAta = markupPercentual(pdvRealAta, custoUltimaCompra);
+    const markupVar = markupPercentual(pdvRealVar, custoSelecionado);
+    const markupAta = markupPercentual(pdvRealAta, custoSelecionado);
 
     kpis.giroTt1 += giroTt1Round;
     kpis.giroTt3 += giroTt3Round;
@@ -1490,6 +2306,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       giroTt3: round(agg.giroTt3, 0),
       giroTt6: round(agg.giroTt6, 0),
       branches,
+      skus: [],
       cores: [],
     });
   }
@@ -1506,6 +2323,104 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
   const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
+  for (const identidade of identidadeRows) {
+    const referenceCode = identidade.reference_code || identidade.product_sku;
+    const row = rowsPorReferencia.get(referenceCode);
+    if (!row) continue;
+
+    const sku = identidade.product_sku;
+    const productCode = identidade.product_code;
+    const estoqueDoSku = estoquePorSku.get(sku) || new Map<number, number>();
+    const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
+    const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
+
+    let estTt = 0;
+    if (branchFiltroParaDados) {
+      for (const [branchCode, valor] of estoqueDoSku) {
+        if (branchFiltroParaDados.has(branchCode)) estTt += valor;
+      }
+    } else {
+      for (const valor of estoqueDoSku.values()) estTt += valor;
+    }
+
+    const branches: Record<number, RelatorioBaseColunaFilial> = {};
+    for (const coluna of colunasAtivas) {
+      if (coluna.branchCode === ATACADO_BRANCH_CODE) {
+        const estFabrica = estoqueDoSku.get(ATACADO_BRANCH_CODE) || 0;
+        const giroAtacado = productCode !== null ? giroAtacadoPorProductCode.get(productCode) || 0 : 0;
+        const mediaMensalAtacado =
+          config.atacadoCoberturaBase === 'atacado_only'
+            ? (productCode !== null ? vendaAtacadoMesesPorProductCode.get(productCode) || 0 : 0) / config.coberturaMeses
+            : (vendaMesesDoProduto?.get(ATACADO_BRANCH_CODE) || 0) / config.coberturaMeses;
+
+        branches[coluna.branchCode] = {
+          giro: round(giroAtacado, 0),
+          est: round(estFabrica, 0),
+          cob: coberturaDe(estFabrica, mediaMensalAtacado),
+        };
+        continue;
+      }
+
+      const est = estoqueDoSku.get(coluna.branchCode) || 0;
+      const giro = giroDoProduto?.get(coluna.branchCode) || 0;
+      const mediaMensal = (vendaMesesDoProduto?.get(coluna.branchCode) || 0) / config.coberturaMeses;
+      branches[coluna.branchCode] = {
+        giro: round(giro, 0),
+        est: round(est, 0),
+        cob: coberturaDe(est, mediaMensal),
+      };
+    }
+
+    const giroTt1 = productCode !== null ? somaMapaFiltrado(giroTt1PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt3 = productCode !== null ? somaMapaFiltrado(giroTt3PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
+    const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
+    const custo = custoPreco?.custo ?? null;
+    const pdvRealVar = custoPreco?.pdvVar ?? null;
+    const pdvRealAta = custoPreco?.pdvAta ?? null;
+    const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
+    const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
+    const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
+    const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
+
+    const cor = identidade.color_name || identidade.color_code || 'SEM COR';
+    const tamanho = identidade.size || 'SEM TAM';
+    row.skus.push({
+      sku,
+      codigo: productCode,
+      referenceCode,
+      cor,
+      tamanho,
+      refCorTam: buildRefCorTam(referenceCode, cor, tamanho),
+      descricao: identidade.descricao || identidade.reference_name || sku,
+      descricaoCompleta: identidade.descricao_completa || identidade.descricao || identidade.reference_name || sku,
+      categoria: identidade.categoria,
+      linha: identidade.linha,
+      genero: identidade.genero,
+      modelo: identidade.modelo,
+      status: identidade.status,
+      lancamento: formatarLancamento(identidade.lancamento),
+      ultimaEntrada,
+      custo,
+      pdvAtual: pdvRealVar,
+      pdvRealVar,
+      markupVar: markupPercentual(pdvRealVar, custoSelecionado),
+      pdvRealAta,
+      markupAta: markupPercentual(pdvRealAta, custoSelecionado),
+      estDisponivel: null,
+      emProducao: round(emProducao, 0),
+      estPrevisto: null,
+      estTt: round(estTt, 0),
+      giroTt1: round(giroTt1, 0),
+      giroTt3: round(giroTt3, 0),
+      giroTt6: round(giroTt6, 0),
+      branches,
+    });
+  }
+  for (const row of rowsPaginadas) {
+    row.skus.sort((a, b) => a.refCorTam.localeCompare(b.refCorTam));
+  }
 
   // Drill-down por cor entra so nas referencias que vao de fato na resposta - foi por
   // isso que o detalhamento por SKU foi removido (payload/heap). Por cor ja e ~1 ordem
@@ -1518,15 +2433,18 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   // Monta uma linha da matriz (usada tanto por linha/categoria/genero quanto pro
   // "Total" agregado) - cobertura recalculada aqui, nao somada ja arredondada.
   function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {
-    const mediaMensalVarejo = acc.vendaVarejo / config.coberturaMeses;
-    const mediaMensalAtacado = acc.vendaAtacado / config.coberturaMeses;
-    const mediaMensalGeral = (acc.vendaVarejo + acc.vendaAtacado) / config.coberturaMeses;
+    const mediaMensalVarejo = acc.vendaVarejo;
+    const mediaMensalAtacado = acc.vendaAtacado;
+    const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
     return {
       label,
       estoqueVarejo: round(acc.estVarejo, 0),
       estoqueAtacado: round(acc.estAtacado, 0),
       estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
       valorEstoque: round(acc.valorEstoque, 2),
+      vendaVarejo: round(acc.vendaVarejo, 0),
+      vendaAtacado: round(acc.vendaAtacado, 0),
+      vendaTotal: round(acc.vendaVarejo + acc.vendaAtacado, 0),
       coberturaVarejo: coberturaDe(acc.estVarejo, mediaMensalVarejo),
       coberturaAtacado: coberturaDe(acc.estAtacado, mediaMensalAtacado),
       coberturaGeral: coberturaDe(acc.estVarejo + acc.estAtacado, mediaMensalGeral),
@@ -1557,9 +2475,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizLinha = buildMatriz(matrizLinhaAgg);
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
+  const matrizStatus = buildMatriz(matrizStatusAgg);
 
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
-    return linhas.find((l) => l.label === label)?.coberturaGeral ?? null;
+    const labelNormalizado = normalizarClassificacao(label);
+    return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
   }
 
   const statusBreakdown = [...statusAgg.entries()]
@@ -1570,17 +2490,17 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     }))
     .sort((a, b) => b.estTt - a.estTt);
 
-  // Giro anualizado em vezes/ano usando a velocidade dos ultimos 30 dias:
-  // cobertura em dias = (estoque / giro 30d) * 30; giros/ano = 365 / cobertura em dias.
+  // Giro anual em vezes/ano usando 12 periodos de 30 dias, igual ao BI:
+  // cobertura em meses = estoque / venda 30d; giro anual = 12 / cobertura.
   const giroAnualizado =
-    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 365) / (30 * kpis.estTt), 2) : 0;
+    kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
   const kpisExtra: RelatorioBaseKpisExtra = {
-    coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, (vendaVarejoTotal + vendaAtacadoTotal) / config.coberturaMeses),
-    coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal / config.coberturaMeses),
-    coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal / config.coberturaMeses),
+    coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
+    coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal),
+    coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
     giroAnualizado,
     valorEstoqueTotal: round(valorEstoqueTotal, 2),
     valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
@@ -1591,10 +2511,17 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
     estoquePromocaoValor: round(estoquePromocaoValor, 2),
     estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
-    coberturaBasico: coberturaPorLabel(matrizLinha, 'Básico'),
-    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, 'Básico Renovável'),
-    coberturaColecao: coberturaPorLabel(matrizLinha, 'Coleção'),
+    coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
+    coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
+    coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
     referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
+    itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
+    itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
+    itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+    ruptura: {
+      basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
+      renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
+    },
     statusBreakdown,
   };
 
@@ -1621,6 +2548,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       linha: matrizLinha,
       categoria: matrizCategoria,
       genero: matrizGenero,
+      status: matrizStatus,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: colunasAtivas,

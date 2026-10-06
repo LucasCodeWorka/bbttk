@@ -410,7 +410,7 @@ export default function PcpAnaliseGradePage() {
     } catch (error) {
       if (requisicao !== requisicaoAtual.current) return;
       setData(null);
-      showToast('Erro ao carregar Analise de Grade', 'error');
+      showToast('Erro ao carregar Análise de Grade', 'error');
       console.error(error);
     } finally {
       if (requisicao === requisicaoAtual.current) setIsLoading(false);
@@ -583,7 +583,7 @@ export default function PcpAnaliseGradePage() {
     <div className="space-y-6">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">PCP</p>
-        <h1 className="text-2xl font-bold text-gray-900">Analise de Grade</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Análise de Grade</h1>
         <p className="text-gray-500 text-sm mt-1">
           Risco de ruptura por referencia, cor e tamanho com cobertura menor que 1 mes.
         </p>
@@ -730,7 +730,7 @@ export default function PcpAnaliseGradePage() {
         ) : heatmap.linhas.length === 0 ? (
           <div className="py-8 text-center text-gray-500">Nenhuma referencia para mostrar</div>
         ) : (
-          <Table className="max-h-[520px]">
+          <Table topScroll className="max-h-[520px]">
             <TableHead className="sticky top-0 z-10">
               <TableRow>
                 <ThSortPcp label="Referencia" sortKeyName="referencia" sortKey={heatmapSortKey} sortDir={heatmapSortDir} onSort={handleHeatmapSort} />
@@ -780,7 +780,7 @@ export default function PcpAnaliseGradePage() {
         <CardHeader>
           <CardTitle>{data?.referencias.length || 0} referencias</CardTitle>
         </CardHeader>
-        <Table>
+        <Table topScroll tableClassName="min-w-[1180px]">
           <TableHead>
             <TableRow>
               <ThSortPcp label="Referencia" sortKeyName="referenceCode" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />

@@ -20,6 +20,26 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
 
+const LOJA_LABELS: Record<number, string> = {
+  1: '1 IGUAT.',
+  2: '2 FAB.',
+  3: '3 BENF.',
+  4: '4 DEL PAS.',
+  5: '5 PATIO',
+  6: '6 SOBRAL',
+  7: '7 PARANG.',
+  8: '8 RIOMAR',
+  9: '9 IGUAT EXP.',
+  10: '10 MOSSORO',
+  11: '11 RIOMAR PK',
+  12: '12 MESSEJ.',
+  13: '13 EUSEBIO',
+  16: '16 VIA SUL',
+  17: '17 NORTH',
+  18: '18 TERRAZO',
+  19: '19 MART MODA',
+};
+
 // Valor numerico de cada coluna ordenavel, usado tanto pro clique no cabecalho quanto pro export
 const SORT_GETTERS: Record<string, (f: LinhaComparativo) => number> = {
   debito_meta: (f) => f.debitoMeta ?? -Infinity,
@@ -505,6 +525,16 @@ export default function DashboardPage() {
     if (partes.length <= 2) return nomeCompleto;
     return `${partes[0]} ${partes[1]}`;
   }
+
+  function getLojasVendedor(vendedor: { branch_codes?: number[]; branch_names?: string[] }): { label: string; title: string } {
+    const codes = vendedor.branch_codes || [];
+    const labels = codes.map((code) => LOJA_LABELS[code] || `${code} ${FILIAIS[code] || 'LOJA'}`);
+    return {
+      label: labels.length > 0 ? labels.join(', ') : '-',
+      title: (vendedor.branch_names || codes.map((code) => FILIAIS[code] || `Filial ${code}`)).join(', '),
+    };
+  }
+
   function exportarComparativo() {
     const linhaTotal = criarLinhaTotalComparativo();
     const linhasExportacao = linhaTotal ? [...linhas, linhaTotal] : linhas;
@@ -607,6 +637,7 @@ export default function DashboardPage() {
   function exportarRankingVendedores() {
     const colunas: ExcelColumn[] = [
       { key: 'posicao', header: '#', width: 6, type: 'number' },
+      { key: 'lojas', header: 'Loja', width: 18, type: 'text' },
       { key: 'seller_name', header: 'Vendedor', width: 25, type: 'text' },
       { key: 'faturamento', header: 'Faturamento', width: 14, type: 'currency' },
       { key: 'meta', header: 'Meta', width: 14, type: 'currency' },
@@ -619,6 +650,7 @@ export default function DashboardPage() {
 
     const dados = vendedoresRanking.map((v, i) => ({
       posicao: i + 1,
+      lojas: getLojasVendedor(v).label,
       seller_name: v.seller_name,
       faturamento: valorNumerico(v.faturamento),
       meta: valorNumerico(v.meta),
@@ -631,6 +663,7 @@ export default function DashboardPage() {
 
     const totais: Record<string, number | string> = {
       posicao: '',
+      lojas: '',
       seller_name: 'TOTAL',
       faturamento: valorNumerico(totaisVendedoresRanking.faturamento),
       meta: valorNumerico(totaisVendedoresRanking.meta),
@@ -1129,6 +1162,7 @@ export default function DashboardPage() {
               <thead className="sticky top-0 z-10 bg-gray-50">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap">#</th>
+                  <th className="px-2 py-2 text-left font-semibold text-gray-700 whitespace-nowrap">Loja</th>
                   <th className="px-2 py-2 text-left font-semibold text-gray-700 whitespace-nowrap cursor-pointer hover:bg-gray-100" onClick={() => handleSortVendedores('seller_name')}>
                     Vendedor {sortKeyVendedores === 'seller_name' ? (sortDirVendedores === 'asc' ? '▲' : '▼') : ''}
                   </th>
@@ -1156,36 +1190,48 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {vendedoresRanking.map((v, i) => (
-                  <tr key={v.seller_code} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      {i < 3 ? (
-                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
-                          i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : 'bg-orange-400'
-                        }`}>
-                          {i + 1}
+                {vendedoresRanking.map((v, i) => {
+                  const lojas = getLojasVendedor(v);
+                  return (
+                    <tr key={v.seller_code} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-3 py-2">
+                        {i < 3 ? (
+                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold text-white ${
+                            i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : 'bg-orange-400'
+                          }`}>
+                            {i + 1}
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">{i + 1}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-left">
+                        <span
+                          className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600"
+                          title={lojas.title}
+                        >
+                          {lojas.label}
                         </span>
-                      ) : (
-                        <span className="text-gray-500">{i + 1}</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 font-medium whitespace-nowrap">
-                      <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
-                    </td>
-                    <td className="px-2 py-2 text-right text-xs">{formatMoney(v.faturamento)}</td>
-                    <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</td>
-                    <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</td>
-                    <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</td>
-                    <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
-                    <td className="px-2 py-2 text-right text-xs">{v.pa.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{formatMoney(v.tm)}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-2 py-1 font-medium whitespace-nowrap">
+                        <span className="text-xs" title={v.seller_name}>{getNomeSobrenome(v.seller_name)}</span>
+                      </td>
+                      <td className="px-2 py-2 text-right text-xs">{formatMoney(v.faturamento)}</td>
+                      <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</td>
+                      <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</td>
+                      <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</td>
+                      <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
+                      <td className="px-2 py-2 text-right text-xs">{v.pa.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{formatMoney(v.tm)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
               {vendedoresRanking.length > 0 && (
                 <tfoot className="sticky bottom-0 z-10 bg-yellow-50 border-t-2 border-gray-300">
                   <tr className="font-bold">
                     <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-2 py-1"></td>
                     <td className="px-2 py-1"></td>
                     <td className="px-2 py-2 text-right text-xs">{formatMoney(totaisVendedoresRanking.faturamento)}</td>
                     <td className="px-3 py-2 text-right">{formatMoney(totaisVendedoresRanking.meta)}</td>

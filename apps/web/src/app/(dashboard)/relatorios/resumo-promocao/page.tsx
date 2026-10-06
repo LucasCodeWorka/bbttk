@@ -359,8 +359,7 @@ export default function ResumoPromocaoPage() {
             <span className="text-sm text-gray-500">{formatNumber(data.rows.length)} lojas</span>
           )}
         </CardHeader>
-        <div className="overflow-x-auto">
-          <Table>
+        <Table topScroll tableClassName="min-w-[1180px]">
             <TableHead>
               <TableRow>
                 <ThSortPcp label="Loja" sortKeyName="branchName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" />
@@ -431,8 +430,7 @@ export default function ResumoPromocaoPage() {
                 </>
               )}
             </TableBody>
-          </Table>
-        </div>
+        </Table>
       </Card>
     </div>
   );

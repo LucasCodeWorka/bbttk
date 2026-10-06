@@ -28,6 +28,10 @@ const ATACADO_COBERTURA_OPTIONS = [
 ];
 
 const FILIAIS_REAIS = RELATORIO_BASE_BRANCH_ORDER.filter((b) => b.branchCode > 0);
+const LOJAS_REFERENCIA_CUSTO_PRECO = [
+  { branchCode: 2, label: 'FABRICA' },
+  ...FILIAIS_REAIS,
+];
 
 type SecaoAtiva = 'relatorio-base' | 'estoque-sem-giro' | 'redistribuicao' | 'sugestao-producao';
 
@@ -43,7 +47,6 @@ export default function ConfiguracoesPcpPage() {
   const [coberturaMeses, setCoberturaMeses] = useState('3');
   const [riscoCoberturaMeses, setRiscoCoberturaMeses] = useState('1');
   const [atacadoCoberturaBase, setAtacadoCoberturaBase] = useState('fabrica_total');
-  const [custoCode, setCustoCode] = useState('3');
   const [pdvVarejoCode, setPdvVarejoCode] = useState('1');
   const [pdvAtacadoCode, setPdvAtacadoCode] = useState('3');
   const [precoCustoBranchCode, setPrecoCustoBranchCode] = useState('1');
@@ -103,7 +106,6 @@ export default function ConfiguracoesPcpPage() {
       setCoberturaMeses(String(configRes.config.coberturaMeses));
       setRiscoCoberturaMeses(String(configRes.config.riscoCoberturaMeses ?? 1));
       setAtacadoCoberturaBase(configRes.config.atacadoCoberturaBase);
-      setCustoCode(String(configRes.config.custoCode));
       setPdvVarejoCode(String(configRes.config.pdvVarejoCode));
       setPdvAtacadoCode(String(configRes.config.pdvAtacadoCode));
       setPrecoCustoBranchCode(String(configRes.config.precoCustoBranchCode));
@@ -180,7 +182,7 @@ export default function ConfiguracoesPcpPage() {
         coberturaMeses: coberturaMesesNum,
         riscoCoberturaMeses: riscoCoberturaMesesNum,
         atacadoCoberturaBase,
-        custoCode: parseInt(custoCode, 10),
+        custoCode: 1,
         pdvVarejoCode: parseInt(pdvVarejoCode, 10),
         pdvAtacadoCode: parseInt(pdvAtacadoCode, 10),
         precoCustoBranchCode: parseInt(precoCustoBranchCode, 10),
@@ -638,8 +640,8 @@ export default function ConfiguracoesPcpPage() {
               </Button>
             </CardHeader>
             <p className="text-sm text-gray-500 -mt-2 mb-2">
-              O TOTVS tem varios tipos de custo e preco cadastrados por produto - escolha qual usar em cada coluna do Relatorio Base.
-              {codigos.custos.length === 0 && ' Sincronize pelo menos uma vez para liberar os selects.'}
+              O custo usado nas analises PCP e sempre o custo de producao da filial 1. Os precos abaixo alimentam as colunas de PDV do Relatorio Base.
+              {codigos.precos.length === 0 && ' Sincronize pelo menos uma vez para liberar os selects de PDV.'}
             </p>
             {sincronizando && (
               <p className="text-xs text-gray-400 mb-4">
@@ -650,14 +652,10 @@ export default function ConfiguracoesPcpPage() {
               </p>
             )}
             <div className="flex flex-wrap gap-4 items-end">
-              <Select
-                label="Custo"
-                options={codigos.custos.map((c) => ({ value: c.code, label: c.name }))}
-                value={custoCode}
-                onChange={(e) => setCustoCode(e.target.value)}
-                className="w-56"
-                disabled={isLoading || codigos.custos.length === 0}
-              />
+              <div className="w-56">
+                <p className="text-xs font-medium uppercase text-gray-500">Custo PCP</p>
+                <p className="mt-2 text-sm font-semibold text-gray-900">Producao</p>
+              </div>
               <Select
                 label="PDV Real (Varejo)"
                 options={codigos.precos.map((c) => ({ value: c.code, label: c.name }))}
@@ -675,8 +673,8 @@ export default function ConfiguracoesPcpPage() {
                 disabled={isLoading || codigos.precos.length === 0}
               />
               <Select
-                label="Loja de referencia"
-                options={FILIAIS_REAIS.map((b) => ({ value: b.branchCode, label: b.label }))}
+                label="Loja de referencia dos precos"
+                options={LOJAS_REFERENCIA_CUSTO_PRECO.map((b) => ({ value: b.branchCode, label: b.label }))}
                 value={precoCustoBranchCode}
                 onChange={(e) => setPrecoCustoBranchCode(e.target.value)}
                 className="w-48"

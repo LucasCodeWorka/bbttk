@@ -19,10 +19,23 @@ const app = express();
 // API_PORT fica como fallback pra uso local.
 const PORT = process.env.PORT || process.env.API_PORT || 3001;
 
+const DEFAULT_CORS_ORIGINS = [
+  'https://bebettk.onrender.com',
+  'https://bebetenkite-web.onrender.com',
+  'https://teste-front-bebetenkite.onrender.com',
+];
+
+const corsOrigins = [
+  ...(process.env.CORS_ORIGIN
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean) || []),
+  ...DEFAULT_CORS_ORIGINS,
+];
+
 // Middlewares
-// CORS_ORIGIN opcional: restringe a origem permitida em producao (ex: https://meuapp.onrender.com).
-// Sem essa variavel, mantem o comportamento atual (aberto).
-app.use(cors(process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN } : undefined));
+// CORS_ORIGIN opcional: aceita uma ou mais origens separadas por virgula.
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : undefined));
 app.use(express.json());
 
 // Health check
