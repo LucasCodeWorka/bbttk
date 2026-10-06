@@ -8,6 +8,7 @@ import {
   VALOR_COM_SINAL,
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
   FABRICA_BRANCH_CODE,
+  joinProdutoAnaliticoUnico,
 } from './relatorioBase.service.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, LOJAS_VAREJO_FECHADAS } from '../config/constants.js';
 
@@ -549,7 +550,7 @@ async function getVendaPorClassificacaoDiario(
     SELECT ${classificacao} AS classificacao, SUM(${VALOR_COM_SINAL}) AS valor, SUM(${QUANTIDADE_COM_SINAL}) AS pecas
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-    LEFT JOIN produto_analitico a ON a.product_code = ti.product_code
+    ${joinProdutoAnaliticoUnico('ti.product_code')}
     ${OPERACAO_JOIN}
     WHERE t.transaction_date >= ${dataInicio}::date
       AND t.transaction_date <= ${dataFim}::date
@@ -606,7 +607,7 @@ async function getEmProducaoPorClassificacaoDiario(tipo: TipoClassificacaoDiario
   return prisma.$queryRaw<EstoqueClassificacaoRow[]>`
     SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, SUM(o.quantidade_pendente) AS quantidade
     FROM ops_em_producao o
-    JOIN produto_analitico a ON a.product_code = o.product_code
+    ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
     WHERE TRUE ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
     GROUP BY TRIM(${Prisma.raw(campo)})
@@ -700,6 +701,11 @@ function calcularMetaPeriodo(
   return round(metaPeriodo, 2);
 }
 
+// Os campos em R$ saem com centavos (round 2, nao 0). Arredondar pra real inteiro
+// fazia o total fechar em R$ 95.006 onde o Dashboard de Vendas do Comercial mostra
+// R$ 95.005,71 - diferenca pequena, mas o relatorio precisa conciliar na virgula com
+// o Comercial, que e a fonte da verdade de faturamento. Pecas, estoque e producao
+// seguem inteiros, que e a unidade real deles.
 export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro): Promise<AcompanhamentoDiarioResponse> {
   const canal = filtro.canal || 'varejo';
   const branches = getBranchesCanal(canal, filtro.branches);
@@ -782,8 +788,8 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
 
     linhas.push({
       classificacao,
-      vendaValorAtual: round(vAtual.valor, 0),
-      vendaValorAnoAnterior: round(vAA.valor, 0),
+      vendaValorAtual: round(vAtual.valor, 2),
+      vendaValorAnoAnterior: round(vAA.valor, 2),
       evolucaoValorPercent: vAA.valor > 0 ? round(((vAtual.valor - vAA.valor) / vAA.valor) * 100, 1) : null,
       vendaPecasAtual: round(vAtual.pecas, 0),
       vendaPecasAnoAnterior: round(vAA.pecas, 0),
@@ -845,8 +851,12 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     // (cards em cima, linha TOTAL embaixo) e o export Excel mistura as duas fontes -
     // manter duas contas separadas so criaria uma divergencia nova.
     kpis: {
-      vendaValorTotal: vendaValorTotal,
-      vendaValorAnoAnteriorTotal: vendaValorAnoAnteriorTotal,
+      // round(x, 2) aqui nao e re-arredondamento: as linhas agora saem com centavos, e
+      // somar varios valores de 2 casas em float acumula residuo (0.1 + 0.2 = 0.30000000000000004).
+      // O arredondamento so remove esse ruido - o total continua sendo a soma do que a
+      // tela mostra, nao o arredondamento da soma bruta.
+      vendaValorTotal: round(vendaValorTotal, 2),
+      vendaValorAnoAnteriorTotal: round(vendaValorAnoAnteriorTotal, 2),
       evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotal - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
       estoqueFisicoTotal: estoqueFisicoTotal,
       pecasEmProducaoTotal: pecasEmProducaoTotal,
@@ -856,8 +866,8 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     diasPeriodo,
     linhas,
     totais: {
-      vendaValorAtual: vendaValorTotal,
-      vendaValorAnoAnterior: vendaValorAnoAnteriorTotal,
+      vendaValorAtual: round(vendaValorTotal, 2),
+      vendaValorAnoAnterior: round(vendaValorAnoAnteriorTotal, 2),
       evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotal - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
       vendaPecasAtual: vendaPecasTotalAtual,
       vendaPecasAnoAnterior: vendaPecasTotalAnoAnterior,

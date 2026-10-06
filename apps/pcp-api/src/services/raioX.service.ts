@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 // Tipos de filtros
 export interface RaioXFiltro {
@@ -224,7 +224,7 @@ async function getProducaoEmLote(productCodes: number[]): Promise<Map<number, nu
   const rows = await prisma.$queryRaw<ProducaoRow[]>`
     SELECT o.product_code, COALESCE(SUM(o.quantidade_pendente), 0) AS quantidade
     FROM ops_em_producao o
-    JOIN produto_analitico a ON a.product_code = o.product_code
+    ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
     WHERE o.product_code IN (${Prisma.join(productCodes.map(code => Prisma.sql`${code}`))})
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
     GROUP BY o.product_code

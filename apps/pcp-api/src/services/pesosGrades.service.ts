@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN } from './relatorioBase.service.js';
+import { SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 // Relatorio de Pesos e Grades para Producao ("Rel. 3"): a partir da venda GERAL
 // (atacado + varejo somados, sem separar canal - diferente do resto do PCP) de um
@@ -159,7 +159,7 @@ async function getVendaPorReferenciaTamanho(filtro: PesosGradesFiltro, grupos: s
       SELECT TRIM(a.class_categoria) AS reference_code, TRIM(a.size) AS size, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
       FROM transacoes t
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-      JOIN produto_analitico a ON a.product_code = ti.product_code
+      ${joinProdutoAnaliticoUnico('ti.product_code', 'INNER')}
       ${OPERACAO_JOIN}
       WHERE t.transaction_date >= ${dataInicio}::date AND t.transaction_date <= ${dataFim}::date
         AND t.status = 4 AND ${SALE_OPERATION_FILTER}
@@ -174,7 +174,7 @@ async function getVendaPorReferenciaTamanho(filtro: PesosGradesFiltro, grupos: s
     SELECT a.reference_code, TRIM(a.size) AS size, SUM(${QUANTIDADE_COM_SINAL}) AS quantidade
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
-    JOIN produto_analitico a ON a.product_code = ti.product_code
+    ${joinProdutoAnaliticoUnico('ti.product_code', 'INNER')}
     ${OPERACAO_JOIN}
     WHERE t.transaction_date >= ${dataInicio}::date
       AND t.transaction_date <= ${dataFim}::date

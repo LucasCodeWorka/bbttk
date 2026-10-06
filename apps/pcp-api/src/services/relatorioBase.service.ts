@@ -26,6 +26,42 @@ export const QUANTIDADE_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -
 // positivo, as vezes negativo) antes de aplicar o sinal negativo de verdade.
 export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
 
+// produto_analitico tem product_sku como PK, mas product_code NAO e unico nela: 182
+// product_codes aparecem em duas linhas. Nao e erro de modelagem e sim residuo do ETL -
+// quando o SKU real ainda nao e conhecido, a carga grava um placeholder
+// product_sku = 'PRODUCT_CODE:<n>' e, numa carga posterior, entra a linha definitiva com
+// o codigo de barras. As duas convivem.
+//
+// Consequencia: qualquer "JOIN produto_analitico ON product_code = <coluna>" duplica a
+// linha da esquerda e infla todo SUM() em cima dela. Foi o que deixou o Acompanhamento
+// por Linha acima do Dashboard de Vendas do Comercial (DEL PASEO, 01/09 a 30/09/2026:
+// R$ 100.450,27 / 1.582 pecas contra os R$ 95.005,71 / 1.530 corretos). O lado Comercial
+// nunca sofreu disso porque le produto_analitico por EXISTS (vendas.service.ts
+// buildProdutoFilter), que nao multiplica.
+//
+// Use este helper no lugar do JOIN direto sempre que a query somar algo. Agregacao que ja
+// e imune (COUNT(DISTINCT ...), GROUP BY + MIN()) nao precisa, mas tambem nao se prejudica.
+//
+// A linha escolhida e sempre a definitiva: o placeholder 'PRODUCT_CODE:%' vai pro fim da
+// ordenacao. Isso importa porque is_finished_product diverge entre as duas copias em 159
+// casos. Os campos que os relatorios realmente leem (size, reference_code, color_code,
+// product_name e todas as class_*) sao identicos nas duas, entao a desduplicacao nao muda
+// classificacao, grade nem referencia de nada.
+export function joinProdutoAnaliticoUnico(
+  colunaProductCode: string,
+  tipoJoin: 'LEFT' | 'INNER' = 'LEFT'
+): Prisma.Sql {
+  return Prisma.raw(`
+    ${tipoJoin === 'LEFT' ? 'LEFT JOIN' : 'JOIN'} LATERAL (
+      SELECT pa.*
+      FROM produto_analitico pa
+      WHERE pa.product_code = ${colunaProductCode}
+      ORDER BY (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
+      LIMIT 1
+    ) a ON TRUE
+  `);
+}
+
 export const FABRICA_BRANCH_CODE = 2;
 const RELATORIO_KEY = 'relatorio_base';
 const MATRIZ_SEM_CLASSIFICACAO = 'Nao classificado';

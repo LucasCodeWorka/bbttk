@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { FILIAIS } from '../config/constants.js';
+import { joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -291,29 +292,29 @@ export async function getFiltrosEmProducao() {
     prisma.$queryRaw<Array<{ valor: string; qtd: bigint }>>`
       SELECT TRIM(a.class_colecao) AS valor, COUNT(DISTINCT o.product_code) AS qtd
       FROM ops_em_producao o
-      JOIN produto_analitico a ON a.product_code = o.product_code
+      ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
       WHERE a.class_colecao IS NOT NULL AND TRIM(a.class_colecao) NOT IN ('', '.')
       GROUP BY TRIM(a.class_colecao)
       ORDER BY TRIM(a.class_colecao)
     `,
     prisma.$queryRaw<Array<{ chave: string; label: string; valor: string; qtd: bigint }>>`
       SELECT 'categoria' AS chave, 'Categoria' AS label, TRIM(a.class_categoria) AS valor, COUNT(DISTINCT o.product_code) AS qtd
-      FROM ops_em_producao o JOIN produto_analitico a ON a.product_code = o.product_code
+      FROM ops_em_producao o ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
       WHERE a.class_categoria IS NOT NULL AND TRIM(a.class_categoria) NOT IN ('', '.')
       GROUP BY TRIM(a.class_categoria)
       UNION ALL
       SELECT 'linha' AS chave, 'Linha' AS label, TRIM(a.class_linha) AS valor, COUNT(DISTINCT o.product_code) AS qtd
-      FROM ops_em_producao o JOIN produto_analitico a ON a.product_code = o.product_code
+      FROM ops_em_producao o ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
       WHERE a.class_linha IS NOT NULL AND TRIM(a.class_linha) NOT IN ('', '.')
       GROUP BY TRIM(a.class_linha)
       UNION ALL
       SELECT 'genero' AS chave, 'Genero' AS label, TRIM(a.class_genero) AS valor, COUNT(DISTINCT o.product_code) AS qtd
-      FROM ops_em_producao o JOIN produto_analitico a ON a.product_code = o.product_code
+      FROM ops_em_producao o ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
       WHERE a.class_genero IS NOT NULL AND TRIM(a.class_genero) NOT IN ('', '.')
       GROUP BY TRIM(a.class_genero)
       UNION ALL
       SELECT 'statusProduto' AS chave, 'Status Produto' AS label, TRIM(a.class_status) AS valor, COUNT(DISTINCT o.product_code) AS qtd
-      FROM ops_em_producao o JOIN produto_analitico a ON a.product_code = o.product_code
+      FROM ops_em_producao o ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
       WHERE a.class_status IS NOT NULL AND TRIM(a.class_status) NOT IN ('', '.')
       GROUP BY TRIM(a.class_status)
       ORDER BY chave, valor
