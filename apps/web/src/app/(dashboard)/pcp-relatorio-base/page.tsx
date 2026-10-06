@@ -224,6 +224,7 @@ interface VisaoGeralPageState {
   sortKey?: string | null;
   sortDir?: 'asc' | 'desc';
   dimensao?: 'linha' | 'categoria' | 'genero' | 'status';
+  visaoLinha?: 'referencia' | 'cor' | 'cor-agrupada';
 }
 
 function readVisaoGeralPageState(): VisaoGeralPageState | null {
@@ -457,6 +458,16 @@ export default function PcpRelatorioBasePage() {
   const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
   const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
   const [exportando, setExportando] = useState(false);
+  // Granularidade da tabela principal: "referencia" mostra 1 linha por referencia (com
+  // drill-down por SKU ao clicar, como ja funciona hoje); "cor"/"cor-agrupada" achatam
+  // cada referencia nas suas linhas de cor - a linha ja e o grao final, sem drill-down.
+  // So "cor-agrupada" pede o agrupamento (Agrupamento de Cores) ao backend; alternar
+  // entre "referencia" e "cor" reaproveita a mesma resposta (ver carregarDados).
+  const [visaoLinha, setVisaoLinha] = useState<'referencia' | 'cor' | 'cor-agrupada'>(
+    () => initialPageState?.visaoLinha || 'referencia'
+  );
+  const agruparPorCorSalva = visaoLinha === 'cor-agrupada';
+  const porCor = visaoLinha !== 'referencia';
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
   const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.sortKey ?? 'giroTt3');
@@ -494,9 +505,11 @@ export default function PcpRelatorioBasePage() {
       dataPosicao: dataPosicao || undefined,
       page: pagina,
       pageSize: PAGE_SIZE,
+      agruparPorCorSalva,
     };
 
-    // Gerar chave de cache baseada nos filtros
+    // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
+    // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
     const cacheKey = `visao-geral-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
@@ -538,7 +551,7 @@ export default function PcpRelatorioBasePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina]);
+  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, agruparPorCorSalva]);
 
   // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
   // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
@@ -561,8 +574,9 @@ export default function PcpRelatorioBasePage() {
       sortKey,
       sortDir,
       dimensao,
+      visaoLinha,
     });
-  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao]);
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao, visaoLinha]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
@@ -779,9 +793,42 @@ export default function PcpRelatorioBasePage() {
   // as colunas de filial nem entram no colgroup/header/corpo da tabela.
   const colunas = verPorLoja ? data?.colunas || [] : [];
 
+  // Nos modos por cor, achata cada referencia nas suas linhas de cor. A linha achatada
+  // tem o MESMO shape da linha de referencia (identidade herdada da referencia,
+  // metricas e colunas por filial vindas da cor) - COLUNAS_REFERENCIA, getSortValue e a
+  // renderizacao da tabela continuam valendo sem precisar de um segundo conjunto de
+  // colunas (mesmo principio ja usado no export Excel, que sempre achata por SKU).
+  const linhasBase = useMemo<RelatorioBaseReferenciaRow[]>(() => {
+    const refs = data?.rows || [];
+    if (!porCor) return refs;
+
+    return refs.flatMap((ref) =>
+      ref.cores.map((cor) => ({
+        ...ref,
+        referenceCode: cor.coresOriginais > 1 ? `${cor.refCor} (${cor.coresOriginais} cores)` : cor.refCor,
+        totalSkus: cor.totalSkus,
+        custo: cor.custo,
+        pdvAtual: cor.pdvRealVar,
+        pdvRealVar: cor.pdvRealVar,
+        markupVar: cor.markupVar,
+        pdvRealAta: cor.pdvRealAta,
+        markupAta: cor.markupAta,
+        emProducao: cor.emProducao,
+        estTt: cor.estTt,
+        giroTt1: cor.giroTt1,
+        giroTt3: cor.giroTt3,
+        giroTt6: cor.giroTt6,
+        branches: cor.branches,
+        // Ja estamos no grao de cor: nao ha mais detalhe pra expandir nesta linha.
+        skus: [],
+        cores: [],
+      }))
+    );
+  }, [data, porCor]);
+
   const sortedRows = useMemo(() => {
-    if (!data || !sortKey) return data?.rows || [];
-    const rows = [...data.rows];
+    if (!sortKey) return linhasBase;
+    const rows = [...linhasBase];
 
     return rows.sort((a, b) => {
       const aVal = getSortValue(a, sortKey);
@@ -796,7 +843,7 @@ export default function PcpRelatorioBasePage() {
 
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [data, sortKey, sortDir]);
+  }, [linhasBase, sortKey, sortDir]);
   const totalColunas = COLUNAS_REFERENCIA.length + colunas.length * 3;
   const larguraTabelaSkuLoja = useMemo(
     () => COLUNAS_REFERENCIA.reduce((total, coluna) => total + coluna.width, 0) + colunas.length * 3 * BRANCH_SUBCOL_WIDTH,
@@ -1015,6 +1062,36 @@ export default function PcpRelatorioBasePage() {
             label="Loja"
             className="w-full sm:w-64"
           />
+          {/* Granularidade da tabela principal. POR COR AGRUPADA e o unico modo que
+              recarrega (pede o agrupamento ao backend); POR REFERENCIA <-> POR COR
+              reusam a mesma resposta e trocam na hora. */}
+          <div className="pb-0.5">
+            <label className="mb-1 block text-sm font-medium text-gray-700">Detalhar</label>
+            <div className="inline-grid grid-cols-3 overflow-hidden rounded-lg border border-gray-300 bg-white shadow-sm">
+              {([
+                { value: 'referencia', label: 'POR REFERÊNCIA', title: 'Uma linha por referência (clique na linha para ver os SKUs)' },
+                { value: 'cor', label: 'POR COR', title: 'Uma linha por referência + cor original do TOTVS' },
+                { value: 'cor-agrupada', label: 'POR COR AGRUPADA', title: 'Uma linha por referência + cor, juntando as cores unificadas no Agrupamento de Cores' },
+              ] as const).map((opcao) => (
+                <button
+                  key={opcao.value}
+                  type="button"
+                  title={opcao.title}
+                  disabled={isLoading}
+                  onClick={() => setVisaoLinha(opcao.value)}
+                  className={cn(
+                    'min-w-32 px-3 py-2 text-xs font-bold',
+                    opcao.value === visaoLinha
+                      ? 'bg-[var(--bbtk-red)] text-white'
+                      : 'text-gray-600 hover:bg-gray-50',
+                    isLoading && 'cursor-not-allowed opacity-60'
+                  )}
+                >
+                  {opcao.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <Button variant="secondary" onClick={exportarExcel} isLoading={exportando} disabled={!data || data.rows.length === 0}>
             Exportar Excel
           </Button>
@@ -1175,8 +1252,10 @@ export default function PcpRelatorioBasePage() {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>SKU x Loja</CardTitle>
-            <p className="mt-1 text-sm text-gray-500">Visão por referência e variações</p>
+            <CardTitle>{porCor ? 'Referência + Cor x Loja' : 'SKU x Loja'}</CardTitle>
+            <p className="mt-1 text-sm text-gray-500">
+              {porCor ? 'Visão por referência e cor' : 'Visão por referência e variações'}
+            </p>
           </div>
           {data && (
             <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
@@ -1199,6 +1278,7 @@ export default function PcpRelatorioBasePage() {
               </Button>
               <span className="whitespace-nowrap">
                 Página {data.pagination.page} de {data.pagination.totalPages} · {formatNumber(data.pagination.totalReferencias)} referências
+                {porCor && ` · ${formatNumber(sortedRows.length)} linhas de cor nesta página`}
               </span>
               <Button
                 variant="secondary"
@@ -1336,13 +1416,15 @@ export default function PcpRelatorioBasePage() {
                 </TableCell>
               </TableRow>
             ) : (
-              sortedRows.map((row) => {
-                const expandida = referenciaExpandida === row.referenceCode;
+              sortedRows.map((row, rowIdx) => {
+                // Nos modos por cor a tabela ja esta no grao de cor: nao ha detalhe pra
+                // abrir, entao a linha nao e clicavel nem mostra a seta.
+                const expandida = !porCor && referenciaExpandida === row.referenceCode;
                 return (
-                  <Fragment key={row.referenceCode}>
+                  <Fragment key={porCor ? `${row.referenceCode}-${rowIdx}` : row.referenceCode}>
                     <TableRow
-                      className={cn('cursor-pointer bg-white hover:bg-gray-50', expandida && 'bg-blue-50/70 hover:bg-blue-50')}
-                      onClick={() => setReferenciaExpandida(expandida ? null : row.referenceCode)}
+                      className={cn('bg-white', !porCor && 'cursor-pointer hover:bg-gray-50', expandida && 'bg-blue-50/70 hover:bg-blue-50')}
+                      onClick={porCor ? undefined : () => setReferenciaExpandida(expandida ? null : row.referenceCode)}
                     >
                       {COLUNAS_REFERENCIA.map((c, idx) => (
                         <TableCell
@@ -1351,7 +1433,7 @@ export default function PcpRelatorioBasePage() {
                           className={cn('border-b border-gray-100 !px-3 !py-2.5', c.sticky && 'sticky z-10', c.sticky && (expandida ? 'bg-blue-50' : 'bg-white'))}
                           style={stickyStyleFor(c.sticky)}
                         >
-                          {idx === 0 && <span className="mr-2 text-lg leading-none text-gray-500">{expandida ? '⌄' : '›'}</span>}
+                          {idx === 0 && !porCor && <span className="mr-2 text-lg leading-none text-gray-500">{expandida ? '⌄' : '›'}</span>}
                           {c.render(row)}
                         </TableCell>
                       ))}
