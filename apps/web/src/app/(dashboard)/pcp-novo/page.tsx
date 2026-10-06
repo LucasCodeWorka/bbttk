@@ -78,9 +78,11 @@ const CARD_COLORS = [
   'border-l-4 border-l-[var(--bbtk-turquoise)]',
 ];
 
-function shortLojaName(name: string, branchCode: number) {
-  const clean = name.replace(/SHOPPING|PATIO|\s+/g, ' ').trim();
-  return clean.slice(0, 4).toUpperCase() || `L${String(branchCode).padStart(2, '0')}`;
+// Antes isso cortava o nome em 4 letras ("IGUATEMI" -> "IGUA", "VIA SUL" -> "016"
+// quando a base mandava o codigo). A devolutiva de 25/08 pediu o nome completo, e a
+// coluna tem largura pra isso - o cabecalho quebra em duas linhas em vez de truncar.
+function nomeLoja(name: string, branchCode: number) {
+  return name.trim().toUpperCase() || `FILIAL ${String(branchCode).padStart(2, '0')}`;
 }
 
 function formatDateTime(value: string | null) {
@@ -375,8 +377,8 @@ export default function PcpNovoPage() {
     for (const loja of lojasTabela) {
       colunas.push({
         key: `loja_${loja.branch_code}`,
-        header: shortLojaName(loja.branch_name, loja.branch_code),
-        width: 8,
+        header: nomeLoja(loja.branch_name, loja.branch_code),
+        width: 14,
         type: 'number',
       });
     }
@@ -639,8 +641,14 @@ export default function PcpNovoPage() {
                   <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
                   <TableCell isHeader className="!px-2 bg-gray-50"></TableCell>
                   {lojasTabela.map((loja) => (
-                    <TableCell key={loja.branch_code} isHeader align="center" title={loja.branch_name} className="bg-gray-50 text-gray-600 !px-1 !py-1 text-[10px]">
-                      {shortLojaName(loja.branch_name, loja.branch_code)}
+                    <TableCell
+                      key={loja.branch_code}
+                      isHeader
+                      align="center"
+                      title={loja.branch_name}
+                      className="bg-gray-50 text-gray-600 !px-1 !py-1 text-[10px] !tracking-normal leading-tight whitespace-normal break-words min-w-[52px] max-w-[84px] align-bottom"
+                    >
+                      {nomeLoja(loja.branch_name, loja.branch_code)}
                     </TableCell>
                   ))}
                 </TableRow>

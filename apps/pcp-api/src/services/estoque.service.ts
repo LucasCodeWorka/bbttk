@@ -156,8 +156,22 @@ function labelDias(dias: number): string {
   return '> 90 dias';
 }
 
+// O Estoque sem Giro le o branch_code cru do analitico, entao a filial 02 aparece
+// inteira aqui - ela nao e quebrada em DPA(-1)/ATACADO(-2) como no Relatorio Base.
+// Por isso o 2 nao existe em FILIAIS (de proposito, pra filtro nenhum misturar os
+// dois locais de estoque) e precisa do nome proprio neste relatorio. Mesmo rotulo
+// que o lado Comercial ja usa (apps/api/src/config/constants.ts).
+const FILIAIS_ESTOQUE_SEM_GIRO: Record<number, string> = { 2: 'FABRICA' };
+
+// O nome canonico da filial (FILIAIS) vem na frente do que a tabela branches traz.
+// A base tem campos curtos/numericos nessa coluna (abrev "IGU", description "016"),
+// e o Estoque sem Giro acabava mostrando codigo em vez de nome - tanto no filtro
+// "Loja" quanto nos cabecalhos de "Distribuicao por Loja". Os demais relatorios ja
+// usam esse mesmo dicionario (RELATORIO_BASE_BRANCH_ORDER / FILIAIS), entao a tela
+// agora fala a mesma lingua. O valor do banco fica so como fallback pra codigo novo
+// que ainda nao esteja mapeado aqui.
 function rowBranchName(branchCode: number, branchName?: string | null): string {
-  return branchName || FILIAIS[branchCode] || `Filial ${branchCode}`;
+  return FILIAIS[branchCode] || FILIAIS_ESTOQUE_SEM_GIRO[branchCode] || branchName || `Filial ${branchCode}`;
 }
 
 function buildGrade(cor?: string | null, tamanho?: string | null): string | null {
@@ -213,7 +227,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
       NULLIF(TRIM(p.size), '') as tamanho,
       NULLIF(TRIM(ag.nome), '') as cor_de_para,
       a.branch_code,
-      COALESCE(NULLIF(TRIM(b.abrev), ''), NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
+      COALESCE(NULLIF(TRIM(b.description), ''), NULLIF(TRIM(b.fantasy_name), ''), NULLIF(TRIM(a.branch_name), ''), NULLIF(TRIM(b.branch_name), '')) as branch_name,
       a.ultima_venda,
       COALESCE(a.dias_sem_giro, 9999)::int as dias_sem_giro,
       COALESCE(a.quantidade_estoque, 0) as quantidade,
