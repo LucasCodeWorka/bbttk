@@ -290,12 +290,11 @@ export async function getFaturamentoHistoricoVendedores(ano: number, mes: number
     .sort((a, b) => b.faturamento_3m - a.faturamento_3m);
 }
 
-// Divide a Fabrica (branch_code=2) em 3 linhas por operacao, igual o relatorio nativo
-// do TOTVS mostra (2-FABRICA / 2.1-DELIVERY / 2.3-ATACADO) - a Fabrica vende nos tres
-// canais dentro da mesma filial, e antes tudo virava uma linha so misturada. So cobre
-// as metricas de venda pura (faturamento/pecas/transacoes/clientes) - meta, devolucao
-// e clientes-novos nao tem infraestrutura pra separar por operacao (ficam so na linha
-// "2-FABRICA" principal, igual ja era antes do split).
+// Divide a Fabrica (branch_code=2) em 2 linhas por operacao: 2-DPA e 2.3-ATACADO. Sao
+// dois negocios distintos dentro da mesma filial, e antes tudo virava uma linha so
+// misturada. So cobre as metricas de venda pura (faturamento/pecas/transacoes/clientes)
+// - meta e clientes-novos nao tem infraestrutura pra separar por operacao (ficam so na
+// linha "2-DPA" principal, igual ja era antes do split).
 export async function getVendasFabricaDividida(
   startDate: Date,
   endDate: Date,
@@ -313,7 +312,6 @@ export async function getVendasFabricaDividida(
     SELECT
       CASE
         WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
-        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
@@ -333,10 +331,19 @@ export async function getVendasFabricaDividida(
     GROUP BY linha
   `;
 
+  // Duas linhas, do jeito que a devolutiva de 25/08 definiu: DPA = filial 02 Fisico +
+  // Segunda qualidade, ATACADO = filial 02 Atacado. O criterio e a descricao da
+  // operacao, nao o local de estoque - venda nao carrega stock_code. E o MESMO
+  // criterio que o PCP ja usa (buildAcompanhamentoVendaFilter: DPA = filial 02 cuja
+  // operacao NOT ILIKE '%ATACADO%'), entao os dois sistemas passam a falar a mesma
+  // lingua.
+  //
+  // O DELIVERY deixou de ser linha propria e voltou pra dentro do DPA, que e onde ele
+  // cai nesse criterio. Nao some faturamento: era 0,8% do movimento da filial
+  // (R$ 23.974,95 de R$ 2,87 mi desde out/2025) e continua somado no DPA.
   const INFO_LINHA: Record<string, { code: number; name: string }> = {
-    '2': { code: 2, name: 'FABRICA' },
-    '2.1': { code: 2.1, name: 'FABRICA - DELIVERY' },
-    '2.3': { code: 2.3, name: 'FABRICA - ATACADO' },
+    '2': { code: 2, name: 'DPA' },
+    '2.3': { code: 2.3, name: 'ATACADO' },
   };
 
   return results.map(row => {
@@ -852,7 +859,6 @@ export async function getDevolucoesFabricaDividida(
     SELECT
       CASE
         WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
-        WHEN co.description ILIKE '%DELIVERY%' THEN '2.1'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT t.transaction_code) as qtde_dev,
@@ -870,7 +876,9 @@ export async function getDevolucoesFabricaDividida(
     GROUP BY linha
   `;
 
-  const CODIGO_LINHA: Record<string, number> = { '2': 2, '2.1': 2.1, '2.3': 2.3 };
+  // Mesmas duas linhas de getVendasFabricaDividida (DPA / ATACADO) - devolucao tem que
+  // cair na mesma linha da venda que a originou, senao o liquido da linha fica torto.
+  const CODIGO_LINHA: Record<string, number> = { '2': 2, '2.3': 2.3 };
 
   const map = new Map<number, { valor: number; qtde: number }>();
   for (const row of results) {

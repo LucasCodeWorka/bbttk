@@ -423,10 +423,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       vendasService.getMetasPorFilial(ano, mes),
     ]);
 
-    // Fabrica (branch_code 2) vende em 3 canais (varejo, delivery, atacado) - troca a
-    // linha unica por 3, igual o relatorio nativo do TOTVS mostra (2/2.1/2.3). Meta e
-    // clientes-novos continuam so na linha "2" (sem infraestrutura pra separar por
-    // operacao ainda) - ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
+    // A filial 02 abriga dois negocios distintos - troca a linha unica por DPA (2) e
+    // ATACADO (2.3), separados pela descricao da operacao. Meta e clientes-novos
+    // continuam so na linha "2" (sem infraestrutura pra separar por operacao ainda) -
+    // ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
     if (!branchCodes || branchCodes.includes(2)) {
       const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
         vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro),
@@ -441,6 +441,35 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       }
     }
 
+    // Loja que vendeu no ano anterior e nao vendeu no periodo atual (fechou, ou so nao
+    // teve movimento) entrava no TOTAL anterior sem ganhar linha, porque as linhas saem
+    // de `filiaisAtual` e o total saia de `filiaisAnterior` inteiro. Resultado: a linha
+    // TOTAL ficava acima da soma da coluna - reportado pelo cliente em 30/09 e
+    // reproduzido em mar/2026: Mart Moda, Terrazo e Mossoro somavam R$ 105.180,25 /
+    // 1.903 pecas / 255 clientes / 338 atendimentos de ano anterior sem linha nenhuma.
+    //
+    // A correcao e dar linha a elas, nao tirar do total: esse faturamento aconteceu de
+    // verdade e some-lo fora inflaria a VAR% da rede (+55,9% no lugar de +35,7% naquele
+    // mes). As linhas entram zeradas no periodo atual, entao nao mexem em nenhum total
+    // do periodo atual nem nos percentuais de participacao.
+    const codigosAtual = new Set(filiaisAtual.map(f => f.branch_code));
+    const lojasSoNoAnterior = filiaisAnterior
+      .filter(f => !codigosAtual.has(f.branch_code))
+      .map(f => ({
+        branch_code: f.branch_code,
+        branch_name: f.branch_name,
+        transacoes: 0,
+        pecas: 0,
+        faturamento: 0,
+        pa: 0,
+        tm: 0,
+        clientes: 0,
+        pm: 0,
+        tm_cliente: 0,
+        pac: 0,
+      }));
+    filiaisAtual = filiaisAtual.concat(lojasSoNoAnterior);
+
     const anteriorDict = new Map(filiaisAnterior.map(f => [f.branch_code, f]));
 
     const totalFaturamentoAtual = filiaisAtual.reduce((sum, f) => sum + f.faturamento, 0);
@@ -450,7 +479,7 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     // ela deve contar apenas na linha de Atacado. As linhas FABRICA e DELIVERY ficam
     // sem meta para nao duplicar o alvo no total.
     const FABRICA_META_ATACADO_CODE = 2.3;
-    const FABRICA_DIVIDIDA_CODES = [2, 2.1, FABRICA_META_ATACADO_CODE];
+    const FABRICA_DIVIDIDA_CODES = [2, FABRICA_META_ATACADO_CODE];
     const metaFabricaAtacado = metasMap.get(2) || 0;
     const filiaisComparativo = filiaisAtual.map(f => {
       const ant = anteriorDict.get(f.branch_code) || {
