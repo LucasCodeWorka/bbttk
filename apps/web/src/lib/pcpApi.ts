@@ -934,6 +934,8 @@ export interface PerformanceColecaoMetricas {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
+  // Estoque de agora, sem corte de data (divisor do giroAteHoje).
+  estoqueAtual: number;
   giroPeriodo: number;
   giroAteHoje: number | null;
   totalVendaValor: number;
@@ -1000,6 +1002,9 @@ export interface PerformanceColecaoResponse {
     percentEntregue: number | null;
     qtdeVendida: number;
     estoqueFinal: number;
+    // Estoque de agora, sem corte de data. Igual ao estoqueFinal quando a data fim
+    // do filtro e hoje - as duas medidas coincidem mesmo nesse caso.
+    estoqueAtual: number;
     totalVendaValor: number;
     totalVendaCusto: number;
     totalEstoqueCusto: number;

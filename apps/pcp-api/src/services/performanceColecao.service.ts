@@ -55,6 +55,11 @@ export interface PerformanceColecaoMetricas {
   valorMes2: number;
   valorMes3: number;
   estoqueFinal: number;
+  // Estoque "de agora", sem corte de data - o mesmo insumo que ja era usado como
+  // divisor do giroAteHoje, agora tambem exposto como numero proprio. Quando a data
+  // fim do filtro e hoje, e igual ao estoqueFinal de proposito: as duas medidas
+  // coincidem mesmo. A diferenca aparece com data fim no passado.
+  estoqueAtual: number;
   giroPeriodo: number;
   giroAteHoje: number | null;
   totalVendaValor: number;
@@ -125,6 +130,9 @@ export interface PerformanceColecaoResponse {
     percentEntregue: number | null;
     qtdeVendida: number;
     estoqueFinal: number;
+    // Estoque de agora, sem corte de data. Igual ao estoqueFinal quando a data fim do
+    // filtro e hoje - nesse caso as duas medidas sao a mesma coisa mesmo.
+    estoqueAtual: number;
     totalVendaValor: number;
     totalVendaCusto: number;
     totalEstoqueCusto: number;
@@ -475,6 +483,7 @@ function toMetricas(f: FlatMetrica): PerformanceColecaoMetricas {
     valorMes2: round(f.valorMes2, 2),
     valorMes3: round(f.valorMes3, 2),
     estoqueFinal: round(f.estoqueFinal, 0),
+    estoqueAtual: round(f.estoqueAtual, 0),
     giroPeriodo: round(f.qtdeVendidaPeriodo, 0),
     giroAteHoje: f.estoqueAtual > 0 ? round(f.qtdeVendidaAteHoje / f.estoqueAtual, 2) : null,
     totalVendaValor: round(f.totalVendaValor, 2),
@@ -876,6 +885,8 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       percentEntregue: totals.qtdesLiberadas > 0 ? round((totals.qtdeEntregue / totals.qtdesLiberadas) * 100, 1) : null,
       qtdeVendida: round(totals.qtdeVendida, 0),
       estoqueFinal: round(totals.estoqueFinal, 0),
+      // Mesma soma que ja alimentava o giroAteHoje, agora tambem exposta como KPI.
+      estoqueAtual: round(somaEstoqueAtual, 0),
       totalVendaValor: round(totals.totalVendaValor, 2),
       totalVendaCusto: round(totals.totalVendaCusto, 2),
       totalEstoqueCusto: round(totals.totalEstoqueCusto, 2),

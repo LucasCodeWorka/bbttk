@@ -57,6 +57,7 @@ const COLUNAS_METRICA: Array<Coluna<MetricaKey>> = [
   { key: 'vendaMes2', label: 'VDA 2 MES', align: 'right', width: 12, type: 'number' },
   { key: 'vendaMes3', label: 'VDA 3 MES', align: 'right', width: 12, type: 'number' },
   { key: 'estoqueFinal', label: 'ESTQ FINAL', align: 'right', width: 12, type: 'number' },
+  { key: 'estoqueAtual', label: 'ESTQ ATUAL', align: 'right', width: 12, type: 'number' },
   { key: 'giroPeriodo', label: 'GIRO PERIODO', align: 'right', width: 13, type: 'number' },
   { key: 'giroAteHoje', label: 'GIRO ATE HOJE', align: 'right', width: 13, type: 'number' },
   { key: 'totalVendaValor', label: 'TT $ VENDA', align: 'right', width: 14, type: 'currency' },
@@ -277,13 +278,14 @@ export default function PcpPerformanceColecaoPage() {
         acc.valorMes2 += row.valorMes2;
         acc.valorMes3 += row.valorMes3;
         acc.estoqueFinal += row.estoqueFinal;
+        acc.estoqueAtual += row.estoqueAtual;
         acc.totalVendaValor += row.totalVendaValor;
         acc.totalVendaCusto += row.totalVendaCusto;
         acc.totalEstoqueCusto += row.totalEstoqueCusto;
         acc.totalEstoqueVenda += row.totalEstoqueVenda;
         return acc;
       },
-      { qtdesLiberadas: 0, qtdeEntregue: 0, vendaMes1: 0, vendaMes2: 0, vendaMes3: 0, valorMes1: 0, valorMes2: 0, valorMes3: 0, estoqueFinal: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
+      { qtdesLiberadas: 0, qtdeEntregue: 0, vendaMes1: 0, vendaMes2: 0, vendaMes3: 0, valorMes1: 0, valorMes2: 0, valorMes3: 0, estoqueFinal: 0, estoqueAtual: 0, totalVendaValor: 0, totalVendaCusto: 0, totalEstoqueCusto: 0, totalEstoqueVenda: 0 }
     );
     const saldoAEntregar = Math.max(acc.qtdesLiberadas - acc.qtdeEntregue, 0);
     const percentEntregue = acc.qtdesLiberadas > 0 ? (acc.qtdeEntregue / acc.qtdesLiberadas) * 100 : null;
@@ -387,6 +389,7 @@ export default function PcpPerformanceColecaoPage() {
         vendaMes2: totais.vendaMes2,
         vendaMes3: totais.vendaMes3,
         estoqueFinal: totais.estoqueFinal,
+        estoqueAtual: totais.estoqueAtual,
         totalVendaValor: totais.totalVendaValor,
         totalEstoqueCusto: totais.totalEstoqueCusto,
       },
@@ -455,7 +458,10 @@ export default function PcpPerformanceColecaoPage() {
         <KPICard title="Qtdes liberadas" value={formatNumber(data?.kpis.qtdesLiberadas || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Qtde entregue" value={formatNumber(data?.kpis.qtdeEntregue || 0)} subtitle={data?.kpis.percentEntregue === null || data?.kpis.percentEntregue === undefined ? undefined : `${data.kpis.percentEntregue.toFixed(1)}% entregue`} color="blue" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Saldo a entregar" value={formatNumber(data?.kpis.saldoAEntregar || 0)} color="yellow" valueSize="sm" isLoading={isLoading} />
-        <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} color="red" valueSize="sm" isLoading={isLoading} />
+        <KPICard title={data ? `Estoque em ${formatDate(data.periodo.dataFim)}` : 'Estoque final'} value={formatNumber(data?.kpis.estoqueFinal || 0)} subtitle="posicao na data fim do filtro" color="red" valueSize="sm" isLoading={isLoading} />
+        {/* Estoque de agora, sem corte de data. Fica igual ao card ao lado quando a data
+            fim escolhida e hoje - nesse caso as duas medidas sao a mesma coisa mesmo. */}
+        <KPICard title="Estoque atual" value={formatNumber(data?.kpis.estoqueAtual || 0)} subtitle="posicao de hoje" color="red" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro no periodo" value={formatNumber(data?.kpis.giroPeriodo || 0)} subtitle="peças vendidas" color="purple" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Giro ate hoje" value={data?.kpis.giroAteHoje === null || data?.kpis.giroAteHoje === undefined ? '-' : data.kpis.giroAteHoje.toFixed(2).replace('.', ',')} subtitle="vendido/estoque atual" color="purple" valueSize="sm" isLoading={isLoading} />
       </div>
@@ -644,6 +650,7 @@ export default function PcpPerformanceColecaoPage() {
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes2)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes3)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.estoqueFinal)}</TableCell>
+                    <TableCell align="right" className="font-bold">{formatNumber(totais.estoqueAtual)}</TableCell>
                     <TableCell align="right" className="font-bold">{formatNumber(totais.vendaMes1 + totais.vendaMes2 + totais.vendaMes3)}</TableCell>
                     <TableCell align="right" className="font-bold">-</TableCell>
                     <TableCell align="right" className="font-bold">{formatMoney(totais.totalVendaValor)}</TableCell>
