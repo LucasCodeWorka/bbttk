@@ -453,7 +453,9 @@ export default function PcpPerformanceColecaoPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <KPICard title="Referencias" value={formatNumber(data?.kpis.referencias || 0)} color="purple" valueSize="sm" isLoading={isLoading} />
-        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} subtitle={`${formatNumber(data?.kpis.qtdeVendida || 0)} peças vendidas`} color="green" valueSize="sm" isLoading={isLoading} />
+        {/* Sem subtitulo de pecas aqui: o card "Giro no periodo" ja mostra esse mesmo
+            numero (kpis.giroPeriodo e kpis.qtdeVendida sao o mesmo valor no backend). */}
+        <KPICard title="Venda no periodo" value={formatMoney(data?.kpis.totalVendaValor || 0)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Part. colecao" value={`${(data?.kpis.participacaoColecaoPercent || 0).toFixed(1)}%`} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Qtdes liberadas" value={formatNumber(data?.kpis.qtdesLiberadas || 0)} color="blue" valueSize="sm" isLoading={isLoading} />
         <KPICard title="Qtde entregue" value={formatNumber(data?.kpis.qtdeEntregue || 0)} subtitle={data?.kpis.percentEntregue === null || data?.kpis.percentEntregue === undefined ? undefined : `${data.kpis.percentEntregue.toFixed(1)}% entregue`} color="blue" valueSize="sm" isLoading={isLoading} />
@@ -494,10 +496,12 @@ export default function PcpPerformanceColecaoPage() {
                 <th className="border border-gray-300 px-3 py-2 text-right">Qtde entregue</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Pcs vendidas</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Qtde de sobra</th>
+                {/* Giro vem logo depois da sobra de proposito (devolutiva de 01/09): e a
+                    leitura dela em %, entao as duas ficam lado a lado. */}
+                <th className="border border-gray-300 px-3 py-2 text-right">Giro em pecas</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Estoque custo</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Estoque venda</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Markup estoque</th>
-                <th className="border border-gray-300 px-3 py-2 text-right">Giro em pecas</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Venda colecao mes</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Venda total mes (pcs)</th>
                 <th className="border border-gray-300 px-3 py-2 text-right">Part. colecao na venda total</th>
@@ -510,10 +514,10 @@ export default function PcpPerformanceColecaoPage() {
                   <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.qtdeEntregue)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.pecasVendidasColecao)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right" title={`Estoque em ${formatDate(row.dataEstoque)}`}>{formatNumber(row.estoqueFinal)}</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.giroPecasPercent.toFixed(1)}%</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(row.estoqueValorCusto)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(row.estoqueValorVenda)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">{row.markupEstoque === null ? '-' : row.markupEstoque.toFixed(2).replace('.', ',')}</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.giroPecasPercent.toFixed(1)}%</td>
                   <td className="border border-gray-300 bg-green-50 px-3 py-2 text-right">{formatMoney(row.vendaColecaoValor)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(row.vendaTotalPecas)}</td>
                   <td className="border border-gray-300 px-3 py-2 text-right font-semibold">{row.participacaoColecaoPecasPercent.toFixed(1)}%</td>
@@ -524,10 +528,10 @@ export default function PcpPerformanceColecaoPage() {
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.qtdeEntregue)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.pecasVendidasColecao)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.estoqueFinal)}</td>
+                <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.giroPecasPercent.toFixed(1)}%</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.estoqueValorCusto)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.estoqueValorVenda)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.markupEstoque === null ? '-' : resumoFinal.total.markupEstoque.toFixed(2).replace('.', ',')}</td>
-                <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.giroPecasPercent.toFixed(1)}%</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatMoney(resumoFinal.total.vendaColecaoValor)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{formatNumber(resumoFinal.total.vendaTotalPecas)}</td>
                 <td className="border border-gray-300 px-3 py-2 text-right">{resumoFinal.total.participacaoColecaoPecasPercent.toFixed(1)}%</td>
