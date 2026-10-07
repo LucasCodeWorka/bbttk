@@ -2,7 +2,6 @@ import { Router, Request, Response, NextFunction } from 'express';
 import * as vendasService from '../services/vendas.service.js';
 import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
-import * as metasService from '../services/metas.service.js';
 import { syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
@@ -252,23 +251,35 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
     const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
 
     const nomes = await vendasService.getVendedoresMap();
-    const anoMeta = endDate.getFullYear();
-    const mesMeta = endDate.getMonth() + 1;
-    const metas = await metasService.getMetas(anoMeta, mesMeta);
-    const metaPorVendedor = new Map<number, number>();
-    for (const meta of metas) {
-      if (meta.seller_code === null) continue;
-      if (branchCodes && !branchCodes.includes(meta.branch_code)) continue;
-      metaPorVendedor.set(meta.seller_code, (metaPorVendedor.get(meta.seller_code) || 0) + meta.nivel_3);
-    }
+    // Meta do PERIODO, rateada pelos dias de cada mes que entraram no filtro - nao a
+    // meta do mes da data fim. Ver getMetasPorVendedorPeriodo.
+    const metaPorVendedor = await vendasService.getMetasPorVendedorPeriodo(
+      startDate,
+      endDate,
+      branchCodes
+    );
 
-    const ultimoDiaMes = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0).getDate();
-    const diasDecorridos = Math.max(endDate.getDate(), 1);
+    // A projecao extrapola o ritmo do periodo ate o fim do mes, entao so vale quando o
+    // filtro cobre UM mes que ainda esta correndo. Num periodo de varios meses a conta
+    // antiga dividia o faturamento inteiro pelo dia-do-mes da data fim e multiplicava
+    // pelos dias daquele mes - em 01/01 a 31/03/2026 isso devolvia o trimestre todo
+    // (R$ 2,82 mi) rotulado como projecao de um mes. Fora desse caso, projecao fica
+    // null e a tela nao mostra numero inventado.
+    const periodos = vendasService.getPeriodosCalendario(startDate, endDate);
+    const hoje = new Date();
+    const projetavel =
+      periodos.length === 1 &&
+      endDate.getUTCFullYear() === hoje.getUTCFullYear() &&
+      endDate.getUTCMonth() === hoje.getUTCMonth();
+    const ultimoDiaMes = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() + 1, 0)).getUTCDate();
+    const diasDecorridos = Math.max(endDate.getUTCDate(), 1);
 
     // Adicionar nomes e indicadores de meta/projecao.
     const vendedoresComNomes = vendedores.map(v => {
       const meta = metaPorVendedor.get(v.seller_code) || 0;
-      const projecao = Math.round(((v.faturamento / diasDecorridos) * ultimoDiaMes) * 100) / 100;
+      const projecao = projetavel
+        ? Math.round(((v.faturamento / diasDecorridos) * ultimoDiaMes) * 100) / 100
+        : null;
 
       return {
         ...v,
@@ -277,7 +288,7 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
         debito_meta: Math.max(0, meta - v.faturamento),
         pct_meta: meta > 0 ? Math.round((v.faturamento / meta) * 1000) / 10 : 0,
         projecao,
-        pct_proj: meta > 0 ? Math.round((projecao / meta) * 1000) / 10 : 0,
+        pct_proj: meta > 0 && projecao !== null ? Math.round((projecao / meta) * 1000) / 10 : 0,
       };
     });
 
@@ -404,10 +415,23 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const endAnterior = new Date(endAtual);
     endAnterior.setFullYear(endAnterior.getFullYear() - 1);
 
-    const ano = endAtual.getFullYear();
-    const mes = endAtual.getMonth() + 1;
-    const ultimoDiaMes = new Date(ano, mes, 0);
-    const diasRestantes = Math.max(ultimoDiaMes.getDate() - endAtual.getDate(), 0);
+    // "Dias restantes" e "meta/dia" so fazem sentido quando o filtro cobre UM mes que
+    // ainda esta correndo - e a pergunta "quanto falta vender por dia ate fechar o
+    // mes". Num periodo de varios meses, ou num mes ja fechado, nao ha o que projetar:
+    // diasRestantes fica 0 e a tela mostra meta/dia vazia. Antes a conta misturava a
+    // meta do periodo inteiro com os dias que faltavam so do ultimo mes.
+    const periodos = vendasService.getPeriodosCalendario(startAtual, endAtual);
+    const ano = endAtual.getUTCFullYear();
+    const mes = endAtual.getUTCMonth() + 1;
+    const ultimoDiaMes = new Date(Date.UTC(ano, mes, 0));
+    const hoje = new Date();
+    const periodoEhMesUnicoCorrente =
+      periodos.length === 1 &&
+      ano === hoje.getUTCFullYear() &&
+      mes === hoje.getUTCMonth() + 1;
+    const diasRestantes = periodoEhMesUnicoCorrente
+      ? Math.max(ultimoDiaMes.getUTCDate() - endAtual.getUTCDate(), 0)
+      : 0;
 
     let [
       filiaisAtual,
@@ -420,7 +444,7 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro),
       vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro),
       vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
-      vendasService.getMetasPorFilial(ano, mes),
+      vendasService.getMetasPorFilialPeriodo(startAtual, endAtual),
     ]);
 
     // A filial 02 abriga dois negocios distintos - troca a linha unica por DPA (2) e

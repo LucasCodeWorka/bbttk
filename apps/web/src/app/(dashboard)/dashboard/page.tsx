@@ -284,7 +284,9 @@ export default function DashboardPage() {
     const faturamento = vendedoresRanking.reduce((sum, v) => sum + v.faturamento, 0);
     const meta = vendedoresRanking.reduce((sum, v) => sum + v.meta, 0);
     const debitoMeta = vendedoresRanking.reduce((sum, v) => sum + v.debito_meta, 0);
-    const projecaoTotal = vendedoresRanking.reduce((sum, v) => sum + v.projecao, 0);
+    // Periodo sem projecao (varios meses, ou mes ja fechado) devolve null por vendedor -
+    // o total fica 0 e o % de projecao zera junto, em vez de somar NaN na tabela.
+    const projecaoTotal = vendedoresRanking.reduce((sum, v) => sum + (v.projecao ?? 0), 0);
     const pecas = vendedoresRanking.reduce((sum, v) => sum + v.pecas, 0);
     const transacoes = vendedoresRanking.reduce((sum, v) => sum + v.transacoes, 0);
 
@@ -656,7 +658,7 @@ export default function DashboardPage() {
       meta: valorNumerico(v.meta),
       debito_meta: valorNumerico(v.debito_meta),
       pct_meta: v.meta > 0 ? percentualNumerico(v.pct_meta) : '',
-      pct_proj: v.meta > 0 ? percentualNumerico(v.pct_proj) : '',
+      pct_proj: v.meta > 0 && v.projecao !== null ? percentualNumerico(v.pct_proj) : '',
       pa: Math.round(v.pa * 100) / 100,
       tm: valorNumerico(v.tm),
     }));
@@ -1220,7 +1222,9 @@ export default function DashboardPage() {
                       <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.meta) : '-'}</td>
                       <td className="px-3 py-2 text-right">{v.meta > 0 ? formatMoney(v.debito_meta) : '-'}</td>
                       <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_meta) : '-'}</td>
-                      <td className="px-3 py-2 text-center">{v.meta > 0 ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
+                      {/* Sem projecao (periodo de varios meses ou mes fechado) mostra "-"
+                          em vez de um badge de 0%, que leria como "projecao zerada". */}
+                      <td className="px-3 py-2 text-center">{v.meta > 0 && v.projecao !== null ? renderBadgeAtingimentoMeta(v.pct_proj) : '-'}</td>
                       <td className="px-2 py-2 text-right text-xs">{v.pa.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right">{formatMoney(v.tm)}</td>
                     </tr>

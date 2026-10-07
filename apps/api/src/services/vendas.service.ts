@@ -1003,6 +1003,102 @@ export async function getMetasPorFilial(ano: number, mes: number): Promise<Map<n
   return map;
 }
 
+export interface PeriodoMes {
+  ano: number;
+  mes: number;
+  diasSelecionados: number;
+  diasNoMes: number;
+}
+
+// Quebra o intervalo nos meses de calendario que ele atravessa, com quantos dias de
+// cada um entraram. E o que permite ratear a meta mensal por periodo parcial.
+//
+// Usa os getters UTC de proposito. As datas chegam de `new Date('2026-03-01')`, que o
+// JS interpreta como meia-noite UTC; ler com getMonth() local num fuso negativo (BRT e
+// UTC-3) devolveria o mes ANTERIOR pro primeiro dia de cada mes. Com getUTCMonth() o
+// que volta e exatamente a data que o usuario escolheu no filtro.
+export function getPeriodosCalendario(startDate: Date, endDate: Date): PeriodoMes[] {
+  const periodos: PeriodoMes[] = [];
+  const anoFim = endDate.getUTCFullYear();
+  const mesFim = endDate.getUTCMonth();
+  let cursor = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
+
+  while (
+    cursor.getUTCFullYear() < anoFim ||
+    (cursor.getUTCFullYear() === anoFim && cursor.getUTCMonth() <= mesFim)
+  ) {
+    const ano = cursor.getUTCFullYear();
+    const mes = cursor.getUTCMonth();
+    const diasNoMes = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+    const ehMesInicial = ano === startDate.getUTCFullYear() && mes === startDate.getUTCMonth();
+    const ehMesFinal = ano === anoFim && mes === mesFim;
+    const primeiroDia = ehMesInicial ? startDate.getUTCDate() : 1;
+    const ultimoDia = ehMesFinal ? endDate.getUTCDate() : diasNoMes;
+
+    periodos.push({ ano, mes: mes + 1, diasSelecionados: ultimoDia - primeiroDia + 1, diasNoMes });
+    cursor = new Date(Date.UTC(ano, mes + 1, 1));
+  }
+
+  return periodos;
+}
+
+// Meta do PERIODO por filial, nao a meta do mes da data fim. A meta e cadastrada por
+// mes; aqui ela e rateada pelos dias de cada mes que entraram no filtro
+// (meta mensal / dias do mes * dias selecionados) e somada.
+//
+// Antes isso usava so o mes da data fim, o que inflava o atingimento de qualquer
+// periodo multi-mes: 01/01 a 31/03/2026 comparava R$ 2.822.724,18 de venda contra a
+// meta so de marco (R$ 763.033,33) e exibia 369,9% em vez dos 122,1% reais.
+// Mesmo criterio que o PCP ja usa em vendaDia.service.ts calcularMetaPeriodo.
+export async function getMetasPorFilialPeriodo(
+  startDate: Date,
+  endDate: Date
+): Promise<Map<number, number>> {
+  const periodos = getPeriodosCalendario(startDate, endDate);
+  const acumulado = new Map<number, number>();
+
+  for (const periodo of periodos) {
+    const metasDoMes = await getMetasPorFilial(periodo.ano, periodo.mes);
+    const proporcao = periodo.diasSelecionados / periodo.diasNoMes;
+    for (const [branchCode, valor] of metasDoMes) {
+      acumulado.set(branchCode, (acumulado.get(branchCode) || 0) + valor * proporcao);
+    }
+  }
+
+  for (const [branchCode, valor] of acumulado) {
+    acumulado.set(branchCode, round(valor));
+  }
+  return acumulado;
+}
+
+// Mesma regra de rateio, no grao de vendedor (nivel_3 das metas com seller_code).
+export async function getMetasPorVendedorPeriodo(
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[]
+): Promise<Map<number, number>> {
+  const periodos = getPeriodosCalendario(startDate, endDate);
+  const acumulado = new Map<number, number>();
+
+  for (const periodo of periodos) {
+    const metas = await metasService.getMetas(periodo.ano, periodo.mes);
+    const proporcao = periodo.diasSelecionados / periodo.diasNoMes;
+    for (const meta of metas) {
+      if (meta.seller_code === null) continue;
+      if (branchCodes && !branchCodes.includes(meta.branch_code)) continue;
+      acumulado.set(
+        meta.seller_code,
+        (acumulado.get(meta.seller_code) || 0) + meta.nivel_3 * proporcao
+      );
+    }
+  }
+
+  for (const [sellerCode, valor] of acumulado) {
+    acumulado.set(sellerCode, round(valor));
+  }
+  return acumulado;
+}
+
 // Calcular totais
 export function calcularTotais(filiais: VendasFilial[]) {
   const totalFaturamento = filiais.reduce((sum, f) => sum + f.faturamento, 0);

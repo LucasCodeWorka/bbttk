@@ -598,7 +598,9 @@ export interface Vendedor {
   meta: number;
   debito_meta: number;
   pct_meta: number;
-  projecao: number;
+  // null quando o filtro nao cobre um unico mes corrente - ai nao ha o que projetar
+  // (a extrapolacao assume o mes em andamento). A tela mostra "-" nesse caso.
+  projecao: number | null;
   pct_proj: number;
 }
 
