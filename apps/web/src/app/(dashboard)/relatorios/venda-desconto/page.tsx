@@ -356,10 +356,11 @@ export default function VendaDescontoPage() {
       {/* KPIs */}
       {data && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Sem subtitulo de pecas aqui: o card "Quantidade Vendida" ao lado mostra
+              exatamente o mesmo campo (data.gerais.vendaTotalGeralQtd). */}
           <KPICard
             title="Venda Bruta"
             value={formatCurrency(data.gerais.vendaBruta)}
-            subtitle={`${formatNumber(data.gerais.vendaTotalGeralQtd)} peças`}
           />
           <KPICard
             title="Desconto Concedido"
