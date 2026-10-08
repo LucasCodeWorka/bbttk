@@ -47,18 +47,25 @@ export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(t
 // casos. Os campos que os relatorios realmente leem (size, reference_code, color_code,
 // product_name e todas as class_*) sao identicos nas duas, entao a desduplicacao nao muda
 // classificacao, grade nem referencia de nada.
+// IMPLEMENTACAO: DISTINCT ON, nao LATERAL. A primeira versao deste helper usava
+// `JOIN LATERAL (... LIMIT 1) ON TRUE`, que da o MESMO resultado mas e correlacionado:
+// o Postgres precisa resolver a subconsulta item a item e so depois aplicar um filtro
+// como `a.reference_code = '...'`, em vez de filtrar produto_analitico primeiro e fazer
+// hash join. Medido em 08/10/2026, Pesos e Grades por item (1 referencia, set/2026):
+// LATERAL ~106s contra 0,3s com DISTINCT ON - mesma saida, ~350x. A tela chegava a
+// estourar timeout. O DISTINCT ON materializa uma linha por product_code numa passada
+// so e deixa o planejador livre pra escolher a ordem do join.
+// A regra de desempate e identica a da versao anterior (placeholder por ultimo).
 export function joinProdutoAnaliticoUnico(
   colunaProductCode: string,
   tipoJoin: 'LEFT' | 'INNER' = 'LEFT'
 ): Prisma.Sql {
   return Prisma.raw(`
-    ${tipoJoin === 'LEFT' ? 'LEFT JOIN' : 'JOIN'} LATERAL (
-      SELECT pa.*
+    ${tipoJoin === 'LEFT' ? 'LEFT JOIN' : 'JOIN'} (
+      SELECT DISTINCT ON (pa.product_code) pa.*
       FROM produto_analitico pa
-      WHERE pa.product_code = ${colunaProductCode}
-      ORDER BY (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
-      LIMIT 1
-    ) a ON TRUE
+      ORDER BY pa.product_code, (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
+    ) a ON a.product_code = ${colunaProductCode}
   `);
 }
 

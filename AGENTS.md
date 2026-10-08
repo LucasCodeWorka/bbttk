@@ -424,6 +424,35 @@ heurística de nome, deixar o usuário desconsiderar manualmente na tela.
 Swagger da API: `{TOTVS_API_URL}/general/v2/swagger/v1/swagger.json` (útil pra
 descobrir endpoints/campos sem depender de documentação externa).
 
+### ⚠️ `produto_analitico` tem product_code duplicado — todo SUM() precisa desduplicar
+
+Achado pelo Marcelo em 06/10/2026: alguns `product_code` aparecem em **duas** linhas de
+`produto_analitico`. Não é erro de modelagem, é resíduo do ETL — quando o SKU real ainda
+não é conhecido, a carga grava um placeholder `product_sku = 'PRODUCT_CODE:<n>'` e numa
+carga posterior entra a linha definitiva. As duas convivem.
+
+**Consequência**: qualquer `JOIN produto_analitico ON product_code = <coluna>` duplica a
+linha da esquerda e **infla todo SUM() em cima dela**. Foi o que deixou o Acompanhamento
+por Linha acima do Dashboard Comercial (DEL PASEO, set/2026: R$ 100.450,27 / 1.582 peças
+contra os R$ 95.005,71 / 1.530 corretos). O Comercial nunca sofreu disso porque lê
+`produto_analitico` por `EXISTS` (`buildProdutoFilter` em `vendas.service.ts`), que não
+multiplica.
+
+**Sempre usar `joinProdutoAnaliticoUnico()`** (`relatorioBase.service.ts`) no lugar do
+JOIN direto em qualquer query que some algo. Já aplicado em `emProducao`, `pesosGrades`,
+`raioX`, `relatorioBase` e `vendaDia`.
+
+**Cuidado com a implementação** (corrigido em 08/10/2026): a primeira versão do helper
+usava `JOIN LATERAL (... LIMIT 1) ON TRUE`. Dá o mesmo resultado, mas é **correlacionado**
+— o Postgres resolve a subconsulta item a item e só depois aplica um filtro como
+`a.reference_code = '...'`, em vez de filtrar `produto_analitico` primeiro e fazer hash
+join. Medido no Pesos e Grades por item (1 referência, set/2026): **~106s com LATERAL
+contra 0,3s com `DISTINCT ON`**, mesma saída — a tela estourava timeout. Hoje o helper usa
+`DISTINCT ON (product_code)` numa subconsulta materializada. Se for mexer nele de novo,
+**medir com a conexão quente**: a primeira query contra o Neon paga cold start e pode
+levar 290s, o que mascara completamente a comparação (foi o que quase me fez concluir o
+contrário).
+
 ### Bugs reais já encontrados e corrigidos (não repetir)
 
 1. **`customer_code >= 110000000` = conta interna do TOTVS**, nunca cliente real —
