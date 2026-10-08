@@ -129,6 +129,53 @@ function buildBranchFilter(branchCodes?: number[]) {
   return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
 }
 
+// Dias "furados" dentro do periodo: o usuario escolhe o intervalo no calendario e
+// desmarca dias avulsos dentro dele (loja fechada, evento atipico, falha de sistema).
+// Formato 'YYYY-MM-DD'; fora do intervalo e ignorado pelo proprio BETWEEN.
+export type DiasExcluidos = string[] | undefined;
+
+function buildDiasExcluidosFilter(diasExcluidos: DiasExcluidos): Prisma.Sql {
+  if (!diasExcluidos || diasExcluidos.length === 0) return Prisma.empty;
+  // Cast explicito pra `date`: passar `new Date('2026-09-15T00:00:00')` daria meia-noite
+  // LOCAL (03:00Z no Brasil) e a comparacao com a coluna `date` escorregava de dia.
+  // Com a string crua + ::date a comparacao e dia contra dia, sem fuso no meio.
+  const datas = diasExcluidos.map((d) => Prisma.sql`${d}::date`);
+  return Prisma.sql`AND t.transaction_date NOT IN (${Prisma.join(datas)})`;
+}
+
+// Periodo + furos numa fragmento so. Substitui o `t.transaction_date BETWEEN a AND b`
+// solto que estava repetido em toda query - centralizar evita que uma consulta nova
+// esqueca de aplicar as exclusoes e passe a divergir das outras.
+function buildPeriodoFilter(startDate: Date, endDate: Date, diasExcluidos?: DiasExcluidos): Prisma.Sql {
+  return Prisma.sql`t.transaction_date BETWEEN ${startDate} AND ${endDate} ${buildDiasExcluidosFilter(diasExcluidos)}`;
+}
+
+// Espelha os dias excluidos um ano pra tras, pra comparacao "ano anterior" ficar com a
+// mesma quantidade de dias (29 contra 29, nao 29 contra 30) - decisao do usuario.
+// Usar SO no periodo PARCIAL do ano anterior; o MES COMPLETO de referencia da projecao
+// (caminhada) continua inteiro, senao a projecao passaria a mirar "mes menos um dia".
+// Quantos dos dias desmarcados caem de fato dentro do intervalo analisado. Usado pelas
+// projecoes: dia que nao entrou no faturamento tambem nao pode contar como dia
+// decorrido, senao o ritmo diario sai diluido e a projecao subestimada.
+export function contarDiasExcluidosNoPeriodo(
+  diasExcluidos: DiasExcluidos,
+  startDate: Date,
+  endDate: Date
+): number {
+  if (!diasExcluidos || diasExcluidos.length === 0) return 0;
+  const inicio = startDate.toISOString().slice(0, 10);
+  const fim = endDate.toISOString().slice(0, 10);
+  return diasExcluidos.filter((dia) => dia >= inicio && dia <= fim).length;
+}
+
+export function espelharDiasExcluidosAnoAnterior(diasExcluidos: DiasExcluidos): DiasExcluidos {
+  if (!diasExcluidos || diasExcluidos.length === 0) return diasExcluidos;
+  return diasExcluidos.map((dia) => {
+    const [ano, mes, d] = dia.split('-').map(Number);
+    return `${ano - 1}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  });
+}
+
 // Filtro por classificacao de produto (categoria, genero, status, linha,
 // colecao, tecido) - vem da tabela `produto_analitico`, sincronizada pelo ETL
 // com as classificacoes cadastradas no ERP. Cada dimensao aceita varios valores
@@ -180,7 +227,8 @@ export async function getVendasPeriodo(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasFilial[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -205,7 +253,7 @@ export async function getVendasPeriodo(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -298,7 +346,8 @@ export async function getFaturamentoHistoricoVendedores(ano: number, mes: number
 export async function getVendasFabricaDividida(
   startDate: Date,
   endDate: Date,
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasFilial[]> {
   const produtoFilter = buildProdutoFilter(produtoFiltro);
 
@@ -323,7 +372,7 @@ export async function getVendasFabricaDividida(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND t.branch_code = 2
       AND ${SALE_OPERATION_FILTER}
@@ -374,7 +423,8 @@ export async function getVendasDiarias(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -395,7 +445,7 @@ export async function getVendasDiarias(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -418,7 +468,8 @@ export async function getVendasHorarias(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -443,7 +494,7 @@ export async function getVendasHorarias(
           ELSE NULL
         END as hora
       FROM transacoes t
-      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
         AND t.status = 4
         AND ${STORE_BRANCH_FILTER}
         ${branchFilter}
@@ -489,7 +540,8 @@ export async function getVendasDiaSemana(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -515,7 +567,7 @@ export async function getVendasDiaSemana(
         AND t.transaction_code = ti.transaction_code
         AND ti.seller_code != 1
       ${OPERACAO_JOIN}
-      WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+      WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         AND ${STORE_BRANCH_FILTER}
@@ -557,7 +609,8 @@ export async function getVendasMensais(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasDiarias[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -578,7 +631,7 @@ export async function getVendasMensais(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -601,7 +654,8 @@ export async function getVendasVendedor(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasVendedor[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -623,7 +677,7 @@ export async function getVendasVendedor(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SELLER_FILTER}
       AND ti.seller_code IS NOT NULL
@@ -659,7 +713,8 @@ export async function getVendasVendedor(
 export async function getVendasVendedorPorFilial(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  diasExcluidos?: DiasExcluidos
 ): Promise<VendasVendedorFilial[]> {
   const branchFilter = buildBranchFilter(branchCodes);
 
@@ -680,7 +735,7 @@ export async function getVendasVendedorPorFilial(
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SELLER_FILTER}
       AND ti.seller_code IS NOT NULL
@@ -759,7 +814,8 @@ export async function getTopProdutos(
   endDate: Date,
   branchCodes?: number[],
   limit: number = 10,
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<Produto[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -780,7 +836,7 @@ export async function getTopProdutos(
       AND t.transaction_code = ti.transaction_code
     LEFT JOIN produtos p ON p.product_code = ti.product_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ti.seller_code != 1
       AND ${SALE_OPERATION_FILTER}
@@ -805,7 +861,8 @@ export async function getTopProdutos(
 export async function getDevolucoesPorFilial(
   startDate: Date,
   endDate: Date,
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<Map<number, { valor: number; qtde: number }>> {
   const produtoFilter = buildProdutoFilter(produtoFiltro);
 
@@ -823,7 +880,7 @@ export async function getDevolucoesPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${IS_DEVOLUCAO}
       AND ${STORE_BRANCH_FILTER}
@@ -847,7 +904,8 @@ export async function getDevolucoesPorFilial(
 export async function getDevolucoesFabricaDividida(
   startDate: Date,
   endDate: Date,
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<Map<number, { valor: number; qtde: number }>> {
   const produtoFilter = buildProdutoFilter(produtoFiltro);
 
@@ -868,7 +926,7 @@ export async function getDevolucoesFabricaDividida(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND t.branch_code = 2
       AND ${IS_DEVOLUCAO}
@@ -895,7 +953,8 @@ export async function getDevolucoesFabricaDividida(
 export async function getClientesNovosPorFilial(
   startDate: Date,
   endDate: Date,
-  produtoFiltro?: ProdutoFiltro
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
 ): Promise<Map<number, { qtde: number; faturamento: number }>> {
   const produtoFilter = buildProdutoFilter(produtoFiltro);
 
@@ -929,7 +988,7 @@ export async function getClientesNovosPorFilial(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -965,7 +1024,8 @@ export async function getTodosOperationCodes(): Promise<number[]> {
 export async function getVendasPorCanal(
   startDate: Date,
   endDate: Date,
-  branchCodes?: number[]
+  branchCodes?: number[],
+  diasExcluidos?: DiasExcluidos
 ): Promise<{ varejo: number; atacado: number }> {
   const branchFilter = buildBranchFilter(branchCodes);
 
@@ -978,7 +1038,7 @@ export async function getVendasPorCanal(
       AND t.transaction_code = ti.transaction_code
       AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${startDate} AND ${endDate}
+    WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -1137,23 +1197,34 @@ export function calcularVariacao(atual: number, anterior: number) {
 }
 
 // Projeção do mês (caminhada)
-export async function getProjecaoMes(branchCode?: number, produtoFiltro?: ProdutoFiltro) {
+export async function getProjecaoMes(
+  branchCode?: number,
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
+) {
   const today = new Date();
-  const diaAtual = today.getDate();
 
   const startAtual = new Date(today.getFullYear(), today.getMonth(), 1);
   const endAtual = today;
 
+  // Dia desmarcado nao conta como dia percorrido (mesma regra de getProjecaoFiliais).
+  const diaAtual = Math.max(
+    today.getDate() - contarDiasExcluidosNoPeriodo(diasExcluidos, startAtual, endAtual),
+    1
+  );
+
   const startAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), 1);
-  const endAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), diaAtual);
+  const endAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
 
   const ultimoDiaAntCompleto = new Date(today.getFullYear() - 1, today.getMonth() + 1, 0);
   const startAntCompleto = new Date(today.getFullYear() - 1, today.getMonth(), 1);
 
-  // Buscar dados
+  // Parciais perdem os mesmos dias; o mes completo do ano anterior fica inteiro, porque
+  // e o alvo da projecao (ver comentario em getProjecaoFiliais).
+  const diasExcluidosAA = espelharDiasExcluidosAnoAnterior(diasExcluidos);
   const branchCodes = branchCode ? [branchCode] : undefined;
-  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro);
-  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCodes, produtoFiltro);
+  const vendasAtual = await getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro, diasExcluidos);
+  const vendasAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, branchCodes, produtoFiltro, diasExcluidosAA);
   const vendasAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, branchCodes, produtoFiltro);
 
   const totalAtual = calcularTotais(vendasAtual);
@@ -1210,25 +1281,35 @@ export async function getProjecaoMes(branchCode?: number, produtoFiltro?: Produt
 }
 
 // Projeção por filiais
-export async function getProjecaoFiliais(produtoFiltro?: ProdutoFiltro) {
+export async function getProjecaoFiliais(produtoFiltro?: ProdutoFiltro, diasExcluidos?: DiasExcluidos) {
   const today = new Date();
-  const diaAtual = today.getDate();
 
   const startAtual = new Date(today.getFullYear(), today.getMonth(), 1);
   const endAtual = today;
 
+  // Dia corrido sem os dias desmarcados: o dia que nao entrou no faturamento tambem nao
+  // pode contar como dia percorrido, senao a caminhada sai inflada e a projecao baixa.
+  const diaAtual = Math.max(
+    today.getDate() - contarDiasExcluidosNoPeriodo(diasExcluidos, startAtual, endAtual),
+    1
+  );
+
   const startAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), 1);
-  const endAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), diaAtual);
+  const endAntParcial = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
 
   const ultimoDiaAntCompleto = new Date(today.getFullYear() - 1, today.getMonth() + 1, 0);
   const startAntCompleto = new Date(today.getFullYear() - 1, today.getMonth(), 1);
 
   const ultimoDia = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  const diasRestantes = Math.max(ultimoDia.getDate() - diaAtual, 0);
+  const diasRestantes = Math.max(ultimoDia.getDate() - today.getDate(), 0);
 
-  // Buscar dados de todas as filiais
-  const filiaisAtual = await getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro);
-  const filiaisAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, undefined, produtoFiltro);
+  // Os dois lados PARCIAIS perdem os mesmos dias (o do ano anterior espelhado), pra
+  // caminhada comparar periodos equivalentes. O MES COMPLETO do ano anterior fica
+  // inteiro de proposito: e o alvo da projecao - descontar dia dele faria a projecao
+  // mirar "mes menos um dia" em vez do mes cheio.
+  const diasExcluidosAA = espelharDiasExcluidosAnoAnterior(diasExcluidos);
+  const filiaisAtual = await getVendasPeriodo(startAtual, endAtual, undefined, produtoFiltro, diasExcluidos);
+  const filiaisAntParcial = await getVendasPeriodo(startAntParcial, endAntParcial, undefined, produtoFiltro, diasExcluidosAA);
   const filiaisAntCompleto = await getVendasPeriodo(startAntCompleto, ultimoDiaAntCompleto, undefined, produtoFiltro);
 
   // Criar dicionários para lookup

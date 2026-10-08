@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
+import { DiasExcluidosPicker } from '@/components/ui/DiasExcluidosPicker';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -85,6 +86,9 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [dataInicio, setDataInicio] = useState(getMonthStart());
   const [dataFim, setDataFim] = useState(getToday());
+  // Dias desmarcados dentro do intervalo (loja fechada, evento atipico). Saem da
+  // analise atual E do mesmo dia no ano anterior, pra comparacao nao ficar 29x30.
+  const [diasExcluidos, setDiasExcluidos] = useState<string[]>([]);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -140,16 +144,16 @@ export default function DashboardPage() {
       const granularidade = isMesUnico(dataInicio, dataFim) ? 'diario' : 'mensal';
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
-        vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro),
+        vendasApi.getPeriodo(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos),
         graficoVendasModo === 'semana'
-          ? vendasApi.getDiaSemana(dataInicio, dataFim, branchCodes, produtoFiltro)
+          ? vendasApi.getDiaSemana(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos)
           : granularidade === 'diario'
-            ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro)
-            : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro),
-        vendasApi.getProjecaoFiliais(produtoFiltro),
+            ? vendasApi.getDiarias(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos)
+            : vendasApi.getMensais(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos),
+        vendasApi.getComparativoAno(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos),
+        vendasApi.getVendedores(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos),
+        vendasApi.getTopProdutos(dataInicio, dataFim, branchCodes, produtoFiltro, diasExcluidos),
+        vendasApi.getProjecaoFiliais(produtoFiltro, diasExcluidos),
       ]);
 
       setVendas(vendasRes);
@@ -163,7 +167,7 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataInicio, dataFim, filiaisSelecionadas, produtoFiltro, graficoVendasModo]);
+  }, [dataInicio, dataFim, diasExcluidos, filiaisSelecionadas, produtoFiltro, graficoVendasModo]);
 
   useEffect(() => {
     carregarDados();
@@ -773,6 +777,14 @@ export default function DashboardPage() {
             onChange={(e) => setDataFim(e.target.value)}
             label="Fim"
             className="w-36"
+          />
+          <DiasExcluidosPicker
+            dataInicio={dataInicio}
+            dataFim={dataFim}
+            diasExcluidos={diasExcluidos}
+            onChange={setDiasExcluidos}
+            label="Dias"
+            className="w-52"
           />
           <FilialMultiSelect
             selected={filiaisSelecionadas}

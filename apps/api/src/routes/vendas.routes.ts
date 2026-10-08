@@ -39,6 +39,19 @@ function resolveProdutoFiltro(req: Request): ProdutoFiltro | undefined {
   return temAlgo ? filtro : undefined;
 }
 
+// Dias desmarcados dentro do intervalo, ex: ?diasExcluidos=2026-09-15,2026-09-20
+// (o usuario escolhe o range no calendario e tira dias avulsos de dentro dele).
+// Valida o formato aqui pra nao deixar string solta chegar na query.
+function resolveDiasExcluidos(req: Request): string[] | undefined {
+  const valor = req.query.diasExcluidos as string | undefined;
+  if (!valor) return undefined;
+  const dias = valor
+    .split(',')
+    .map((d) => d.trim())
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return dias.length > 0 ? dias : undefined;
+}
+
 // Vendas de hoje
 router.get('/vendas/hoje/:branchCode?', async (req: Request, res: Response) => {
   try {
@@ -92,11 +105,12 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro);
+    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     const total = vendasService.calcularTotais(filiais);
 
@@ -116,11 +130,12 @@ router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Reque
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCodes, produtoFiltro);
+    const dados = await vendasService.getVendasDiarias(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -137,11 +152,12 @@ router.get('/vendas/horarias/periodo/:start/:end/:branchCode?', async (req: Requ
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasHorarias(startDate, endDate, branchCodes, produtoFiltro);
+    const dados = await vendasService.getVendasHorarias(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -158,11 +174,12 @@ router.get('/vendas/dia-semana/periodo/:start/:end/:branchCode?', async (req: Re
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasDiaSemana(startDate, endDate, branchCodes, produtoFiltro);
+    const dados = await vendasService.getVendasDiaSemana(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -179,11 +196,12 @@ router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Reque
     const { start, end } = req.params;
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
 
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const dados = await vendasService.getVendasMensais(startDate, endDate, branchCodes, produtoFiltro);
+    const dados = await vendasService.getVendasMensais(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -225,9 +243,10 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
   try {
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes, 10, produtoFiltro);
+    const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes, 10, produtoFiltro, diasExcluidos);
 
     res.json({
       periodo: {
@@ -246,9 +265,10 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
   try {
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
     const { startDate, endDate } = resolvePeriodo(req);
 
-    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro);
+    const vendedores = await vendasService.getVendasVendedor(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
     const nomes = await vendasService.getVendedoresMap();
     // Meta do PERIODO, rateada pelos dias de cada mes que entraram no filtro - nao a
@@ -272,7 +292,12 @@ router.get('/vendedores/:branchCode?', async (req: Request, res: Response) => {
       endDate.getUTCFullYear() === hoje.getUTCFullYear() &&
       endDate.getUTCMonth() === hoje.getUTCMonth();
     const ultimoDiaMes = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() + 1, 0)).getUTCDate();
-    const diasDecorridos = Math.max(endDate.getUTCDate(), 1);
+    // Dia desmarcado nao entra no faturamento, entao tambem nao pode contar como dia
+    // decorrido - senao o ritmo diario sairia diluido e a projecao subestimada.
+    const diasDecorridos = Math.max(
+      endDate.getUTCDate() - vendasService.contarDiasExcluidosNoPeriodo(diasExcluidos, startDate, endDate),
+      1
+    );
 
     // Adicionar nomes e indicadores de meta/projecao.
     const vendedoresComNomes = vendedores.map(v => {
@@ -398,6 +423,9 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
   try {
     const branchCodes = resolveBranchCodes(req);
     const produtoFiltro = resolveProdutoFiltro(req);
+    const diasExcluidos = resolveDiasExcluidos(req);
+    // Mesmo dia, um ano antes: mantem a comparacao com a mesma quantidade de dias.
+    const diasExcluidosAA = vendasService.espelharDiasExcluidosAnoAnterior(diasExcluidos);
     const today = new Date();
     let startAtual: Date;
     let endAtual: Date;
@@ -440,10 +468,10 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
       clientesNovosMap,
       metasMap,
     ] = await Promise.all([
-      vendasService.getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro),
-      vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro),
-      vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro),
-      vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro),
+      vendasService.getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro, diasExcluidos),
+      vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro, diasExcluidosAA),
+      vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro, diasExcluidos),
+      vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro, diasExcluidos),
       vendasService.getMetasPorFilialPeriodo(startAtual, endAtual),
     ]);
 
@@ -453,9 +481,9 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     // ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
     if (!branchCodes || branchCodes.includes(2)) {
       const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
-        vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro),
-        vendasService.getVendasFabricaDividida(startAnterior, endAnterior, produtoFiltro),
-        vendasService.getDevolucoesFabricaDividida(startAtual, endAtual, produtoFiltro),
+        vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro, diasExcluidos),
+        vendasService.getVendasFabricaDividida(startAnterior, endAnterior, produtoFiltro, diasExcluidosAA),
+        vendasService.getDevolucoesFabricaDividida(startAtual, endAtual, produtoFiltro, diasExcluidos),
       ]);
       filiaisAtual = filiaisAtual.filter(f => f.branch_code !== 2).concat(fabricaDivididaAtual);
       filiaisAnterior = filiaisAnterior.filter(f => f.branch_code !== 2).concat(fabricaDivididaAnterior);
@@ -643,7 +671,7 @@ router.get('/projecao-mes/:branchCode?', async (req: Request, res: Response) => 
   try {
     const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
     const produtoFiltro = resolveProdutoFiltro(req);
-    const projecao = await vendasService.getProjecaoMes(branchCode, produtoFiltro);
+    const projecao = await vendasService.getProjecaoMes(branchCode, produtoFiltro, resolveDiasExcluidos(req));
     res.json(projecao);
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -654,7 +682,7 @@ router.get('/projecao-mes/:branchCode?', async (req: Request, res: Response) => 
 router.get('/projecao-filiais', async (req: Request, res: Response) => {
   try {
     const produtoFiltro = resolveProdutoFiltro(req);
-    const projecao = await vendasService.getProjecaoFiliais(produtoFiltro);
+    const projecao = await vendasService.getProjecaoFiliais(produtoFiltro, resolveDiasExcluidos(req));
     res.json(projecao);
   } catch (error) {
     res.status(500).json({ error: String(error) });

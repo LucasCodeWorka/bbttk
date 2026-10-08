@@ -86,40 +86,46 @@ function produtoFiltroQuery(filtro?: ProdutoFiltro): string {
     .join('&');
 }
 
+// Dias desmarcados dentro do intervalo (calendario do Dashboard de Vendas).
+function diasExcluidosQuery(dias?: string[]): string {
+  if (!dias || dias.length === 0) return '';
+  return `diasExcluidos=${dias.join(',')}`;
+}
+
 function joinQuery(...parts: string[]): string {
   const filtered = parts.filter(Boolean);
   return filtered.length > 0 ? `?${filtered.join('&')}` : '';
 }
 
 export const vendasApi = {
-  getPeriodo: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getPeriodo: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasResponse>(
-      `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getDiarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getDiarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendas/diarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getHorarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getHorarias: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/horarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendas/horarias/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getDiaSemana: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getDiaSemana: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/dia-semana/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendas/dia-semana/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getMensais: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getMensais: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasDiariasResponse>(
-      `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendas/mensais/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getVendedores: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getVendedores: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendedoresResponse>(
-      `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/vendedores${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
   getVendedoresLista: (soAtivos?: boolean) =>
@@ -130,23 +136,23 @@ export const vendasApi = {
       `/api/vendedores-por-filial/${branchCode}/${ano}/${mes}`
     ),
 
-  getTopProdutos: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getTopProdutos: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<TopProdutosResponse>(
-      `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/top-produtos${joinQuery(`start=${inicio}`, `end=${fim}`, branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getComparativoAno: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro) =>
+  getComparativoAno: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<ComparativoAnoResponse>(
-      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro))}`
+      `/api/comparativo-ano/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getProjecaoMes: (branchCode?: number, produtoFiltro?: ProdutoFiltro) =>
+  getProjecaoMes: (branchCode?: number, produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<ProjecaoMesResponse>(
-      `/api/projecao-mes${branchCode ? `/${branchCode}` : ''}${joinQuery(produtoFiltroQuery(produtoFiltro))}`
+      `/api/projecao-mes${branchCode ? `/${branchCode}` : ''}${joinQuery(produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
     ),
 
-  getProjecaoFiliais: (produtoFiltro?: ProdutoFiltro) =>
-    fetchApi<ProjecaoFiliaisResponse>(`/api/projecao-filiais${joinQuery(produtoFiltroQuery(produtoFiltro))}`),
+  getProjecaoFiliais: (produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
+    fetchApi<ProjecaoFiliaisResponse>(`/api/projecao-filiais${joinQuery(produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`),
 
   getClassificacoes: () =>
     fetchApi<{ dimensoes: ClassificacaoDimensao[] }>('/api/produtos/classificacoes'),
