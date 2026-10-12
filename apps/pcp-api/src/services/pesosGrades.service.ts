@@ -216,10 +216,14 @@ export async function getPesosGrades(filtro: PesosGradesFiltro): Promise<PesosGr
   const referencias: PesosGradesReferencia[] = identidade
     .map((r) => {
       const vendas = vendaPorRef.get(r.reference_code) || new Map<string, number>();
-      // Universo de tamanhos = grade cadastrada + qualquer tamanho que apareceu na
-      // venda mas nao esta mais no cadastro (produto descontinuado, por exemplo) -
-      // esconder uma venda real seria pior do que mostrar um tamanho a mais.
-      const universo = new Set<string>([...(gradePorRef.get(r.reference_code) || []), ...vendas.keys()]);
+      // Universo de tamanhos = grade fixa pedida pelo cliente + grade cadastrada +
+      // qualquer tamanho que apareceu na venda mas nao esta mais no cadastro. Assim
+      // UN/P/M/G/GG/2/4/6/8/10 aparecem sempre, mesmo com zero.
+      const universo = new Set<string>([
+        ...ORDEM_GRADES,
+        ...(gradePorRef.get(r.reference_code) || []),
+        ...vendas.keys(),
+      ]);
 
       const tamanhos: PesosGradesTamanho[] = [...universo]
         .map((tamanho) => {
