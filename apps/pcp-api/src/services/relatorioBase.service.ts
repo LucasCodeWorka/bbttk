@@ -419,6 +419,54 @@ function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql
 async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string, anosOffset = 0): Promise<EstoqueRow[]> {
   const dataCorte = dataLimiteSuperiorSql(dataPosicao, anosOffset);
 
+  if (anosOffset !== 0) {
+    return prisma.$queryRaw<EstoqueRow[]>`
+      WITH produto_unico AS (
+        SELECT DISTINCT ON (a.product_code)
+          a.product_code,
+          a.product_sku,
+          a.is_finished_product,
+          a.class_tipo,
+          a.class_categoria
+        FROM produto_analitico a
+        WHERE a.product_code IS NOT NULL
+          ${filtroProductSku(productSkus)}
+        ORDER BY a.product_code, CASE WHEN a.product_sku LIKE 'PRODUCT_CODE:%' THEN 1 ELSE 0 END, a.product_sku
+      ),
+      ultimo_saldo AS (
+        SELECT DISTINCT ON (s.product_code, s.branch_code, s.stock_code)
+          pu.product_sku,
+          s.product_code,
+          s.branch_code,
+          s.stock_code,
+          s.stock,
+          s.saldo_date
+        FROM stg_saldo_virtual_csv s
+        JOIN produto_unico pu ON pu.product_code = s.product_code
+        WHERE s.rejection_reason IS NULL
+          AND (
+            s.stock_code = 1
+            OR (s.branch_code = ${FABRICA_BRANCH_CODE} AND s.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
+          )
+          AND s.saldo_date < ${dataCorte} + INTERVAL '1 day'
+        ORDER BY s.product_code, s.branch_code, s.stock_code, s.saldo_date DESC
+      )
+      SELECT us.product_sku, us.product_code,
+             CASE
+               WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
+               WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
+               ELSE us.branch_code
+             END::int AS branch_code,
+             COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
+      FROM ultimo_saldo us
+      JOIN produto_unico a ON a.product_code = us.product_code
+      WHERE (a.is_finished_product = true OR a.is_finished_product IS NULL)
+        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      GROUP BY 1, 2, 3
+    `;
+  }
+
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)

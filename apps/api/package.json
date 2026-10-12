@@ -14,7 +14,14 @@
     "sync:custo-preco-sku-filial:dryrun": "tsx src/scripts/sync-custo-preco-sku-filial.ts --dry-run",
     "sync:em-producao": "tsx src/scripts/sync-em-producao.ts",
     "sync:em-producao:dryrun": "tsx src/scripts/sync-em-producao.ts --dry-run",
-    "sync:em-producao:dryrun-detalhado": "tsx src/scripts/sync-em-producao.ts --dry-run --detalhado"
+    "sync:em-producao:dryrun-detalhado": "tsx src/scripts/sync-em-producao.ts --dry-run --detalhado",
+    "import:saldos-historicos": "tsx src/scripts/import-saldos-historicos.ts --apply",
+    "import:saldos-historicos:dryrun": "tsx src/scripts/import-saldos-historicos.ts",
+    "sync:produtos-faltantes-saldos": "tsx src/scripts/sync-produtos-faltantes-saldos.ts --apply",
+    "sync:produtos-faltantes-saldos:dryrun": "tsx src/scripts/sync-produtos-faltantes-saldos.ts",
+    "recalc:estoque-aa-saldos": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply",
+    "recalc:estoque-aa-saldos:dryrun": "tsx src/scripts/recalcular-estoque-aa-saldos.ts",
+    "recalc:estoque-aa-saldos:latest": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply --latest"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

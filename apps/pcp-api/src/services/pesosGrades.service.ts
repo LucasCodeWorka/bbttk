@@ -201,14 +201,15 @@ export async function getPesosGrades(filtro: PesosGradesFiltro): Promise<PesosGr
   const vendaPorRef = new Map<string, Map<string, number>>();
   for (const row of vendaRows) {
     const mapa = vendaPorRef.get(row.reference_code) || new Map<string, number>();
-    mapa.set(row.size, decimalToNumber(row.quantidade));
+    const tamanho = normalizarTamanho(row.size);
+    mapa.set(tamanho, (mapa.get(tamanho) || 0) + decimalToNumber(row.quantidade));
     vendaPorRef.set(row.reference_code, mapa);
   }
 
   const gradePorRef = new Map<string, Set<string>>();
   for (const row of gradeRows) {
     const set = gradePorRef.get(row.reference_code) || new Set<string>();
-    set.add(row.size);
+    set.add(normalizarTamanho(row.size));
     gradePorRef.set(row.reference_code, set);
   }
 
