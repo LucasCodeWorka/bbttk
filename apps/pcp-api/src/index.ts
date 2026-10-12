@@ -18,6 +18,7 @@ import pesosGradesRoutes from './routes/pesosGrades.routes.js';
 import vendaDescontoRoutes from './routes/vendaDesconto.routes.js';
 import dashboardEstoqueRoutes from './routes/dashboardEstoque.routes.js';
 import agrupamentoCoresCoberturaRoutes from './routes/agrupamentoCoresCobertura.routes.js';
+import estoqueTransitoRoutes from './routes/estoqueTransito.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || process.env.PCP_API_PORT || 3002;
@@ -57,6 +58,7 @@ const HEAVY_REPORT_PATHS = new Set([
   '/venda-dia',
   '/venda-dia/acompanhamento',
   '/venda-desconto',
+  '/estoque-transito',
 ]);
 
 let heavyReportRunning = false;
@@ -134,6 +136,7 @@ app.use('/api/pcp', sugestaoProducaoRoutes);
 app.use('/api/pcp', pesosGradesRoutes);
 app.use('/api/pcp', vendaDescontoRoutes);
 app.use('/api/pcp', agrupamentoCoresCoberturaRoutes);
+app.use('/api/pcp', estoqueTransitoRoutes);
 
 async function start() {
   try {

@@ -765,3 +765,76 @@ model PcpRedistribuicaoJob {
   @@index([createdAt])
   @@map("pcp_redistribuicao_jobs")
 }
+
+// Foto materializada do relatorio "Estoque em Transito" (Fabrica -> loja), reconstruida
+// pelo script apps/api/src/scripts/rebuild-estoque-transito.ts (TRUNCATE + reinsert dos
+// ultimos 12 meses, idempotente). Uma linha por ITEM de documento de saida, guardando o
+// ciclo inteiro (recebido/parcial/aberto) e nao so o saldo pendente, porque auditoria
+// precisa enxergar o que foi baixado tambem.
+//
+// As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS; os models
+// abaixo existem pra declarar isso no schema e impedir que um `prisma db push` futuro
+// proponha dropa-las (ver secao de drift de banco no AGENTS.md). Os services leem por
+// $queryRaw, nao pelo client gerado.
+model PcpEstoqueTransito {
+  id                        BigInt    @id @default(autoincrement())
+  snapshotAt                DateTime  @default(now()) @map("snapshot_at") @db.Timestamp(6)
+  janelaInicio              DateTime  @map("janela_inicio") @db.Date
+  janelaFim                 DateTime  @map("janela_fim") @db.Date
+  statusTransito            String    @map("status_transito") @db.VarChar(20)
+  destinoBranchCode         Int       @map("destino_branch_code")
+  destinoBranchName         String?   @map("destino_branch_name") @db.VarChar(100)
+  saidaBranchCode           Int       @map("saida_branch_code")
+  saidaBranchName           String    @map("saida_branch_name") @db.VarChar(100)
+  saidaTransactionCode      Int       @map("saida_transaction_code")
+  saidaTransactionDate      DateTime  @map("saida_transaction_date") @db.Date
+  saidaOperationCode        Int       @map("saida_operation_code")
+  saidaOperationDescription String?   @map("saida_operation_description") @db.VarChar(255)
+  saidaItemIndex            Int       @map("saida_item_index")
+  productCode               Int       @map("product_code")
+  productSku                String?   @map("product_sku") @db.VarChar(50)
+  referenceCode             String?   @map("reference_code") @db.VarChar(100)
+  productName               String?   @map("product_name") @db.VarChar(255)
+  colorName                 String?   @map("color_name") @db.VarChar(100)
+  size                      String?   @db.VarChar(20)
+  colecao                   String?   @db.VarChar(255)
+  categoria                 String?   @db.VarChar(255)
+  linha                     String?   @db.VarChar(255)
+  genero                    String?   @db.VarChar(255)
+  statusProduto             String?   @map("status_produto") @db.VarChar(255)
+  quantidadeSaida           Decimal   @map("quantidade_saida") @db.Decimal(15, 4)
+  quantidadeRecebida        Decimal   @map("quantidade_recebida") @db.Decimal(15, 4)
+  quantidadeEmTransito      Decimal   @map("quantidade_em_transito") @db.Decimal(15, 4)
+  primeiraEntradaDate       DateTime? @map("primeira_entrada_date") @db.Date
+  ultimaEntradaDate         DateTime? @map("ultima_entrada_date") @db.Date
+  diasEmTransito            Int       @map("dias_em_transito")
+  updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
+
+  @@index([statusTransito], map: "idx_pcp_estoque_transito_status")
+  @@index([destinoBranchCode], map: "idx_pcp_estoque_transito_destino")
+  @@index([saidaTransactionDate], map: "idx_pcp_estoque_transito_saida_data")
+  @@index([productCode], map: "idx_pcp_estoque_transito_product")
+  @@index([referenceCode], map: "idx_pcp_estoque_transito_ref")
+  @@map("pcp_estoque_transito")
+}
+
+// Rastro de quais entradas (lado da loja) abateram qual item de saida. Serve pra
+// justificar a baixa de uma linha: como nao existe vinculo documento-a-documento no
+// TOTVS, a amarracao e FIFO por loja destino + product_code, e essa tabela e a prova
+// de qual casamento o calculo escolheu.
+model PcpEstoqueTransitoMovimento {
+  id                     BigInt   @id @default(autoincrement())
+  snapshotAt             DateTime @default(now()) @map("snapshot_at") @db.Timestamp(6)
+  saidaBranchCode        Int      @map("saida_branch_code")
+  saidaTransactionCode   Int      @map("saida_transaction_code")
+  saidaItemIndex         Int      @map("saida_item_index")
+  entradaBranchCode      Int      @map("entrada_branch_code")
+  entradaTransactionCode Int      @map("entrada_transaction_code")
+  entradaItemIndex       Int      @map("entrada_item_index")
+  entradaTransactionDate DateTime @map("entrada_transaction_date") @db.Date
+  entradaOperationCode   Int      @map("entrada_operation_code")
+  quantidadeBaixada      Decimal  @map("quantidade_baixada") @db.Decimal(15, 4)
+
+  @@index([saidaBranchCode, saidaTransactionCode, saidaItemIndex], map: "idx_pcp_estoque_transito_mov_saida")
+  @@map("pcp_estoque_transito_movimentos")
+}

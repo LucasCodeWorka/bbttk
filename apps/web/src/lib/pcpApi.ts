@@ -1705,3 +1705,134 @@ export interface AgrupamentoCoberturaResponse {
 export const agrupamentoCoberturaApi = {
   getCobertura: (token: string) => fetchPcpApi<AgrupamentoCoberturaResponse>('/api/pcp/agrupamento-cores/cobertura', { token }),
 };
+
+// ---- Estoque em Transito (materializado por rebuild-estoque-transito) ----
+
+export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
+
+export interface EstoqueTransitoFiltro {
+  status?: EstoqueTransitoStatus[];
+  branches?: number[];
+  categoria?: string[];
+  linha?: string[];
+  genero?: string[];
+  statusProduto?: string[];
+  search?: string;
+  idadeMin?: number;
+  idadeMax?: number;
+  apenasPendentes?: boolean;
+}
+
+export interface EstoqueTransitoRow {
+  id: number;
+  statusTransito: EstoqueTransitoStatus;
+  destinoBranchCode: number;
+  destinoBranchName: string;
+  saidaTransactionCode: number;
+  saidaTransactionDate: string;
+  saidaOperationCode: number;
+  saidaOperationDescription: string | null;
+  productCode: number;
+  productSku: string | null;
+  referenceCode: string | null;
+  productName: string | null;
+  colorName: string | null;
+  size: string | null;
+  colecao: string | null;
+  categoria: string | null;
+  linha: string | null;
+  genero: string | null;
+  statusProduto: string | null;
+  quantidadeSaida: number;
+  quantidadeRecebida: number;
+  quantidadeEmTransito: number;
+  primeiraEntradaDate: string | null;
+  ultimaEntradaDate: string | null;
+  diasEmTransito: number;
+}
+
+export interface EstoqueTransitoKpis {
+  documentos: number;
+  lojas: number;
+  linhas: number;
+  pecasSaida: number;
+  pecasRecebidas: number;
+  pecasEmTransito: number;
+  pendencias: number;
+  parciais: number;
+  recebidas: number;
+  pendenciasAntigas90d: number;
+  pecasLojasFechadas: number;
+}
+
+export interface EstoqueTransitoIdadeBucket {
+  label: string;
+  min: number;
+  max: number | null;
+  pecas: number;
+  linhas: number;
+}
+
+export interface EstoqueTransitoPorLoja {
+  branchCode: number;
+  branchName: string;
+  lojaFechada: boolean;
+  documentos: number;
+  linhas: number;
+  pecasEmTransito: number;
+  maisAntiga: string | null;
+  maisRecente: string | null;
+}
+
+export interface EstoqueTransitoPorStatus {
+  status: EstoqueTransitoStatus;
+  label: string;
+  linhas: number;
+  pecas: number;
+}
+
+export interface EstoqueTransitoCobertura {
+  ultimaSaida: string | null;
+  defasagemDias: number | null;
+  incompleta: boolean;
+}
+
+export interface EstoqueTransitoResponse {
+  atualizadoEm: string | null;
+  janela: { inicio: string | null; fim: string | null };
+  cobertura: EstoqueTransitoCobertura;
+  /** true quando o recorte tem mais linhas do que o LIMIT devolve (KPIs seguem completos). */
+  linhasTruncadas: boolean;
+  limiteLinhas: number;
+  kpis: EstoqueTransitoKpis;
+  idadeBuckets: EstoqueTransitoIdadeBucket[];
+  porLoja: EstoqueTransitoPorLoja[];
+  porStatus: EstoqueTransitoPorStatus[];
+  rows: EstoqueTransitoRow[];
+}
+
+export interface EstoqueTransitoFiltrosResponse {
+  lojas: PcpLojaFiltro[];
+  classificacoes: PcpClassificacaoDimensao[];
+}
+
+export const estoqueTransitoApi = {
+  getEstoqueTransito: (token: string, filtro: EstoqueTransitoFiltro = {}) => {
+    const params = new URLSearchParams();
+    appendList(params, 'status', filtro.status);
+    appendList(params, 'branches', filtro.branches);
+    appendList(params, 'categoria', filtro.categoria);
+    appendList(params, 'linha', filtro.linha);
+    appendList(params, 'genero', filtro.genero);
+    appendList(params, 'statusProduto', filtro.statusProduto);
+    if (filtro.search) params.set('search', filtro.search);
+    if (filtro.idadeMin !== undefined) params.set('idadeMin', String(filtro.idadeMin));
+    if (filtro.idadeMax !== undefined) params.set('idadeMax', String(filtro.idadeMax));
+    if (filtro.apenasPendentes !== undefined) params.set('apenasPendentes', String(filtro.apenasPendentes));
+    const query = params.toString();
+    return fetchPcpApi<EstoqueTransitoResponse>(`/api/pcp/estoque-transito${query ? `?${query}` : ''}`, { token });
+  },
+
+  getFiltros: (token: string) =>
+    fetchPcpApi<EstoqueTransitoFiltrosResponse>('/api/pcp/estoque-transito/filtros', { token }),
+};

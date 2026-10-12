@@ -180,7 +180,15 @@ premissas erradas, mas achou um caminho real:
     **entrada = `operations_type='E' AND operation_mode='2'`** (27 operações). Os códigos
     510/1510/512 e 3/1003/5 citados acima caem todos nesses dois pares.
 
-**Por que não foi construído mesmo assim**: medindo o saldo pendente (saída − entrada)
+> ⚠️ **REVERTIDO em 12/10/2026 — o relatório FOI construído** (`/relatorios/estoque-transito`).
+> O usuário pediu explicitamente ("materializa as pendências dos últimos 12M e cria um
+> relatório de EM TRÂNSITO, com autonomia de design pra auditoria"), aceitando que não
+> serve pra previsão. A análise abaixo continua **toda válida** e é exatamente o que a
+> tela avisa na cara do usuário — ver a seção "Sessão 12/10/2026" no fim deste arquivo.
+> Não "desconstruir" o relatório com base no parágrafo seguinte: ele é o motivo dos
+> avisos da tela, não um argumento pra remover a tela.
+
+**Por que não foi construído mesmo assim** (análise de 31/08/2026, mantida): medindo o saldo pendente (saída − entrada)
 por SKU/destino, **86% do total (7.129 de 8.266 peças) vem de lojas JÁ FECHADAS**
 (Terrazo Shopping sozinha = 5.586, Mossoró = 1.380, Mart Moda = 93, Via Sul = 70) —
 mercadoria que saiu antes de a loja fechar e cujo documento de entrada nunca foi
@@ -974,3 +982,117 @@ esse merge com dado real — `npx prisma db pull`/`generate` não rodou, e o fix
 (prova que o código compila e os tipos batem), mas isso **não** substitui testar as
 telas reescritas (Raio X, Venda e Desconto, Acompanhamento por Linha) com dado real —
 fazer isso assim que o banco voltar, antes de considerar essa entrega fechada.
+
+## Sessão 12/10/2026 — "Estoque em Trânsito" construído (reverte a decisão de 31/08) e a lacuna do ETL medida de novo
+
+Entrega: `/relatorios/estoque-transito` (menu Relatórios), um relatório de **auditoria de
+transferência Fábrica → loja**, não de previsão de estoque. Três camadas:
+
+1. **`apps/api/src/scripts/rebuild-estoque-transito.ts`** — materializa os últimos 12 meses
+   (dry-run por padrão, `--apply` grava, `--meses=N` muda a janela). Idempotente:
+   `TRUNCATE` + reinsert, rodar de novo substitui a foto inteira sem duplicar linha.
+   Scripts npm: `rebuild:estoque-transito` / `rebuild:estoque-transito:dryrun`.
+2. **`apps/pcp-api/src/services/estoqueTransito.service.ts`** + rota `/api/pcp/estoque-transito`
+   (e `/filtros`). Só leitura da foto materializada.
+3. **`apps/web/src/app/(dashboard)/relatorios/estoque-transito/page.tsx`** + `estoqueTransitoApi`
+   em `pcpApi.ts`.
+
+### Por que materializar em vez de calcular ao vivo
+
+São ~40 mil linhas de saída × ~39 mil de entrada pra casar, e o casamento é feito **em
+memória no Node** (fila FIFO), não em SQL — não caberia no timeout de uma requisição.
+Daí a foto: duas tabelas novas, `pcp_estoque_transito` (uma linha por ITEM de documento
+de saída) e `pcp_estoque_transito_movimentos` (qual entrada abateu qual saída e com
+quanto — é a prova de qual casamento o cálculo escolheu, já que o TOTVS não tem vínculo
+documento-a-documento).
+
+**A tabela guarda o ciclo inteiro, não só o saldo aberto** (`status_transito` =
+`recebido` / `parcial` / `em_transito`): auditoria precisa poder conferir que a baixa de
+um documento aconteceu, não só ver o que falta.
+
+⚠️ **As tabelas são criadas pelo próprio script via `CREATE TABLE IF NOT EXISTS`**, mas
+estão declaradas em `schema.prisma` (models `PcpEstoqueTransito` e
+`PcpEstoqueTransitoMovimento`) **de propósito, só pra um `db push` futuro não propor
+dropá-las** — é exatamente o cenário de drift descrito na seção de banco acima. Os
+services leem por `$queryRaw`, não pelo client gerado; não "melhorar" isso trocando por
+`prisma.pcpEstoqueTransito.findMany()` sem medir.
+
+### Como o casamento funciona (e por que FIFO)
+
+- Saída: `operation_code IN (1510, 556)`, `branch_code = 2` (Fábrica), `status = 4`.
+- Entrada: `operation_code IN (1003, 3)`, `customer_code = 110000002` (a Fábrica como
+  contraparte), `status = 4`.
+- A filial contraparte vem por `JOIN branches b ON b.person_code = t.customer_code` —
+  mais limpo que a aritmética `customer_code - 110000000` documentada acima, e dá o mesmo
+  resultado.
+- Fila por `(loja destino, product_code)`: a entrada mais antiga abate a saída mais
+  antiga, nunca uma entrada anterior à saída. **Não existe vínculo real** — FIFO é a
+  melhor aproximação disponível, e é por isso que a tela diz isso explicitamente em vez
+  de apresentar o número como fato.
+
+### ⚠️ Agregação é SQL, linhas é LIMIT — não misturar os dois
+
+A primeira versão do service somava KPIs/distribuições **em memória sobre as linhas já
+limitadas** (`LIMIT 2000`). Com `apenasPendentes=false` o recorte estoura o limite e os
+totais passavam a descrever só as 2000 primeiras linhas: dava `pecasSaida = 4.023` quando
+o real era **99.451**. Corrigido — toda agregação (kpis, faixas de idade, por loja, por
+status) é `$queryRaw` com o mesmo `filtroSql` sobre o conjunto **inteiro**; só `rows` leva
+`LIMIT`. A resposta expõe `linhasTruncadas`/`limiteLinhas` e a tela avisa que o Excel
+exporta só o que está na tabela. **Se adicionar métrica nova, agregue em SQL** — somar
+`response.rows` reintroduz o mesmo bug silencioso.
+
+### Primeira apuração (12/10/2026, janela 12/10/2025 → 12/10/2026)
+
+| | |
+|---|---|
+| Peças que saíram | 99.451 (40.386 linhas, 1.244 documentos) |
+| Peças baixadas | 96.789 |
+| **Peças abertas** | **2.662** (1.505 linhas, 127 documentos, 13 lojas) |
+
+Dois recortes que decidem a leitura:
+
+- **100% das pendências têm 91+ dias.** As faixas 0-7/8-15/16-30/31-60/61-90 estão todas
+  **zeradas** — não existe um único caso de "saiu há poucos dias, ainda não chegou". Isso
+  confirma, com dado novo, a conclusão de 31/08.
+- **946 peças (36%) são da Terrazo Shopping, loja fechada** (`LOJAS_VAREJO_FECHADAS`).
+  A tela marca `FECHADA` no painel por loja e tem KPI dedicado (`pecasLojasFechadas`) —
+  sem isso, 36% do total seria lido como pendência acionável.
+
+### 🚨 A lacuna do ETL (corte de 25/06/2026) agora é visível na própria tela
+
+Confirmada de novo e com data exata: **a saída de transferência mais recente com item
+gravado é de 24/06/2026** — 110 dias de defasagem na data desta sessão. Julho a outubro
+não têm nenhum item. É o mesmo bug da seção "🚨 ETL parou de gravar ITENS" acima.
+
+Em vez de deixar isso num comentário de código, o relatório **se autodenuncia**: o service
+devolve `cobertura.ultimaSaida` / `defasagemDias` / `incompleta` (comparando
+`MAX(saida_transaction_date)` com o fim da janela, tolerância de 15 dias em
+`DIAS_TOLERANCIA_COBERTURA`) e a tela mostra um aviso vermelho explicando que o relatório
+**não** mostra trânsito atual. **O aviso some sozinho quando o ETL voltar a gravar item**
+— não é texto fixo, não precisa ser removido à mão depois.
+
+Esse padrão (derivar o aviso do próprio dado em vez de hardcodar) vale a pena repetir em
+qualquer relatório que dependa de uma fonte que pode ficar defasada.
+
+### Observações menores que contradizem seções antigas deste arquivo
+
+- Rotas de `pcp-api` **não** declaram `authMiddleware`/`moduleAccess` individualmente — a
+  proteção é no mount:
+  `app.use('/api/pcp', authMiddleware, moduleAccess('pcp_servico'), monitorPcpRequest)`.
+  A seção "Módulos e permissões" sugere o contrário; na prática nenhum arquivo de rota do
+  `pcp-api` repete isso, e não precisa.
+- `HEAVY_REPORT_PATHS` casa `req.path` **relativo ao mount**, então a entrada é
+  `/estoque-transito`, não `/api/pcp/estoque-transito`.
+- **O remote `limes` não existe mais.** Hoje há só `origin` →
+  `github.com/limes-ia/bebetenkite` (o antigo `origin` de `LucasCodeWorka/bbttk` também
+  não está mais configurado). A seção "Git — múltiplos remotes" está desatualizada nesse
+  ponto: não tentar `git fetch limes`. `main` local e `origin/teste` estavam no mesmo
+  commit no início desta sessão.
+- `apps/api/scripts/mint-test-token.ts` foi **recriado** (tinha se perdido; continua não
+  commitado, por decisão antiga). Payload esperado por
+  `pcp-api/src/middleware/auth.middleware.ts`:
+  `{ userId, email, role, branchCodes, moduleAccess }`.
+- ⚠️ **Nunca editar este arquivo com `Get-Content -Raw` + `Set-Content` no PowerShell 5.1**
+  — ele lê UTF-8 como ANSI e corrompe todo acento do arquivo (aconteceu nesta sessão,
+  revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
+  `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.

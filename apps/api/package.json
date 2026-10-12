@@ -21,7 +21,9 @@
     "sync:produtos-faltantes-saldos:dryrun": "tsx src/scripts/sync-produtos-faltantes-saldos.ts",
     "recalc:estoque-aa-saldos": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply",
     "recalc:estoque-aa-saldos:dryrun": "tsx src/scripts/recalcular-estoque-aa-saldos.ts",
-    "recalc:estoque-aa-saldos:latest": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply --latest"
+    "recalc:estoque-aa-saldos:latest": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply --latest",
+    "rebuild:estoque-transito": "tsx src/scripts/rebuild-estoque-transito.ts --apply",
+    "rebuild:estoque-transito:dryrun": "tsx src/scripts/rebuild-estoque-transito.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
