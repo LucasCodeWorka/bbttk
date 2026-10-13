@@ -5,10 +5,11 @@ import { LOJAS_VAREJO_FECHADAS } from '../config/constants.js';
 
 const LOJAS_FECHADAS = new Set<number>(LOJAS_VAREJO_FECHADAS);
 
-// Acima disso, a ausencia de saida recente nao e "nao houve transferencia", e sinal de
-// que o ETL parou de gravar item pra operacao de transferencia (ver AGENTS.md, secao do
-// corte de 25/06/2026). O relatorio avisa sozinho em vez de deixar o auditor concluir
-// que a rede parou de transferir mercadoria.
+// Defasagem tolerada entre a saida mais recente materializada e o fim da janela. Acima
+// disso o relatorio avisa sozinho que a foto esta velha - seja porque a materializacao
+// nao roda ha dias, seja porque o ETL parou de trazer item de transferencia (ja
+// aconteceu entre 25/06 e 13/10/2026). Sem isso o auditor leria a ausencia de saida
+// recente como "a rede parou de transferir mercadoria", que e a conclusao errada.
 const DIAS_TOLERANCIA_COBERTURA = 15;
 
 function decimalToNumber(value: Decimal | number | null | undefined): number {
@@ -26,6 +27,11 @@ function toDateString(value: Date | null | undefined): string | null {
 
 export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
 
+// Como a baixa da linha foi determinada. 'vinculo' = o TOTVS aponta o documento de
+// entrada; 'fifo' = aproximacao por fila (so onde nao ha vinculo); 'misto' = os dois
+// contribuiram; null = nada foi baixado.
+export type EstoqueTransitoMetodo = 'vinculo' | 'fifo' | 'misto';
+
 export interface EstoqueTransitoFiltro {
   status?: EstoqueTransitoStatus[];
   branches?: number[];
@@ -37,11 +43,16 @@ export interface EstoqueTransitoFiltro {
   idadeMin?: number;
   idadeMax?: number;
   apenasPendentes?: boolean;
+  /** 'vinculo' = so o que o ERP confirma documento a documento; 'fifo' = so o aproximado. */
+  confiabilidade?: 'vinculo' | 'fifo';
 }
 
 export interface EstoqueTransitoRow {
   id: number;
   statusTransito: EstoqueTransitoStatus;
+  metodoBaixa: EstoqueTransitoMetodo | null;
+  temVinculo: boolean;
+  entradaDocs: string | null;
   destinoBranchCode: number;
   destinoBranchName: string;
   saidaTransactionCode: number;
@@ -92,6 +103,18 @@ export interface EstoqueTransitoResponse {
     recebidas: number;
     pendenciasAntigas90d: number;
     pecasLojasFechadas: number;
+    /** Pendencia que o ERP confirma documento a documento - e a que vale cobrar. */
+    pecasAbertasComVinculo: number;
+    /** Pendencia apurada por aproximacao FIFO, sem vinculo no ERP. */
+    pecasAbertasSemVinculo: number;
+  };
+  // Quanto do recorte e fato (vinculo do TOTVS) e quanto e aproximacao (FIFO).
+  confiabilidade: {
+    linhasComVinculo: number;
+    linhasSemVinculo: number;
+    pecasComVinculo: number;
+    pecasSemVinculo: number;
+    primeiraSaidaComVinculo: string | null;
   };
   idadeBuckets: Array<{ label: string; min: number; max: number | null; pecas: number; linhas: number }>;
   porLoja: Array<{ branchCode: number; branchName: string; lojaFechada: boolean; documentos: number; linhas: number; pecasEmTransito: number; maisAntiga: string | null; maisRecente: string | null }>;
@@ -107,6 +130,9 @@ export interface EstoqueTransitoFiltrosResponse {
 type RawRow = {
   id: bigint;
   status_transito: EstoqueTransitoStatus;
+  metodo_baixa: EstoqueTransitoMetodo | null;
+  tem_vinculo: boolean;
+  entrada_docs: string | null;
   destino_branch_code: number;
   destino_branch_name: string | null;
   saida_transaction_code: number;
@@ -147,10 +173,13 @@ function buildFiltro(filtro: EstoqueTransitoFiltro): Prisma.Sql {
   if (filtro.statusProduto?.length) condicoes.push(Prisma.sql`TRIM(t.status_produto) IN (${Prisma.join(filtro.statusProduto)})`);
   if (Number.isFinite(filtro.idadeMin)) condicoes.push(Prisma.sql`t.dias_em_transito >= ${filtro.idadeMin}`);
   if (Number.isFinite(filtro.idadeMax)) condicoes.push(Prisma.sql`t.dias_em_transito <= ${filtro.idadeMax}`);
+  if (filtro.confiabilidade === 'vinculo') condicoes.push(Prisma.sql`t.tem_vinculo = true`);
+  if (filtro.confiabilidade === 'fifo') condicoes.push(Prisma.sql`t.tem_vinculo = false`);
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
     condicoes.push(Prisma.sql`(
       t.saida_transaction_code::text ILIKE ${termo}
+      OR t.entrada_docs ILIKE ${termo}
       OR t.product_code::text ILIKE ${termo}
       OR t.product_sku ILIKE ${termo}
       OR t.reference_code ILIKE ${termo}
@@ -172,6 +201,9 @@ function mapRow(row: RawRow): EstoqueTransitoRow {
   return {
     id: Number(row.id),
     statusTransito: row.status_transito,
+    metodoBaixa: row.metodo_baixa,
+    temVinculo: row.tem_vinculo,
+    entradaDocs: row.entrada_docs,
     destinoBranchCode: row.destino_branch_code,
     destinoBranchName: row.destino_branch_name || `Filial ${row.destino_branch_code}`,
     saidaTransactionCode: row.saida_transaction_code,
@@ -238,13 +270,17 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       LIMIT ${LIMITE_LINHAS}
     `,
 
-    prisma.$queryRaw<Array<{ atualizado_em: Date | null; janela_inicio: Date | null; janela_fim: Date | null; ultima_saida: Date | null; defasagem_dias: number | null }>>`
+    // Sem filtro de proposito: descreve a FOTO inteira, nao o recorte. `primeira_saida_com_vinculo`
+    // e a data a partir da qual o TOTVS passou a gravar a amarracao - afirmar isso a partir
+    // do recorte filtrado daria uma data que muda conforme o filtro do usuario.
+    prisma.$queryRaw<Array<{ atualizado_em: Date | null; janela_inicio: Date | null; janela_fim: Date | null; ultima_saida: Date | null; defasagem_dias: number | null; primeira_saida_com_vinculo: Date | null }>>`
       SELECT
         MAX(snapshot_at) AS atualizado_em,
         MIN(janela_inicio) AS janela_inicio,
         MAX(janela_fim) AS janela_fim,
         MAX(saida_transaction_date) AS ultima_saida,
-        (MAX(janela_fim) - MAX(saida_transaction_date))::int AS defasagem_dias
+        (MAX(janela_fim) - MAX(saida_transaction_date))::int AS defasagem_dias,
+        MIN(saida_transaction_date) FILTER (WHERE tem_vinculo) AS primeira_saida_com_vinculo
       FROM pcp_estoque_transito
     `,
 
@@ -260,6 +296,12 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       recebidas: number;
       pendencias_antigas_90d: Decimal | null;
       pecas_lojas_fechadas: Decimal | null;
+      pecas_abertas_com_vinculo: Decimal | null;
+      pecas_abertas_sem_vinculo: Decimal | null;
+      linhas_com_vinculo: number;
+      linhas_sem_vinculo: number;
+      pecas_com_vinculo: Decimal | null;
+      pecas_sem_vinculo: Decimal | null;
     }>>`
       SELECT
         COUNT(DISTINCT t.saida_transaction_code)::int AS documentos,
@@ -272,7 +314,13 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
         COUNT(*) FILTER (WHERE t.status_transito = 'parcial')::int AS parciais,
         COUNT(*) FILTER (WHERE t.status_transito = 'recebido')::int AS recebidas,
         COALESCE(SUM(t.quantidade_em_transito) FILTER (WHERE t.quantidade_em_transito > 0 AND t.dias_em_transito > 90), 0) AS pendencias_antigas_90d,
-        COALESCE(SUM(t.quantidade_em_transito) FILTER (WHERE t.destino_branch_code IN (${lojasFechadasSql})), 0) AS pecas_lojas_fechadas
+        COALESCE(SUM(t.quantidade_em_transito) FILTER (WHERE t.destino_branch_code IN (${lojasFechadasSql})), 0) AS pecas_lojas_fechadas,
+        COALESCE(SUM(t.quantidade_em_transito) FILTER (WHERE t.tem_vinculo), 0) AS pecas_abertas_com_vinculo,
+        COALESCE(SUM(t.quantidade_em_transito) FILTER (WHERE NOT t.tem_vinculo), 0) AS pecas_abertas_sem_vinculo,
+        COUNT(*) FILTER (WHERE t.tem_vinculo)::int AS linhas_com_vinculo,
+        COUNT(*) FILTER (WHERE NOT t.tem_vinculo)::int AS linhas_sem_vinculo,
+        COALESCE(SUM(t.quantidade_saida) FILTER (WHERE t.tem_vinculo), 0) AS pecas_com_vinculo,
+        COALESCE(SUM(t.quantidade_saida) FILTER (WHERE NOT t.tem_vinculo), 0) AS pecas_sem_vinculo
       FROM pcp_estoque_transito t
       ${filtroSql}
     `,
@@ -342,6 +390,15 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       recebidas: kpisRow?.recebidas ?? 0,
       pendenciasAntigas90d: round(decimalToNumber(kpisRow?.pendencias_antigas_90d), 0),
       pecasLojasFechadas: round(decimalToNumber(kpisRow?.pecas_lojas_fechadas), 0),
+      pecasAbertasComVinculo: round(decimalToNumber(kpisRow?.pecas_abertas_com_vinculo), 0),
+      pecasAbertasSemVinculo: round(decimalToNumber(kpisRow?.pecas_abertas_sem_vinculo), 0),
+    },
+    confiabilidade: {
+      linhasComVinculo: kpisRow?.linhas_com_vinculo ?? 0,
+      linhasSemVinculo: kpisRow?.linhas_sem_vinculo ?? 0,
+      pecasComVinculo: round(decimalToNumber(kpisRow?.pecas_com_vinculo), 0),
+      pecasSemVinculo: round(decimalToNumber(kpisRow?.pecas_sem_vinculo), 0),
+      primeiraSaidaComVinculo: toDateString(meta[0]?.primeira_saida_com_vinculo),
     },
     idadeBuckets: FAIXAS_IDADE.map((faixa, indice) => {
       const encontrada = faixasPorIndice.get(indice);

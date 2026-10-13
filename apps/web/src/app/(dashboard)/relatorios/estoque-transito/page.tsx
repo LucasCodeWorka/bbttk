@@ -27,6 +27,8 @@ type SortKey = keyof EstoqueTransitoRow;
 // quanto -> quando baixou), nao a ordem alfabetica.
 const COLUNAS: Array<{ key: SortKey; label: string; align?: 'left' | 'right' | 'center'; type?: 'text' | 'number'; width: number }> = [
   { key: 'statusTransito', label: 'STATUS', width: 13, type: 'text' },
+  { key: 'metodoBaixa', label: 'ORIGEM DA BAIXA', width: 16, type: 'text' },
+  { key: 'entradaDocs', label: 'DOC. ENTRADA', width: 16, type: 'text' },
   { key: 'destinoBranchName', label: 'LOJA DESTINO', width: 22, type: 'text' },
   { key: 'saidaTransactionCode', label: 'DOC. SAIDA', align: 'right', width: 12, type: 'text' },
   { key: 'saidaTransactionDate', label: 'DT. SAIDA', align: 'center', width: 12, type: 'text' },
@@ -64,6 +66,20 @@ const STATUS_LABEL: Record<EstoqueTransitoStatus, string> = {
 };
 
 const STATUS_OPCOES: EstoqueTransitoStatus[] = ['em_transito', 'parcial', 'recebido'];
+
+// A origem da baixa nao e decoracao: ela diz se a linha e fato do ERP ou aproximacao
+// nossa. Rotulo escrito sempre, nunca so a cor.
+const METODO_BADGE: Record<string, string> = {
+  vinculo: 'bg-green-100 text-green-700',
+  fifo: 'bg-gray-100 text-gray-600',
+  misto: 'bg-blue-100 text-blue-700',
+};
+
+const METODO_LABEL: Record<string, string> = {
+  vinculo: 'Vinculo TOTVS',
+  fifo: 'Aproximado',
+  misto: 'Misto',
+};
 
 const DIMENSOES = ['categoria', 'linha', 'genero', 'statusProduto'] as const;
 type DimensaoChave = (typeof DIMENSOES)[number];
@@ -130,6 +146,7 @@ export default function EstoqueTransitoPage() {
   const [idadeMin, setIdadeMin] = useState('');
   const [idadeMax, setIdadeMax] = useState('');
   const [apenasPendentes, setApenasPendentes] = useState(true);
+  const [confiabilidade, setConfiabilidade] = useState<'todas' | 'vinculo' | 'fifo'>('todas');
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<EstoqueTransitoResponse | null>(null);
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<EstoqueTransitoFiltrosResponse | null>(null);
@@ -165,6 +182,7 @@ export default function EstoqueTransitoPage() {
         idadeMin: idadeMin.trim() ? Number(idadeMin) : undefined,
         idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
         apenasPendentes,
+        confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
       });
       setData(response);
     } catch (error) {
@@ -173,7 +191,7 @@ export default function EstoqueTransitoPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, showToast]);
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, showToast]);
 
   useEffect(() => {
     carregarDados();
@@ -272,6 +290,7 @@ export default function EstoqueTransitoPage() {
     setIdadeMin('');
     setIdadeMax('');
     setApenasPendentes(true);
+    setConfiabilidade('todas');
   }
 
   function exportarExcel() {
@@ -281,7 +300,17 @@ export default function EstoqueTransitoPage() {
       header: coluna.label,
       width: coluna.width,
       type: coluna.type,
-      getValue: coluna.key === 'statusTransito' ? (row) => STATUS_LABEL[row.statusTransito as EstoqueTransitoStatus] : undefined,
+      getValue:
+        coluna.key === 'statusTransito'
+          ? (row) => STATUS_LABEL[row.statusTransito as EstoqueTransitoStatus]
+          : coluna.key === 'metodoBaixa'
+            ? (row) =>
+                row.metodoBaixa
+                  ? METODO_LABEL[row.metodoBaixa as string]
+                  : row.temVinculo
+                    ? 'Vinculo, sem baixa'
+                    : 'Sem baixa'
+            : undefined,
     }));
     exportToExcel({
       filename: `Estoque_Em_Transito_${new Date().toISOString().slice(0, 10)}`,
@@ -353,9 +382,22 @@ export default function EstoqueTransitoPage() {
       <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-xs text-yellow-900">
         <p className="font-semibold">Como ler este relatorio</p>
         <p className="mt-1">
-          Nao existe vinculo documento-a-documento de transferencia no TOTVS. A baixa e calculada por fila FIFO por loja destino + produto, entao uma linha
-          pendente significa <strong>saida sem entrada equivalente registrada</strong> — pode ser mercadoria em transito de verdade ou atraso de lancamento.
-          Pendencia com idade alta tende a ser atraso de lancamento/residuo contabil, nao caminhao na estrada: use a faixa de idade pra separar os dois casos.
+          A baixa de cada linha vem de uma de duas fontes, e a coluna <strong>ORIGEM DA BAIXA</strong> diz qual:
+        </p>
+        <ul className="mt-1 ml-4 list-disc space-y-0.5">
+          <li>
+            <strong>Vinculo TOTVS</strong> — o proprio ERP aponta qual documento de entrada recebeu esta saida. E fato, e a coluna DOC. ENTRADA mostra o
+            documento pra conferir. Disponivel para saidas a partir de{' '}
+            {data?.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '25/06/2026'}.
+          </li>
+          <li>
+            <strong>Aproximado</strong> — antes dessa data o TOTVS nao gravava o vinculo, entao a baixa e estimada por fila FIFO em loja destino + produto.
+            Serve pra dimensionar, nao pra afirmar que um documento especifico ficou em aberto.
+          </li>
+        </ul>
+        <p className="mt-1">
+          Uma linha pendente significa <strong>saida sem entrada equivalente registrada</strong>. Pendencia com vinculo e cobravel; pendencia so aproximada e
+          indicio. Idade alta tende a ser atraso de lancamento/residuo contabil, nao caminhao na estrada.
         </p>
         {data && (
           <p className="mt-2">
@@ -428,10 +470,43 @@ export default function EstoqueTransitoPage() {
             Mostrar so o que ainda tem saldo aberto
           </label>
         </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+          <span className="text-sm font-medium text-gray-700">Confiabilidade:</span>
+          {(
+            [
+              { valor: 'todas', label: 'Tudo' },
+              { valor: 'vinculo', label: 'So com vinculo do TOTVS' },
+              { valor: 'fifo', label: 'So aproximado (FIFO)' },
+            ] as const
+          ).map((opcao) => (
+            <button
+              key={opcao.valor}
+              type="button"
+              onClick={() => setConfiabilidade(opcao.valor)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                confiabilidade === opcao.valor
+                  ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+              )}
+            >
+              {opcao.label}
+            </button>
+          ))}
+        </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
         <KPICard title="Pecas abertas" value={formatNumber(data?.kpis.pecasEmTransito || 0)} color="red" valueSize="sm" isLoading={isLoading} />
+        <KPICard
+          title="Abertas c/ vinculo"
+          value={formatNumber(data?.kpis.pecasAbertasComVinculo || 0)}
+          subtitle="confirmado pelo ERP"
+          color="red"
+          valueSize="sm"
+          isLoading={isLoading}
+        />
         <KPICard title="Abertas +90 dias" value={formatNumber(data?.kpis.pendenciasAntigas90d || 0)} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard
           title="Em loja fechada"
@@ -509,6 +584,60 @@ export default function EstoqueTransitoPage() {
           </div>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Confiabilidade da apuracao</CardTitle>
+          </CardHeader>
+          <p className="text-xs text-gray-500 -mt-2 mb-3">Quanto do recorte o ERP confirma documento a documento, e quanto ainda e aproximacao nossa.</p>
+          {data && (
+            <div className="space-y-3">
+              {(
+                [
+                  {
+                    chave: 'vinculo' as const,
+                    label: 'Vinculo TOTVS',
+                    pecas: data.confiabilidade.pecasComVinculo,
+                    linhas: data.confiabilidade.linhasComVinculo,
+                    abertas: data.kpis.pecasAbertasComVinculo,
+                  },
+                  {
+                    chave: 'fifo' as const,
+                    label: 'Aproximado (FIFO)',
+                    pecas: data.confiabilidade.pecasSemVinculo,
+                    linhas: data.confiabilidade.linhasSemVinculo,
+                    abertas: data.kpis.pecasAbertasSemVinculo,
+                  },
+                ]
+              ).map((item) => (
+                <button key={item.chave} type="button" onClick={() => setConfiabilidade(item.chave)} className="block w-full text-left">
+                  <div className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', METODO_BADGE[item.chave])}>{item.label}</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatNumber(item.pecas)} <span className="font-normal text-gray-400">pcs · {formatNumber(item.linhas)} linhas</span>
+                    </span>
+                  </div>
+                  <div className="mt-1">
+                    <BarraProporcao
+                      valor={item.pecas}
+                      maximo={Math.max(1, data.confiabilidade.pecasComVinculo + data.confiabilidade.pecasSemVinculo)}
+                      tom={item.chave === 'vinculo' ? 'roxo' : 'cinza'}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500">{formatNumber(item.abertas)} pecas abertas nesse grupo</p>
+                </button>
+              ))}
+
+              <p className="border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+                O vinculo do TOTVS existe para saidas a partir de{' '}
+                <strong>{data.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '-'}</strong>. Antes disso o
+                ERP nao gravava a amarracao, entao nao ha como ser exato — a conta e aproximada por desenho, nao por falha.
+              </p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Ciclo da transferencia</CardTitle>
@@ -605,6 +734,24 @@ export default function EstoqueTransitoPage() {
                           <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', STATUS_BADGE[row.statusTransito])}>
                             {STATUS_LABEL[row.statusTransito]}
                           </span>
+                        ) : coluna.key === 'metodoBaixa' ? (
+                          // Sem baixa ainda: o que importa pro auditor nao e "vazio", e se
+                          // existe vinculo pra cobrar ou se a linha e so aproximacao.
+                          row.metodoBaixa ? (
+                            <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', METODO_BADGE[row.metodoBaixa])}>
+                              {METODO_LABEL[row.metodoBaixa]}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-gray-400">{row.temVinculo ? 'Vinculo, sem baixa' : 'Sem baixa'}</span>
+                          )
+                        ) : coluna.key === 'entradaDocs' ? (
+                          row.entradaDocs ? (
+                            <span className="font-medium text-gray-700" title={`Documento(s) de entrada apontado(s) pelo TOTVS: ${row.entradaDocs}`}>
+                              {row.entradaDocs}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )
                         ) : coluna.key === 'saidaTransactionDate' || coluna.key === 'primeiraEntradaDate' || coluna.key === 'ultimaEntradaDate' ? (
                           row[coluna.key] ? (
                             formatDate(String(row[coluna.key]))
@@ -631,7 +778,7 @@ export default function EstoqueTransitoPage() {
                   </TableRow>
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-20 bg-yellow-50 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
-                  <TableCell colSpan={16} className="font-bold">
+                  <TableCell colSpan={18} className="font-bold">
                     {data?.linhasTruncadas
                       ? `SUBTOTAL DA TABELA (${formatNumber(rowsOrdenadas.length)} de ${formatNumber(data.kpis.linhas)} linhas)`
                       : `TOTAL (${formatNumber(rowsOrdenadas.length)} linhas)`}

@@ -772,9 +772,16 @@ model PcpRedistribuicaoJob {
 // ciclo inteiro (recebido/parcial/aberto) e nao so o saldo pendente, porque auditoria
 // precisa enxergar o que foi baixado tambem.
 //
-// As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS; os models
-// abaixo existem pra declarar isso no schema e impedir que um `prisma db push` futuro
-// proponha dropa-las (ver secao de drift de banco no AGENTS.md). Os services leem por
+// O casamento saida x entrada e hibrido: usa o vinculo real do TOTVS
+// (`transacoes.origin_destination`, preenchido de 25/06/2026 em diante) e so cai pro
+// FIFO aproximado onde o vinculo nao existe. Saida COM vinculo nunca recebe baixa por
+// FIFO - o ERP ja afirmou o que foi recebido, completar com aproximacao apagaria a
+// evidencia. `metodoBaixa` registra qual dos dois valeu em cada linha.
+//
+// As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS (colunas
+// novas entram por ALTER TABLE ... ADD COLUMN IF NOT EXISTS); os models abaixo existem
+// pra declarar isso no schema e impedir que um `prisma db push` futuro proponha
+// dropa-las (ver secao de drift de banco no AGENTS.md). Os services leem por
 // $queryRaw, nao pelo client gerado.
 model PcpEstoqueTransito {
   id                        BigInt    @id @default(autoincrement())
@@ -782,6 +789,13 @@ model PcpEstoqueTransito {
   janelaInicio              DateTime  @map("janela_inicio") @db.Date
   janelaFim                 DateTime  @map("janela_fim") @db.Date
   statusTransito            String    @map("status_transito") @db.VarChar(20)
+  // Como a baixa foi determinada: 'vinculo' (o TOTVS aponta o documento de entrada em
+  // transacoes.origin_destination), 'fifo' (aproximacao, so onde nao ha vinculo - ate
+  // 25/06/2026) ou 'misto'. NULL quando nada foi baixado. `entradaDocs` guarda o(s)
+  // documento(s) apontado(s) pelo vinculo no formato "branch/transaction".
+  metodoBaixa               String?   @map("metodo_baixa") @db.VarChar(10)
+  temVinculo                Boolean   @default(false) @map("tem_vinculo")
+  entradaDocs               String?   @map("entrada_docs") @db.VarChar(255)
   destinoBranchCode         Int       @map("destino_branch_code")
   destinoBranchName         String?   @map("destino_branch_name") @db.VarChar(100)
   saidaBranchCode           Int       @map("saida_branch_code")
@@ -811,6 +825,7 @@ model PcpEstoqueTransito {
   updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
 
   @@index([statusTransito], map: "idx_pcp_estoque_transito_status")
+  @@index([metodoBaixa], map: "idx_pcp_estoque_transito_metodo")
   @@index([destinoBranchCode], map: "idx_pcp_estoque_transito_destino")
   @@index([saidaTransactionDate], map: "idx_pcp_estoque_transito_saida_data")
   @@index([productCode], map: "idx_pcp_estoque_transito_product")
@@ -818,10 +833,10 @@ model PcpEstoqueTransito {
   @@map("pcp_estoque_transito")
 }
 
-// Rastro de quais entradas (lado da loja) abateram qual item de saida. Serve pra
-// justificar a baixa de uma linha: como nao existe vinculo documento-a-documento no
-// TOTVS, a amarracao e FIFO por loja destino + product_code, e essa tabela e a prova
-// de qual casamento o calculo escolheu.
+// Rastro de quais entradas (lado da loja) abateram qual item de saida, e por qual
+// metodo (`metodo`: 'vinculo' ou 'fifo'). E a prova do casamento escolhido - essencial
+// no FIFO, onde a amarracao e aproximada por loja destino + product_code; no vinculo,
+// serve pra mostrar quanto de cada documento de entrada entrou em cada item.
 model PcpEstoqueTransitoMovimento {
   id                     BigInt   @id @default(autoincrement())
   snapshotAt             DateTime @default(now()) @map("snapshot_at") @db.Timestamp(6)
@@ -834,6 +849,7 @@ model PcpEstoqueTransitoMovimento {
   entradaTransactionDate DateTime @map("entrada_transaction_date") @db.Date
   entradaOperationCode   Int      @map("entrada_operation_code")
   quantidadeBaixada      Decimal  @map("quantidade_baixada") @db.Decimal(15, 4)
+  metodo                 String?  @db.VarChar(10)
 
   @@index([saidaBranchCode, saidaTransactionCode, saidaItemIndex], map: "idx_pcp_estoque_transito_mov_saida")
   @@map("pcp_estoque_transito_movimentos")

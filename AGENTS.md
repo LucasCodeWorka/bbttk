@@ -163,7 +163,11 @@ premissas erradas, mas achou um caminho real:
     fechadas). Vale pra transferência loja-a-loja também, não só Fábrica→loja.
   - **Não existe vínculo documento-a-documento** (`guide_code` e `origin_destination`
     em `transacoes` estão `NULL` em 100% das 853 mil linhas da tabela — colunas mortas,
-    nunca preenchidas pelo ETL; a tabela `operacoes`, que tem uma coluna `invoice_data`
+    nunca preenchidas pelo ETL;
+    > 🚨 **DESATUALIZADO desde 25/06/2026 — `origin_destination` PASSOU a ser preenchida.**
+    > Hoje ela carrega o vínculo pai-filho de verdade. Ver a seção "Sessão 13/10/2026" no
+    > fim deste arquivo antes de usar qualquer coisa deste parágrafo. `guide_code`
+    > continua inútil (4.214 linhas, 48 valores distintos, **zero** em transferência). a tabela `operacoes`, que tem uma coluna `invoice_data`
     JSON que poderia ajudar, está **vazia, 0 linhas**, diferente de
     `classificacao_operacoes` que é a que realmente é sincronizada e usada). Só dá pra
     calcular um **saldo agregado**: `SUM(saída pro destino) − SUM(entrada vinda de lá)`
@@ -822,7 +826,24 @@ confirmação externa.
 
 </details>
 
-## 🚨 ETL parou de gravar ITENS de operação que não é venda (desde 25/06/2026, ativo)
+## ✅ RESOLVIDO (13/10/2026) — ETL parou de gravar ITENS de operação que não é venda (era ativo desde 25/06/2026)
+
+**Corrigido fora deste repo e reprocessado.** Medido em 13/10/2026: os itens de
+transferência de 25/06 até hoje foram gravados em lote (`transacao_itens.created_at =
+2026-10-13` para junho a outubro). Volume do backfill, só no recorte Fábrica→loja:
+**+19.330 itens de saída (50.877 peças) e +19.104 itens de entrada**. Hoje jul/ago/set
+têm 100% dos documentos de transferência com item.
+
+Isso derruba as duas degradações descritas abaixo — `ÚLT. ENTRADA` do Relatório Base e a
+maturação do Estoque Sem Giro devem ter voltado ao normal, mas **não foram re-medidas**:
+se for mexer nessas telas, conferir antes. O diagnóstico original fica preservado abaixo
+porque a causa raiz (retomada do ETL não revisita dia já marcado `SUCCESS`) continua de pé
+e pode reaparecer.
+
+<details>
+<summary>Diagnóstico original (25/06 a 13/10/2026) — mantido para referência</summary>
+
+### 🚨 ETL parou de gravar ITENS de operação que não é venda (desde 25/06/2026)
 
 Achado em 06/10/2026 enquanto se investigava o pedido de "peças em trânsito". **Não tem
 relação com trânsito e é mais grave**: o ETL continua gravando os documentos em
@@ -866,6 +887,8 @@ encaminhar: `DIAGNOSTICO-DEVOLUTIVA-ACOMPANHAMENTO-LINHA.md` na raiz.
 
 **Enquanto não for corrigido, não dá pra construir nenhuma visão de trânsito, entrada ou
 compra** — não existe item pra contar.
+
+</details>
 
 **Atualização 28-30/08/2026 — achada uma 3ª hipótese real e concreta, corrigida**: numa
 devolutiva do cliente (`.docx` "Projeto BI Estoque - Devolutiva 25 08"), a pergunta
@@ -1017,6 +1040,10 @@ dropá-las** — é exatamente o cenário de drift descrito na seção de banco 
 services leem por `$queryRaw`, não pelo client gerado; não "melhorar" isso trocando por
 `prisma.pcpEstoqueTransito.findMany()` sem medir.
 
+> ⚠️ **Esta seção descreve a 1ª versão (12/10). O casamento foi reestruturado em 13/10**
+> para usar o vínculo real do TOTVS, e os números de apuração abaixo são de uma foto que
+> ainda não tinha 4 meses de dado. Ler a seção "Sessão 13/10/2026" no fim antes de mexer.
+
 ### Como o casamento funciona (e por que FIFO)
 
 - Saída: `operation_code IN (1510, 556)`, `branch_code = 2` (Fábrica), `status = 4`.
@@ -1096,3 +1123,95 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   — ele lê UTF-8 como ANSI e corrompe todo acento do arquivo (aconteceu nesta sessão,
   revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
   `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.
+
+## Sessão 13/10/2026 — `origin_destination` é o vínculo pai-filho; o casamento virou híbrido
+
+O Marcelo achou olhando o banco: **`transacoes.origin_destination` deixou de ser coluna
+morta em 25/06/2026** e hoje carrega o vínculo documento-a-documento que este arquivo
+afirmava não existir (o mesmo dia do corte do ETL — o update que quebrou os itens foi o
+que ligou o vínculo).
+
+### O formato, e como ele se interpreta
+
+Dois formatos convivem na mesma coluna:
+
+```
+[[9,885410]]                                           <- 1.982 docs (lista achatada)
+{"branchCodeOrigin":2,"transactionCodeOrigin":881332,  <- 22 docs (objeto completo)
+ "transactionDateOrigin":"...","destination":[{"branchCodeDestination":9,
+ "transactionCodeDestination":885410,"transactionDateDestination":"..."}]}
+```
+
+O objeto revela a semântica do par: **a lista achatada é o `destination`**, ou seja
+`[[branchCodeDestination, transactionCodeDestination]]`. Num documento de **saída** o
+campo aponta a(s) **entrada(s)** que receberam; numa **entrada**, o `origin` aponta quem
+mandou. `parseDestinos()` no script trata os dois.
+
+### Validação antes de confiar (fazer de novo se mexer)
+
+| Teste | Resultado |
+|---|---|
+| Documento referenciado existe em `transacoes` | 2.139 / 2.139 (**100%**) |
+| Referência órfã | **0** |
+| Contraparte é de tipo oposto (S→E) | 2.139 / 2.139 (**100%**) |
+| Data da referência igual ou posterior | 2.138 / 2.139 |
+| Saída aponta para mais de uma loja | **nunca** (sempre 1) |
+| Destino pelo vínculo × por `customer_code` | **bate em 100%** (655/655) |
+| Mesma entrada referenciada por várias saídas | **nunca** |
+| Produto da saída achado no doc de entrada vinculado | 20.473 / 20.603 itens (99,4%) |
+
+Como o destino pelos dois métodos concorda sempre, `branches.person_code = customer_code`
+continua válido como fallback pro período sem vínculo.
+
+### O algoritmo agora é híbrido, em duas fases — a ordem importa
+
+1. **Fase vínculo**: para cada saída com `origin_destination`, casa dentro do(s)
+   documento(s) apontado(s), por `product_code`.
+2. **Fase FIFO**: só para saídas **sem** vínculo nenhum.
+
+**Saída que tem vínculo nunca recebe baixa por FIFO.** Se o TOTVS diz que o documento
+recebeu 5 de 9, as outras 4 estão abertas de verdade — completar por aproximação apagaria
+a evidência. E a fase vínculo roda primeiro justamente pra que uma entrada explicitamente
+amarrada não seja "roubada" pela aproximação de outro documento (o saldo das entradas é
+compartilhado entre as duas fases, são os mesmos objetos em memória).
+
+Colunas novas em `pcp_estoque_transito`: `metodo_baixa` (`vinculo`/`fifo`/`misto`/NULL),
+`tem_vinculo`, `entrada_docs` (`"loja/documento"`, o atalho do auditor pro ERP);
+`metodo` em `pcp_estoque_transito_movimentos`. Entram por
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dentro de `ensureTables()`, então a tabela
+existente não precisa ser dropada.
+
+### Efeito nos números
+
+| | FIFO puro (12/10) | Híbrido (13/10) |
+|---|---|---|
+| Peças de saída | 99.451 | **150.328** |
+| Peças abertas | 3.187¹ | **2.431** |
+
+¹ 3.187 é o FIFO puro já com o dado reprocessado — a comparação justa com 2.431.
+
+A queda de 756 peças é correção real: o FIFO estava deixando aberto o que o vínculo
+mostra baixado. **No período com vínculo, 99,5% das peças aparecem baixadas** — restam só
+**234 peças** em 10 documentos e 4 lojas. As outras 2.197 abertas são todas do período
+sem vínculo (2.082 delas com 90+ dias).
+
+Estado novo e interessante: **"vínculo, sem baixa"** (`tem_vinculo=true`,
+`quantidade_recebida=0`) — o ERP aponta o documento de entrada, mas o produto não está
+dentro dele. É a pendência mais acionável que o relatório produz, porque já vem com a nota
+a abrir.
+
+### Cuidado ao agregar: filtrado × global
+
+`confiabilidade.primeiraSaidaComVinculo` sai da query **sem filtro** (a mesma de
+`cobertura`), não do recorte. Já saiu errado uma vez: calculado sobre o recorte padrão
+(só pendentes) dava 05/10 em vez de 26/06, e a tela afirma com essa data *desde quando o
+vínculo existe* — algo que não pode mudar conforme o filtro do usuário. Regra geral deste
+service: o que descreve **a foto** vai na query sem filtro; o que descreve **o recorte**
+vai na query com `filtroSql`.
+
+### Escopo que ficou de fora de propósito
+
+A Fábrica também emite transferência com `operation_code` 160/652 (para DELIVERY), 825
+(matéria-prima/almoxarifado), 668 (retorno de conserto). O relatório continua só em
+**1510/556** — ampliar muda o que o relatório significa e é decisão de negócio, não
+técnica. Os dados para decidir estão aí se o usuário pedir.

@@ -1710,6 +1710,9 @@ export const agrupamentoCoberturaApi = {
 
 export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
 
+/** 'vinculo' = o TOTVS aponta o documento de entrada; 'fifo' = aproximado por fila. */
+export type EstoqueTransitoMetodo = 'vinculo' | 'fifo' | 'misto';
+
 export interface EstoqueTransitoFiltro {
   status?: EstoqueTransitoStatus[];
   branches?: number[];
@@ -1721,11 +1724,15 @@ export interface EstoqueTransitoFiltro {
   idadeMin?: number;
   idadeMax?: number;
   apenasPendentes?: boolean;
+  confiabilidade?: 'vinculo' | 'fifo';
 }
 
 export interface EstoqueTransitoRow {
   id: number;
   statusTransito: EstoqueTransitoStatus;
+  metodoBaixa: EstoqueTransitoMetodo | null;
+  temVinculo: boolean;
+  entradaDocs: string | null;
   destinoBranchCode: number;
   destinoBranchName: string;
   saidaTransactionCode: number;
@@ -1763,6 +1770,16 @@ export interface EstoqueTransitoKpis {
   recebidas: number;
   pendenciasAntigas90d: number;
   pecasLojasFechadas: number;
+  pecasAbertasComVinculo: number;
+  pecasAbertasSemVinculo: number;
+}
+
+export interface EstoqueTransitoConfiabilidade {
+  linhasComVinculo: number;
+  linhasSemVinculo: number;
+  pecasComVinculo: number;
+  pecasSemVinculo: number;
+  primeiraSaidaComVinculo: string | null;
 }
 
 export interface EstoqueTransitoIdadeBucket {
@@ -1805,6 +1822,7 @@ export interface EstoqueTransitoResponse {
   linhasTruncadas: boolean;
   limiteLinhas: number;
   kpis: EstoqueTransitoKpis;
+  confiabilidade: EstoqueTransitoConfiabilidade;
   idadeBuckets: EstoqueTransitoIdadeBucket[];
   porLoja: EstoqueTransitoPorLoja[];
   porStatus: EstoqueTransitoPorStatus[];
@@ -1829,6 +1847,7 @@ export const estoqueTransitoApi = {
     if (filtro.idadeMin !== undefined) params.set('idadeMin', String(filtro.idadeMin));
     if (filtro.idadeMax !== undefined) params.set('idadeMax', String(filtro.idadeMax));
     if (filtro.apenasPendentes !== undefined) params.set('apenasPendentes', String(filtro.apenasPendentes));
+    if (filtro.confiabilidade) params.set('confiabilidade', filtro.confiabilidade);
     const query = params.toString();
     return fetchPcpApi<EstoqueTransitoResponse>(`/api/pcp/estoque-transito${query ? `?${query}` : ''}`, { token });
   },
