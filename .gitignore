@@ -38,6 +38,8 @@ prisma/*.db
 # Cache
 .cache/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Testing
 coverage/

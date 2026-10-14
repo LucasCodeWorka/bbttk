@@ -1,0 +1,34 @@
+[Unit]
+Description=Bebetenkite - backfill dos itens que o ETL nao grava
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bbtk
+WorkingDirectory=/opt/bbtk-backfill
+EnvironmentFile=/opt/bbtk-backfill/.env
+ExecStart=/opt/bbtk-backfill/venv/bin/python backfill_transacao_itens.py --intervalo=3600 --dias=30
+
+# Reinicia sozinho se o processo morrer, com espera entre tentativas pra nao entrar
+# em loop apertado quando o banco ou a API do TOTVS estiverem fora.
+Restart=always
+RestartSec=60
+
+# O script trata SIGTERM e termina o ciclo atual antes de sair; da tempo pra isso.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bbtk-backfill
+
+# Endurecimento basico: o processo so precisa de rede e do proprio diretorio.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bbtk-backfill
+
+[Install]
+WantedBy=multi-user.target

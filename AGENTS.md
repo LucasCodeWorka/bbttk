@@ -161,17 +161,20 @@ premissas erradas, mas achou um caminho real:
     faturamento (`customer_code >= 110000000`), só que aqui tem função estrutural real.
     Confirmado com 100% de correspondência real pra todas as 18 filiais (inclusive as
     fechadas). Vale pra transferência loja-a-loja também, não só Fábrica→loja.
-  - **Não existe vínculo documento-a-documento** (`guide_code` e `origin_destination`
-    em `transacoes` estão `NULL` em 100% das 853 mil linhas da tabela — colunas mortas,
-    nunca preenchidas pelo ETL;
-    > 🚨 **DESATUALIZADO desde 25/06/2026 — `origin_destination` PASSOU a ser preenchida.**
-    > Hoje ela carrega o vínculo pai-filho de verdade. Ver a seção "Sessão 13/10/2026" no
-    > fim deste arquivo antes de usar qualquer coisa deste parágrafo. `guide_code`
-    > continua inútil (4.214 linhas, 48 valores distintos, **zero** em transferência). a tabela `operacoes`, que tem uma coluna `invoice_data`
-    JSON que poderia ajudar, está **vazia, 0 linhas**, diferente de
-    `classificacao_operacoes` que é a que realmente é sincronizada e usada). Só dá pra
-    calcular um **saldo agregado**: `SUM(saída pro destino) − SUM(entrada vinda de lá)`
-    por `product_code`, não rastrear uma remessa específica.
+  - ⚠️ **Corrigido em 13-14/10/2026**: a afirmação original aqui ("não existe vínculo
+    documento-a-documento") **estava errada** — era verdade só pro que o ETL grava,
+    não pro que a API do TOTVS oferece. `guide_code` e `origin_destination` em
+    `transacoes` continuam `NULL` em quase toda a tabela porque o ETL nunca pediu
+    `expand=originDestination` na busca — mas a API devolve o vínculo exato quando
+    pedido (ver seção "🚨 ETL parou de gravar ITENS" abaixo, "Paliativo criado em
+    13-14/10/2026"). `operacoes.invoice_data` continua vazia, isso não mudou. O saldo
+    agregado (`SUM(saída) − SUM(entrada)` por `product_code`) era um substituto pro
+    vínculo exato que faltava — agora que o vínculo existe (ao menos pro período
+    coberto pelo backfill), prefira ele.
+    **Quem já consome esse vínculo**: o `rebuild-estoque-transito` casa saída com
+    entrada por ele e só cai no FIFO onde a coluna está vazia — ver "Sessão 13/10/2026"
+    no fim deste arquivo. `guide_code` segue inútil mesmo assim (4.214 linhas, 48
+    valores distintos, **zero** em transferência).
   - ⚠️ **Corrigido em 06/10/2026**: `getTransferencias()` **não existe mais** em
     `raioX.service.ts` (a descrição antiga aqui estava desatualizada). O que existe é um
     campo chamado `transferencias` cujo valor é um **resíduo de reconciliação**
@@ -826,19 +829,23 @@ confirmação externa.
 
 </details>
 
-## ✅ RESOLVIDO (13/10/2026) — ETL parou de gravar ITENS de operação que não é venda (era ativo desde 25/06/2026)
+## 🩹 MITIGADO, NÃO RESOLVIDO (13-14/10/2026) — ETL não grava ITENS de operação que não é venda (ativo desde 25/06/2026)
 
-**Corrigido fora deste repo e reprocessado.** Medido em 13/10/2026: os itens de
-transferência de 25/06 até hoje foram gravados em lote (`transacao_itens.created_at =
-2026-10-13` para junho a outubro). Volume do backfill, só no recorte Fábrica→loja:
-**+19.330 itens de saída (50.877 peças) e +19.104 itens de entrada**. Hoje jul/ago/set
-têm 100% dos documentos de transferência com item.
+> ⚠️ **Correção de uma conclusão errada desta mesma sessão.** Uma versão anterior deste
+> cabeçalho dizia "✅ RESOLVIDO — corrigido fora deste repo e reprocessado". **Não foi.**
+> Ao ver os itens de jul–out aparecerem em lote (`transacao_itens.created_at =
+> 2026-10-13`), assumi conserto do ETL; era o **backfill manual** do Lucas rodando
+> (`etl/backfill_transacao_itens.py`, seção "Paliativo" abaixo). A causa raiz continua
+> de pé e **o buraco volta a crescer todo dia** — medido: 102 documentos e 968 peças em
+> 4 dias. Não marcar como resolvido de novo sem ver o ETL principal corrigido.
 
-Isso derruba as duas degradações descritas abaixo — `ÚLT. ENTRADA` do Relatório Base e a
-maturação do Estoque Sem Giro devem ter voltado ao normal, mas **não foram re-medidas**:
-se for mexer nessas telas, conferir antes. O diagnóstico original fica preservado abaixo
-porque a causa raiz (retomada do ETL não revisita dia já marcado `SUCCESS`) continua de pé
-e pode reaparecer.
+Volume reposto pelo backfill, só no recorte Fábrica→loja: **+19.330 itens de saída
+(50.877 peças) e +19.104 itens de entrada**. Com isso jul/ago/set passaram a ter 100%
+dos documentos de transferência com item — mas por reposição, não por correção.
+
+Isso suspende as duas degradações descritas abaixo — `ÚLT. ENTRADA` do Relatório Base e a
+maturação do Estoque Sem Giro — enquanto o backfill rodar. **Não foram re-medidas**: se
+for mexer nessas telas, conferir antes.
 
 <details>
 <summary>Diagnóstico original (25/06 a 13/10/2026) — mantido para referência</summary>
@@ -885,8 +892,82 @@ estão gravados sem itens e a retomada não revisita documento já processado (m
 raiz dos bugs 3 e 4 da seção "Bugs reais já encontrados"). Documento pronto pra
 encaminhar: `DIAGNOSTICO-DEVOLUTIVA-ACOMPANHAMENTO-LINHA.md` na raiz.
 
-**Enquanto não for corrigido, não dá pra construir nenhuma visão de trânsito, entrada ou
-compra** — não existe item pra contar.
+**Situação no diagnóstico inicial:** sem recuperar os itens faltantes, as visões de
+trânsito, entrada e compra ficam incompletas. O backfill abaixo recuperou parte dessa
+cobertura; a correção definitiva do ETL continua pendente.
+
+### ✅ Paliativo criado em 13-14/10/2026 — backfill via API do TOTVS + achado do `expand=originDestination`
+
+O relatório "Estoque em Trânsito" do Marcelo (`c3725a0`, trazido pra `main` nessa mesma
+sessão) ficou pronto mas sem dado: toda saída de transferência desde 25/06 estava sem
+item, então a cobertura (`defasagemDias` em `estoqueTransito.service.ts`) acusava ~110
+dias de atraso e as faixas de idade "0-7 dias"/"8-15 dias" etc. ficavam sempre zeradas —
+dando a impressão (igual à investigação de 31/08, ver acima) de que "não existe trânsito
+de curto prazo". **Não é verdade, era o dado que faltava**: assim que o buraco foi
+tapado, apareceram 444 peças com até 7 dias de pendência no cálculo FIFO (ver números
+abaixo). A idade recente, por si só, não comprova mercadoria fisicamente em trânsito.
+
+**Achado**: `POST /general/v2/transactions/search` devolve `items[]` **por padrão**
+(não depende de `expand`) — o corte de 45 operações sem item é no ETL, não na API.
+Confirmado chamando a API direto pra documentos que estão sem item no banco: todos
+voltaram completos. **E** a API tem `expand=originDestination`, nunca usado pelo ETL,
+que devolve o **vínculo exato** saída→entrada:
+
+```json
+"originDestination": { "destination": [{ "branchCodeDestination": 9, "transactionCodeDestination": 880717, "transactionDateDestination": "2026-06-24T00:00:00" }] }
+```
+
+`destination: []` indica ausência de vínculo de destino na resposta consultada; não
+comprova, isoladamente, a localização física da mercadoria. Isso **derruba**
+a afirmação de 31/08 acima ("não existe vínculo documento-a-documento") — existe, só
+nunca foi pedido. O FIFO do relatório do Marcelo (`rebuild-estoque-transito.ts`) é uma
+aproximação que deixa de ser necessária se algum dia o ETL popular essa coluna direito.
+
+**Dois scripts de backfill criados** (paliativo, não substitui a correção do ETL):
+
+1. `apps/api/src/scripts/backfill-transacao-itens.ts` — rodar manualmente
+   (`npm run backfill:itens -w apps/api`, ou `:dryrun`). Busca documento sem item na
+   API com `expand=originDestination`, grava os itens (`DELETE` + `INSERT` na mesma
+   transação — mesma regra do bug 7 de "Bugs reais já encontrados") e preenche
+   `transacoes.origin_destination` num **formato compacto próprio**
+   (`[[filial,transação]]`, não o JSON cru do TOTVS — que estoura o `VARCHAR(255)` da
+   coluna assim que há mais de um destino; isso **derrubou a primeira execução** depois
+   de 23 documentos, corrigido com formato compacto + `try/catch` por documento pra um
+   documento ruim não abortar o lote inteiro).
+2. `etl/backfill_transacao_itens.py` — mesma lógica, reescrita em Python pra rodar como
+   serviço systemd numa VPS fora deste repo (`etl/bbtk-backfill-itens.service`,
+   `etl/README.md`). Janela deslizante (default 30 dias, não varre o histórico inteiro
+   toda vez — mesmo padrão já recomendado pro bug 3 do ETL), loop com `--intervalo`,
+   renova token sozinho, trata SIGTERM. **Testado de verdade contra o banco e a API
+   real** antes de documentar aqui (não só sintaxe) — achou e gravou 37 documentos que
+   chegaram na última hora, zero falhas.
+
+**⚠️ O formato do `origin_destination` precisa de dono.** A coluna é conceitualmente do
+ETL; quem gravou nela por enquanto foi este backfill, num formato que não é o do TOTVS.
+Quando o ETL for corrigido pra usar `expand=originDestination` de verdade, alguém
+precisa decidir: a coluna vira do ETL (formato dele) ou o vínculo migra pra uma tabela
+da aplicação (do Marcelo, já que é quem consome).
+
+**Estado depois do backfill (14/10/2026, janela de 12 meses)**: 50.799 itens e 3.923
+vínculos gravados (25/06 a 13/10). Relatório rematerializado
+(`npm run rebuild:estoque-transito -w apps/api`): defasagem caiu de 110 dias pra 0;
+4.187 peças pendentes no cálculo FIFO, sendo **444 com até 7 dias** e o resto
+majoritariamente passivo antigo (946 da Terrazo, loja fechada). Esses números são uma
+medição histórica da sessão anterior, não uma consulta em tempo real.
+
+**Operação contínua:** o arquivo systemd é um modelo de instalação; sua presença no
+Git não comprova serviço ativo na VPS. O backfill só busca documentos sem itens e não
+reconsulta vínculos de documentos já preenchidos. Também não rematerializa o relatório:
+é necessário executar/agendar `npm run rebuild:estoque-transito -w apps/api` depois
+da recuperação. Confirmar a instalação e os agendamentos no ambiente operacional.
+
+**O buraco volta a crescer todo dia** enquanto o ETL principal não for corrigido —
+medido: 102 documentos e 968 peças em 4 dias, entre a primeira e a segunda execução do
+backfill. **Correção de verdade** (passada pro Marcelo levar pro time do ETL): (1)
+remover o filtro que restringe quais operações recebem item — suspeita é
+`operationCodeList`/`transactionTypeList`/`modalityList` estreitado perto de 25/06; (2)
+passar `expand=originDestination` nas transferências. Os dois pedidos destravam
+simultaneamente este relatório, a ÚLT. ENTRADA e a maturação do Estoque Sem Giro.
 
 </details>
 
@@ -1026,8 +1107,8 @@ São ~40 mil linhas de saída × ~39 mil de entrada pra casar, e o casamento é 
 memória no Node** (fila FIFO), não em SQL — não caberia no timeout de uma requisição.
 Daí a foto: duas tabelas novas, `pcp_estoque_transito` (uma linha por ITEM de documento
 de saída) e `pcp_estoque_transito_movimentos` (qual entrada abateu qual saída e com
-quanto — é a prova de qual casamento o cálculo escolheu, já que o TOTVS não tem vínculo
-documento-a-documento).
+quanto — é a prova de qual casamento o cálculo escolheu). Na implementação inicial,
+o vínculo oferecido pela API do TOTVS ainda não estava disponível no banco.
 
 **A tabela guarda o ciclo inteiro, não só o saldo aberto** (`status_transito` =
 `recebido` / `parcial` / `em_transito`): auditoria precisa poder conferir que a baixa de
@@ -1053,9 +1134,9 @@ services leem por `$queryRaw`, não pelo client gerado; não "melhorar" isso tro
   mais limpo que a aritmética `customer_code - 110000000` documentada acima, e dá o mesmo
   resultado.
 - Fila por `(loja destino, product_code)`: a entrada mais antiga abate a saída mais
-  antiga, nunca uma entrada anterior à saída. **Não existe vínculo real** — FIFO é a
-  melhor aproximação disponível, e é por isso que a tela diz isso explicitamente em vez
-  de apresentar o número como fato.
+  antiga, nunca uma entrada anterior à saída. **A implementação inicial usa FIFO**;
+  o vínculo real foi descoberto depois via `expand=originDestination` (ver paliativo
+  acima), mas este algoritmo inicial não o consome.
 
 ### ⚠️ Agregação é SQL, linhas é LIMIT — não misturar os dois
 
@@ -1101,6 +1182,11 @@ devolve `cobertura.ultimaSaida` / `defasagemDias` / `incompleta` (comparando
 Esse padrão (derivar o aviso do próprio dado em vez de hardcodar) vale a pena repetir em
 qualquer relatório que dependa de uma fonte que pode ficar defasada.
 
+> **Estado em 14/10/2026**: o aviso **não está aparecendo** — depois do backfill a
+> defasagem caiu pra ~5 dias, abaixo do `DIAS_TOLERANCIA_COBERTURA`. Ele volta sozinho se
+> o backfill parar de rodar, que é exatamente o comportamento desejado. Não confundir
+> "aviso sumiu" com "ETL consertado": ver o cabeçalho 🩹 MITIGADO acima.
+
 ### Observações menores que contradizem seções antigas deste arquivo
 
 - Rotas de `pcp-api` **não** declaram `authMiddleware`/`moduleAccess` individualmente — a
@@ -1110,11 +1196,10 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   `pcp-api` repete isso, e não precisa.
 - `HEAVY_REPORT_PATHS` casa `req.path` **relativo ao mount**, então a entrada é
   `/estoque-transito`, não `/api/pcp/estoque-transito`.
-- **O remote `limes` não existe mais.** Hoje há só `origin` →
-  `github.com/limes-ia/bebetenkite` (o antigo `origin` de `LucasCodeWorka/bbttk` também
-  não está mais configurado). A seção "Git — múltiplos remotes" está desatualizada nesse
-  ponto: não tentar `git fetch limes`. `main` local e `origin/teste` estavam no mesmo
-  commit no início desta sessão.
+- **Remotes conferidos nesta cópia em 13/10/2026:** `origin` →
+  `github.com/LucasCodeWorka/bbttk` e `limes` → `github.com/limes-ia/bebetenkite`.
+  A observação anterior de que só existia um remote não descreve este checkout.
+  Conferir `git remote -v` antes de publicar e seguir a seção de Git acima.
 - `apps/api/scripts/mint-test-token.ts` foi **recriado** (tinha se perdido; continua não
   commitado, por decisão antiga). Payload esperado por
   `pcp-api/src/middleware/auth.middleware.ts`:
