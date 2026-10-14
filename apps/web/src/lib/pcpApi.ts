@@ -1710,7 +1710,7 @@ export const agrupamentoCoberturaApi = {
 
 export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
 
-/** 'vinculo' = o TOTVS aponta o documento de entrada; 'fifo' = aproximado por fila. */
+/** Desde 14/10/2026 a baixa e sempre 'vinculo'; 'fifo'/'misto' so vem de foto antiga. */
 export type EstoqueTransitoMetodo = 'vinculo' | 'fifo' | 'misto';
 
 export interface EstoqueTransitoFiltro {
@@ -1724,7 +1724,7 @@ export interface EstoqueTransitoFiltro {
   idadeMin?: number;
   idadeMax?: number;
   apenasPendentes?: boolean;
-  confiabilidade?: 'vinculo' | 'fifo';
+  confiabilidade?: 'vinculo' | 'sem_vinculo';
 }
 
 export interface EstoqueTransitoRow {

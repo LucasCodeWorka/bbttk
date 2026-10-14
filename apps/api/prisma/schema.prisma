@@ -772,11 +772,12 @@ model PcpRedistribuicaoJob {
 // ciclo inteiro (recebido/parcial/aberto) e nao so o saldo pendente, porque auditoria
 // precisa enxergar o que foi baixado tambem.
 //
-// O casamento saida x entrada e hibrido: usa o vinculo real do TOTVS
-// (`transacoes.origin_destination`, preenchido de 25/06/2026 em diante) e so cai pro
-// FIFO aproximado onde o vinculo nao existe. Saida COM vinculo nunca recebe baixa por
-// FIFO - o ERP ja afirmou o que foi recebido, completar com aproximacao apagaria a
-// evidencia. `metodoBaixa` registra qual dos dois valeu em cada linha.
+// O casamento saida x entrada e SEMPRE por vinculo do TOTVS (`PcpTransferenciaVinculo`).
+// O FIFO aproximado foi removido em 14/10/2026, depois que o backfill pelo lado da
+// entrada levou a cobertura a 100% dos documentos da janela: manter aproximacao ao lado
+// do fato so produzia baixa inventada e atribuia pendencia a documento arbitrario.
+// Saida sem vinculo nenhum sai 100% aberta - "pendente" passou a significar exatamente
+// "saida sem entrada correspondente registrada no ERP".
 //
 // As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS (colunas
 // novas entram por ALTER TABLE ... ADD COLUMN IF NOT EXISTS); os models abaixo existem
@@ -831,6 +832,38 @@ model PcpEstoqueTransito {
   @@index([productCode], map: "idx_pcp_estoque_transito_product")
   @@index([referenceCode], map: "idx_pcp_estoque_transito_ref")
   @@map("pcp_estoque_transito")
+}
+
+// Vinculo documento-a-documento de transferencia, lido da API do TOTVS
+// (`expand=originDestination`) por `backfill-vinculo-transferencia.ts`.
+//
+// E populado pelo lado da ENTRADA porque o campo e assimetrico: numa saida o
+// `destination` so aparece quando a loja recebe - dias depois, e sem o TOTVS mexer no
+// `lastChangeDate` do documento (medido: 0 de 10), entao nenhum sync incremental
+// reconsulta aquela saida. Numa entrada o `origin` ja nasce preenchido (medido: 12 de
+// 12) e o documento e novo, logo qualquer sync captura. Nao se perde nada: uma entrada
+// aponta pra exatamente 1 saida (2.139 de 2.139 medidos), enquanto uma saida pode ter
+// ate 5 entradas - montando pelos dois lados da mesma relacao, o grafo fecha.
+//
+// Tabela da aplicacao de proposito, nao coluna em `transacoes`: aquela e sincronizada
+// pelo ETL (escrever nela e contra a regra do projeto e some no proximo sync), e sua
+// coluna `origin_destination` ja guarda o `destination` em formato compacto - gravar o
+// `origin` no mesmo lugar deixaria `[[2,880226]]` ambiguo entre "mandei pra" e "vim de".
+model PcpTransferenciaVinculo {
+  saidaBranchCode        Int       @map("saida_branch_code")
+  saidaTransactionCode   Int       @map("saida_transaction_code")
+  saidaTransactionDate   DateTime? @map("saida_transaction_date") @db.Date
+  entradaBranchCode      Int       @map("entrada_branch_code")
+  entradaTransactionCode Int       @map("entrada_transaction_code")
+  entradaTransactionDate DateTime? @map("entrada_transaction_date") @db.Date
+  /// 'entrada' (lido do `origin`) ou 'saida' (lido do `destination`)
+  fonte                  String    @db.VarChar(10)
+  consultadoEm           DateTime  @default(now()) @map("consultado_em") @db.Timestamp(6)
+
+  @@id([saidaBranchCode, saidaTransactionCode, entradaBranchCode, entradaTransactionCode])
+  @@index([saidaBranchCode, saidaTransactionCode], map: "idx_pcp_transf_vinculo_saida")
+  @@index([entradaBranchCode, entradaTransactionCode], map: "idx_pcp_transf_vinculo_entrada")
+  @@map("pcp_transferencia_vinculo")
 }
 
 // Rastro de quais entradas (lado da loja) abateram qual item de saida, e por qual

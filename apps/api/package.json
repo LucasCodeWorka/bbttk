@@ -22,6 +22,8 @@
     "recalc:estoque-aa-saldos": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply",
     "recalc:estoque-aa-saldos:dryrun": "tsx src/scripts/recalcular-estoque-aa-saldos.ts",
     "recalc:estoque-aa-saldos:latest": "tsx src/scripts/recalcular-estoque-aa-saldos.ts --apply --latest",
+    "backfill:vinculo": "tsx src/scripts/backfill-vinculo-transferencia.ts --apply",
+    "backfill:vinculo:dryrun": "tsx src/scripts/backfill-vinculo-transferencia.ts",
     "rebuild:estoque-transito": "tsx src/scripts/rebuild-estoque-transito.ts --apply",
     "backfill:itens": "tsx src/scripts/backfill-transacao-itens.ts --apply",
     "backfill:itens:dryrun": "tsx src/scripts/backfill-transacao-itens.ts",

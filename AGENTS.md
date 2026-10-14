@@ -1209,6 +1209,77 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
   `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.
 
+## Sessão 14/10/2026 — o FIFO foi REMOVIDO; o vínculo vem do lado da ENTRADA
+
+> Esta seção substitui o desenho descrito em "Sessão 13/10/2026" logo abaixo. O híbrido
+> (vínculo + FIFO) durou um dia: com a cobertura em 100%, o FIFO só produzia baixa
+> inventada. Leia esta antes da outra.
+
+### O achado que mudou tudo: o ETL nunca pediu o campo
+
+`transacoes.origin_destination` estava nula não porque o TOTVS não tivesse o dado, mas
+porque **a busca de transações nunca pediu `expand=originDestination`**. Testado na API
+para documentos de out/2025 e fev/2026: o vínculo volta completo. A história inteira
+sempre esteve disponível.
+
+### A assimetria do campo — e por que puxar pela ENTRADA
+
+| | Saída | Entrada |
+|---|---|---|
+| Campo preenchido | `destination` (lista) | `origin` (objeto único) |
+| Quando aparece | dias depois, quando a loja recebe | **já nasce no documento** |
+| `lastChangeDate` muda? | **não** (medido: 0 de 10, com entrada até 29 dias depois) | irrelevante |
+| Precisa repescar? | sim, até ~45 dias | **não** |
+
+O ponto decisivo é a terceira linha: **o TOTVS não marca a saída como alterada quando a
+entrada é criada**. Então nenhum sync incremental por data de alteração volta nela — o
+`sync_transactions_changes.py` (que está órfão, nenhum runner o chama) não resolveria com
+janela nenhuma. E a rebusca por emissão que existe (`run_hourly_transactions_prd_saldo.sh`,
+`--closed-days --since D-3`) perde os casos de 4 a 29 dias.
+
+Pela entrada nada disso importa: o documento é novo, o `origin` já vem preenchido, e o
+D-3 atual basta. **Não se perde informação**: uma entrada aponta para exatamente 1 saída
+(2.139 de 2.139 medidos) e uma saída pode ter até 5 entradas — montando pelo lado da
+entrada, o recebimento parcial aparece como N entradas apontando a mesma saída.
+
+Defasagem medida saída→entrada: mediana 1 dia, p95 3, p99 5, **máximo 29**. Logo
+pendência com mais de 30 dias não é atraso de captura.
+
+### `backfill-vinculo-transferencia.ts` + `pcp_transferencia_vinculo`
+
+Script novo (`npm run backfill:vinculo[:dryrun] -w apps/api`), flags `--desde=`,
+`--limite=`, `--lado=entrada|saida`. Grava **a cada 500** e seleciona só quem ainda não
+tem vínculo, então é interrompível e retomável sem refazer trabalho.
+
+Resultado do passe histórico: **25.425 vínculos**, de 19/06/2019 a 13/10/2026.
+Cobertura **100%** — de 18.943 documentos consultados, só 7 vieram sem origem.
+
+Tabela própria, não coluna em `transacoes`: aquela é do ETL (escrever nela é contra a
+regra do projeto e some no próximo sync) e sua coluna já guarda o `destination` em
+formato compacto — gravar o `origin` no mesmo lugar deixaria `[[2,880226]]` ambíguo
+entre "mandei pra" e "vim de".
+
+### Efeito no relatório
+
+| | FIFO puro | Híbrido | **Só vínculo** |
+|---|---|---|---|
+| Peças abertas | 4.187 | 2.431 | **1.295** |
+| Documentos | — | 131 | **33** |
+| Lojas | — | 13 | **5** |
+
+Faixas de idade voltaram a fazer sentido: 324 peças com até 7 dias (trânsito recente de
+verdade), 25 de 8 a 15, e 946 com 91+ (Terrazo).
+
+### ⚠️ As 1.295 que sobraram NÃO são pendência de negócio
+
+Medido: em **30 de 30** pares ainda abertos, o documento de entrada **existe** no TOTVS e
+está apontado pelo vínculo, mas **não tem itens no nosso banco**. Zero casos de "entrada
+não existe", zero de "entrada com itens".
+
+É a lacuna de itens do ETL (a mesma do corte de 25/06, mais os furos esparsos de
+out/2025 a jan/2026), não mercadoria sumida. **Rodar `npm run backfill:itens -w apps/api`
+com janela ampla deve derrubar quase tudo isso.** Só o que restar depois é pendência real.
+
 ## Sessão 13/10/2026 — `origin_destination` é o vínculo pai-filho; o casamento virou híbrido
 
 O Marcelo achou olhando o banco: **`transacoes.origin_destination` deixou de ser coluna

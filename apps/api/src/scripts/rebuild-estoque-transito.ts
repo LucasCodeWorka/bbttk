@@ -4,17 +4,28 @@ import { PrismaClient, Prisma } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const SAIDA_OPS = [1510, 556];
-const ENTRADA_OPS = [1003, 3];
 const DPA_BRANCH_CODE = 2;
-const DPA_PERSON_CODE = 110000002;
 const DEFAULT_MESES = 12;
 
-// Como a baixa de cada linha foi determinada:
-// - 'vinculo': o proprio TOTVS diz qual documento de entrada recebeu esta saida
-//   (`transacoes.origin_destination`). E fato, nao estimativa.
-// - 'fifo': nao ha vinculo (o campo so passou a ser preenchido em 25/06/2026), entao a
-//   baixa e aproximada por fila FIFO em (loja destino, product_code).
-type MetodoBaixa = 'vinculo' | 'fifo';
+// A baixa e SEMPRE por vinculo do TOTVS - o FIFO foi removido em 14/10/2026.
+//
+// Por que deixou de existir: o FIFO era um substituto pra uma informacao que a gente
+// achava que nao existia. Existia - o `originDestination` da API nunca tinha sido
+// pedido. Com o backfill pelo lado da ENTRADA (que ja nasce com `origin` preenchido),
+// a cobertura dos documentos do relatorio ficou em 100%, e manter uma aproximacao ao
+// lado do fato so produziria baixa inventada: o FIFO fechava linha que o ERP nao
+// confirma, e atribuia pendencia a documento arbitrario (medido: documento 880226
+// aparecia pendente com a mercadoria ja recebida).
+//
+// Consequencia direta: saida sem vinculo nenhum fica 100% aberta. Pendente passa a
+// significar "saida sem entrada correspondente registrada", nada mais.
+type MetodoBaixa = 'vinculo';
+
+type VinculoDoc = {
+  saida_transaction_code: number;
+  entrada_branch_code: number;
+  entrada_transaction_code: number;
+};
 
 type RawSaida = {
   transaction_date: Date;
@@ -51,7 +62,7 @@ type RawEntrada = {
   quantity: Prisma.Decimal;
 };
 
-type EntradaItem = RawEntrada & { restante: number; elegivelFifo: boolean };
+type EntradaItem = RawEntrada & { restante: number };
 
 type SaidaItem = RawSaida & {
   destinoBranchCode: number;
@@ -300,21 +311,64 @@ async function getSaidas(meses: number): Promise<RawSaida[]> {
   `;
 }
 
-// Carrega dois universos de entrada de uma vez, como OS MESMOS objetos, pra que o
-// consumo de saldo seja compartilhado entre as duas fases do casamento:
-//  - conjunto FIFO (estreito: ops de entrada de transferencia vindas da Fabrica);
-//  - documentos explicitamente referenciados por algum vinculo de saida, sem filtro de
-//    operacao - o vinculo e a autoridade, nao precisa de heuristica por codigo.
-async function getEntradas(meses: number): Promise<RawEntrada[]> {
-  return prisma.$queryRaw<RawEntrada[]>`
-    WITH vinculadas AS (
-      SELECT DISTINCT (par->>0)::int AS branch_code, (par->>1)::int AS transaction_code
+// Os pares (saida -> entrada) vem de duas fontes, unidas:
+//  1. `pcp_transferencia_vinculo`, populada pelo lado da ENTRADA (backfill-vinculo-
+//     transferencia.ts). E a fonte principal: `origin` ja nasce preenchido no documento
+//     de entrada, entao nao depende de ter consultado a saida no momento certo.
+//  2. `transacoes.origin_destination`, populada pelo lado da SAIDA por um backfill
+//     anterior. Fica como complemento pra nao perder o que ja foi capturado.
+async function getVinculos(meses: number): Promise<VinculoDoc[]> {
+  return prisma.$queryRaw<VinculoDoc[]>`
+    WITH escopo AS (
+      SELECT t.transaction_code
       FROM transacoes t
-      CROSS JOIN LATERAL jsonb_array_elements(t.origin_destination::jsonb) AS par
       WHERE t.branch_code = ${DPA_BRANCH_CODE}
         AND t.status = 4
         AND t.operation_code IN (${Prisma.join(SAIDA_OPS)})
         AND t.transaction_date >= current_date - (${meses}::text || ' months')::interval
+    )
+    SELECT v.saida_transaction_code, v.entrada_branch_code, v.entrada_transaction_code
+    FROM pcp_transferencia_vinculo v
+    JOIN escopo e ON e.transaction_code = v.saida_transaction_code
+    WHERE v.saida_branch_code = ${DPA_BRANCH_CODE}
+
+    UNION
+
+    SELECT t.transaction_code, (par->>0)::int, (par->>1)::int
+    FROM transacoes t
+    JOIN escopo e ON e.transaction_code = t.transaction_code
+    CROSS JOIN LATERAL jsonb_array_elements(t.origin_destination::jsonb) AS par
+    WHERE t.branch_code = ${DPA_BRANCH_CODE}
+      AND t.origin_destination ~ '^\\[\\['
+      AND jsonb_typeof(par) = 'array'
+  `;
+}
+
+// Itens APENAS dos documentos de entrada que algum vinculo aponta. Sem filtro por
+// codigo de operacao: o vinculo e a autoridade, nao precisa de heuristica.
+async function getEntradas(meses: number): Promise<RawEntrada[]> {
+  return prisma.$queryRaw<RawEntrada[]>`
+    WITH escopo AS (
+      SELECT t.transaction_code
+      FROM transacoes t
+      WHERE t.branch_code = ${DPA_BRANCH_CODE}
+        AND t.status = 4
+        AND t.operation_code IN (${Prisma.join(SAIDA_OPS)})
+        AND t.transaction_date >= current_date - (${meses}::text || ' months')::interval
+    ),
+    vinculadas AS (
+      SELECT DISTINCT v.entrada_branch_code AS branch_code, v.entrada_transaction_code AS transaction_code
+      FROM pcp_transferencia_vinculo v
+      JOIN escopo e ON e.transaction_code = v.saida_transaction_code
+      WHERE v.saida_branch_code = ${DPA_BRANCH_CODE}
+
+      UNION
+
+      SELECT DISTINCT (par->>0)::int, (par->>1)::int
+      FROM transacoes t
+      JOIN escopo e ON e.transaction_code = t.transaction_code
+      CROSS JOIN LATERAL jsonb_array_elements(t.origin_destination::jsonb) AS par
+      WHERE t.branch_code = ${DPA_BRANCH_CODE}
         AND t.origin_destination ~ '^\\[\\['
         AND jsonb_typeof(par) = 'array'
     )
@@ -329,15 +383,9 @@ async function getEntradas(meses: number): Promise<RawEntrada[]> {
       ti.product_code,
       ti.quantity
     FROM transacoes t
+    JOIN vinculadas v ON v.branch_code = t.branch_code AND v.transaction_code = t.transaction_code
     JOIN transacao_itens ti ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
-    WHERE t.status = 4
-      AND t.branch_code <> ${DPA_BRANCH_CODE}
-      AND t.transaction_date >= current_date - (${meses}::text || ' months')::interval
-      AND COALESCE(ti.quantity, 0) > 0
-      AND (
-        (t.customer_code = ${DPA_PERSON_CODE} AND t.operation_code IN (${Prisma.join(ENTRADA_OPS)}))
-        OR EXISTS (SELECT 1 FROM vinculadas v WHERE v.branch_code = t.branch_code AND v.transaction_code = t.transaction_code)
-      )
+    WHERE COALESCE(ti.quantity, 0) > 0
     ORDER BY t.transaction_date, t.branch_code, t.transaction_code, ti.item_index
   `;
 }
@@ -345,6 +393,7 @@ async function getEntradas(meses: number): Promise<RawEntrada[]> {
 function calcular(
   saidasRaw: RawSaida[],
   entradasRaw: RawEntrada[],
+  vinculosRaw: VinculoDoc[],
   janelaInicio: string,
   janelaFim: string
 ): { linhas: LinhaTransito[]; movimentos: MovimentoBaixa[]; descartadas: number } {
@@ -353,36 +402,44 @@ function calcular(
   const entradas: EntradaItem[] = entradasRaw.map((item) => ({
     ...item,
     restante: toNumber(item.quantity),
-    elegivelFifo:
-      ENTRADA_OPS.includes(item.operation_code) && Number(item.customer_code ?? 0) === DPA_PERSON_CODE,
   }));
 
-  // Indice por documento (usado pelo vinculo) e por par loja+produto (usado pelo FIFO).
   const porDocumento = new Map<string, EntradaItem[]>();
-  const porParFifo = new Map<string, EntradaItem[]>();
   for (const entrada of entradas) {
-    const chaveDoc = `${entrada.branch_code}|${entrada.transaction_code}`;
-    const doc = porDocumento.get(chaveDoc);
+    const chave = `${entrada.branch_code}|${entrada.transaction_code}`;
+    const doc = porDocumento.get(chave);
     if (doc) doc.push(entrada);
-    else porDocumento.set(chaveDoc, [entrada]);
+    else porDocumento.set(chave, [entrada]);
+  }
 
-    if (entrada.elegivelFifo) {
-      const chavePar = `${entrada.branch_code}|${entrada.product_code}`;
-      const par = porParFifo.get(chavePar);
-      if (par) par.push(entrada);
-      else porParFifo.set(chavePar, [entrada]);
-    }
+  // Documentos de entrada vinculados a cada saida, pela tabela de vinculo.
+  const vinculosPorSaida = new Map<number, Array<{ branch: number; transaction: number }>>();
+  for (const v of vinculosRaw) {
+    const lista = vinculosPorSaida.get(v.saida_transaction_code) || [];
+    lista.push({ branch: v.entrada_branch_code, transaction: v.entrada_transaction_code });
+    vinculosPorSaida.set(v.saida_transaction_code, lista);
   }
 
   const saidas: SaidaItem[] = [];
   let descartadas = 0;
 
   for (const raw of saidasRaw) {
-    const destinos = parseDestinos(raw.origin_destination);
+    // Une o que a tabela de vinculo sabe com o que a coluna antiga ainda guarda.
+    const daTabela = vinculosPorSaida.get(raw.transaction_code) || [];
+    const daColuna = parseDestinos(raw.origin_destination);
+    const vistos = new Set<string>();
+    const destinos: Array<{ branch: number; transaction: number }> = [];
+    for (const d of [...daTabela, ...daColuna]) {
+      const chave = `${d.branch}|${d.transaction}`;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      destinos.push(d);
+    }
+
     const branchesVinculo = Array.from(new Set(destinos.map((d) => d.branch)));
 
     // O vinculo e preferido pra definir o destino; `customer_code` entra quando nao ha
-    // vinculo (periodo antigo) ou quando o vinculo aponta pra mais de uma filial.
+    // vinculo ou quando o vinculo aponta pra mais de uma filial.
     const destinoBranchCode =
       branchesVinculo.length === 1 ? branchesVinculo[0] : raw.destino_branch_code ?? null;
 
@@ -405,44 +462,35 @@ function calcular(
     });
   }
 
-  function abater(saida: SaidaItem, entrada: EntradaItem, metodo: MetodoBaixa): void {
+  function abater(saida: SaidaItem, entrada: EntradaItem): void {
     const baixa = Math.min(saida.quantidadeAberta, entrada.restante);
     if (baixa <= 0.0001) return;
     saida.quantidadeAberta -= baixa;
     entrada.restante -= baixa;
-    saida.metodos.add(metodo);
-    saida.entradasCasadas.push({ entrada, quantidade: baixa, metodo });
+    saida.metodos.add('vinculo');
+    saida.entradasCasadas.push({ entrada, quantidade: baixa, metodo: 'vinculo' });
   }
 
-  // FASE 1 - vinculo. O TOTVS diz qual documento recebeu; dentro do par de documentos
-  // basta casar pelo product_code. Roda ANTES do FIFO pra que uma entrada explicitamente
-  // vinculada nunca seja "roubada" por uma aproximacao de outro documento.
+  // FASE UNICA - vinculo. O TOTVS diz quais documentos receberam esta saida; dentro
+  // desses documentos basta casar pelo product_code. Nao ha fallback: o que o ERP nao
+  // confirma fica aberto, e e exatamente isso que o relatorio deve mostrar.
+  //
+  // Quando uma saida foi recebida em varios documentos, a ordem de consumo e a de data
+  // da entrada - isso nao e heuristica, e so a repartição entre entradas que o proprio
+  // vinculo ja declarou pertencerem aquela saida.
   for (const saida of saidas) {
     if (!saida.temVinculo) continue;
+    const candidatas: EntradaItem[] = [];
     for (const destino of saida.destinos) {
-      if (saida.quantidadeAberta <= 0.0001) break;
       const itens = porDocumento.get(`${destino.branch}|${destino.transaction}`);
-      if (!itens) continue;
-      for (const entrada of itens) {
-        if (saida.quantidadeAberta <= 0.0001) break;
-        if (entrada.product_code !== saida.product_code || entrada.restante <= 0.0001) continue;
-        abater(saida, entrada, 'vinculo');
-      }
+      if (itens) candidatas.push(...itens.filter((i) => i.product_code === saida.product_code));
     }
-  }
+    candidatas.sort((a, b) => a.transaction_date.getTime() - b.transaction_date.getTime());
 
-  // FASE 2 - FIFO, so pras saidas SEM vinculo. Saida que tem vinculo e nao foi baixada
-  // por ele fica aberta de proposito: o TOTVS ja afirmou o que foi recebido, completar
-  // com aproximacao seria apagar a evidencia.
-  for (const saida of saidas) {
-    if (saida.temVinculo || saida.quantidadeAberta <= 0.0001) continue;
-    const fila = porParFifo.get(`${saida.destinoBranchCode}|${saida.product_code}`);
-    if (!fila) continue;
-    for (const entrada of fila) {
+    for (const entrada of candidatas) {
       if (saida.quantidadeAberta <= 0.0001) break;
       if (entrada.restante <= 0.0001) continue;
-      if (entrada.transaction_date < saida.transaction_date) continue;
-      abater(saida, entrada, 'fifo');
+      abater(saida, entrada);
     }
   }
 
@@ -582,8 +630,12 @@ async function main(): Promise<void> {
   const janelaInicio = toDateOnly(inicio);
   const janelaFim = toDateOnly(fim);
 
-  const [saidas, entradas] = await Promise.all([getSaidas(meses), getEntradas(meses)]);
-  const { linhas, movimentos, descartadas } = calcular(saidas, entradas, janelaInicio, janelaFim);
+  const [saidas, entradas, vinculos] = await Promise.all([
+    getSaidas(meses),
+    getEntradas(meses),
+    getVinculos(meses),
+  ]);
+  const { linhas, movimentos, descartadas } = calcular(saidas, entradas, vinculos, janelaInicio, janelaFim);
   const abertas = linhas.filter((linha) => linha.quantidadeEmTransito > 0.0001);
   const comVinculo = linhas.filter((linha) => linha.temVinculo);
 
@@ -605,13 +657,19 @@ async function main(): Promise<void> {
     pecasEmTransito: somaPecas(abertas, 'quantidadeEmTransito'),
     documentosPendentes: new Set(abertas.map((linha) => linha.saidaTransactionCode)).size,
     lojasPendentes: new Set(abertas.map((linha) => linha.destinoBranchCode)).size,
-    // O que o vinculo do TOTVS cobre hoje contra o que ainda depende de aproximacao
+    // Cobertura do vinculo. `linhasSemVinculo` e o que preocupa: sao saidas que o ERP
+    // nao relaciona a entrada nenhuma, e que portanto saem 100% abertas.
     vinculo: {
+      pares: vinculos.length,
       linhasComVinculo: comVinculo.length,
+      linhasSemVinculo: linhas.length - comVinculo.length,
       pecasComVinculo: somaPecas(comVinculo, 'quantidadeSaida'),
       pecasAbertasComVinculo: somaPecas(comVinculo.filter((l) => l.quantidadeEmTransito > 0.0001), 'quantidadeEmTransito'),
-      baixasPorVinculo: movimentos.filter((m) => m.metodo === 'vinculo').length,
-      baixasPorFifo: movimentos.filter((m) => m.metodo === 'fifo').length,
+      pecasAbertasSemVinculo: somaPecas(
+        linhas.filter((l) => !l.temVinculo && l.quantidadeEmTransito > 0.0001),
+        'quantidadeEmTransito'
+      ),
+      baixas: movimentos.length,
     },
   };
 

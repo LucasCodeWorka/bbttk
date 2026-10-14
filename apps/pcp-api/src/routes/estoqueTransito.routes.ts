@@ -43,7 +43,7 @@ router.get('/estoque-transito', async (req: Request, res: Response) => {
       idadeMax: parseNumber(req.query.idadeMax),
       apenasPendentes: req.query.apenasPendentes !== 'false',
       confiabilidade:
-        req.query.confiabilidade === 'vinculo' || req.query.confiabilidade === 'fifo'
+        req.query.confiabilidade === 'vinculo' || req.query.confiabilidade === 'sem_vinculo'
           ? req.query.confiabilidade
           : undefined,
     };

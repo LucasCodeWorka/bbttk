@@ -27,9 +27,9 @@ function toDateString(value: Date | null | undefined): string | null {
 
 export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
 
-// Como a baixa da linha foi determinada. 'vinculo' = o TOTVS aponta o documento de
-// entrada; 'fifo' = aproximacao por fila (so onde nao ha vinculo); 'misto' = os dois
-// contribuiram; null = nada foi baixado.
+// Desde 14/10/2026 a baixa e sempre por vinculo do TOTVS - o FIFO foi removido do
+// calculo. `null` significa que nada foi baixado nessa linha. Os valores 'fifo'/'misto'
+// so apareceriam numa foto materializada por uma versao antiga do script.
 export type EstoqueTransitoMetodo = 'vinculo' | 'fifo' | 'misto';
 
 export interface EstoqueTransitoFiltro {
@@ -43,8 +43,8 @@ export interface EstoqueTransitoFiltro {
   idadeMin?: number;
   idadeMax?: number;
   apenasPendentes?: boolean;
-  /** 'vinculo' = so o que o ERP confirma documento a documento; 'fifo' = so o aproximado. */
-  confiabilidade?: 'vinculo' | 'fifo';
+  /** 'vinculo' = saidas que o ERP relaciona a um documento de entrada; 'sem_vinculo' = as que nao. */
+  confiabilidade?: 'vinculo' | 'sem_vinculo';
 }
 
 export interface EstoqueTransitoRow {
@@ -174,7 +174,7 @@ function buildFiltro(filtro: EstoqueTransitoFiltro): Prisma.Sql {
   if (Number.isFinite(filtro.idadeMin)) condicoes.push(Prisma.sql`t.dias_em_transito >= ${filtro.idadeMin}`);
   if (Number.isFinite(filtro.idadeMax)) condicoes.push(Prisma.sql`t.dias_em_transito <= ${filtro.idadeMax}`);
   if (filtro.confiabilidade === 'vinculo') condicoes.push(Prisma.sql`t.tem_vinculo = true`);
-  if (filtro.confiabilidade === 'fifo') condicoes.push(Prisma.sql`t.tem_vinculo = false`);
+  if (filtro.confiabilidade === 'sem_vinculo') condicoes.push(Prisma.sql`t.tem_vinculo = false`);
   if (filtro.search?.trim()) {
     const termo = `%${filtro.search.trim()}%`;
     condicoes.push(Prisma.sql`(

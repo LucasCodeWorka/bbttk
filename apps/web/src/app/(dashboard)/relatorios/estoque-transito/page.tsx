@@ -67,8 +67,8 @@ const STATUS_LABEL: Record<EstoqueTransitoStatus, string> = {
 
 const STATUS_OPCOES: EstoqueTransitoStatus[] = ['em_transito', 'parcial', 'recebido'];
 
-// A origem da baixa nao e decoracao: ela diz se a linha e fato do ERP ou aproximacao
-// nossa. Rotulo escrito sempre, nunca so a cor.
+// Toda baixa vem do vinculo do TOTVS. 'fifo'/'misto' so apareceriam numa foto gerada
+// por versao antiga do script - ficam mapeados pra nao quebrar a tela nesse caso.
 const METODO_BADGE: Record<string, string> = {
   vinculo: 'bg-green-100 text-green-700',
   fifo: 'bg-gray-100 text-gray-600',
@@ -77,8 +77,8 @@ const METODO_BADGE: Record<string, string> = {
 
 const METODO_LABEL: Record<string, string> = {
   vinculo: 'Vinculo TOTVS',
-  fifo: 'Aproximado',
-  misto: 'Misto',
+  fifo: 'Aproximado (foto antiga)',
+  misto: 'Misto (foto antiga)',
 };
 
 const DIMENSOES = ['categoria', 'linha', 'genero', 'statusProduto'] as const;
@@ -146,7 +146,7 @@ export default function EstoqueTransitoPage() {
   const [idadeMin, setIdadeMin] = useState('');
   const [idadeMax, setIdadeMax] = useState('');
   const [apenasPendentes, setApenasPendentes] = useState(true);
-  const [confiabilidade, setConfiabilidade] = useState<'todas' | 'vinculo' | 'fifo'>('todas');
+  const [confiabilidade, setConfiabilidade] = useState<'todas' | 'vinculo' | 'sem_vinculo'>('todas');
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<EstoqueTransitoResponse | null>(null);
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<EstoqueTransitoFiltrosResponse | null>(null);
@@ -382,22 +382,16 @@ export default function EstoqueTransitoPage() {
       <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-xs text-yellow-900">
         <p className="font-semibold">Como ler este relatorio</p>
         <p className="mt-1">
-          A baixa de cada linha vem de uma de duas fontes, e a coluna <strong>ORIGEM DA BAIXA</strong> diz qual:
+          Toda baixa vem do <strong>vinculo documento-a-documento do TOTVS</strong>: o ERP aponta exatamente qual documento de entrada recebeu cada saida, e a
+          coluna <strong>DOC. ENTRADA</strong> mostra qual e, pra abrir e conferir. Nao ha estimativa no calculo.
         </p>
-        <ul className="mt-1 ml-4 list-disc space-y-0.5">
-          <li>
-            <strong>Vinculo TOTVS</strong> — o proprio ERP aponta qual documento de entrada recebeu esta saida. E fato, e a coluna DOC. ENTRADA mostra o
-            documento pra conferir. Disponivel para saidas a partir de{' '}
-            {data?.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '25/06/2026'}.
-          </li>
-          <li>
-            <strong>Aproximado</strong> — antes dessa data o TOTVS nao gravava o vinculo, entao a baixa e estimada por fila FIFO em loja destino + produto.
-            Serve pra dimensionar, nao pra afirmar que um documento especifico ficou em aberto.
-          </li>
-        </ul>
         <p className="mt-1">
-          Uma linha pendente significa <strong>saida sem entrada equivalente registrada</strong>. Pendencia com vinculo e cobravel; pendencia so aproximada e
-          indicio. Idade alta tende a ser atraso de lancamento/residuo contabil, nao caminhao na estrada.
+          Por isso, uma linha pendente significa uma coisa so: <strong>a saida nao tem entrada correspondente registrada no ERP</strong>. Ou a mercadoria nao
+          chegou, ou a loja nao lancou o recebimento. Nos dois casos ha o que cobrar, e o documento de saida identifica de quem.
+        </p>
+        <p className="mt-1">
+          Linha marcada <strong>Sem vinculo</strong> e o caso mais grave: o ERP nao relaciona aquela saida a entrada nenhuma, entao ela aparece 100% aberta.
+          Idade alta continua indicando atraso de lancamento ou residuo contabil, nao caminhao na estrada.
         </p>
         {data && (
           <p className="mt-2">
@@ -476,8 +470,8 @@ export default function EstoqueTransitoPage() {
           {(
             [
               { valor: 'todas', label: 'Tudo' },
-              { valor: 'vinculo', label: 'So com vinculo do TOTVS' },
-              { valor: 'fifo', label: 'So aproximado (FIFO)' },
+              { valor: 'vinculo', label: 'Com vinculo no ERP' },
+              { valor: 'sem_vinculo', label: 'Sem vinculo nenhum' },
             ] as const
           ).map((opcao) => (
             <button
@@ -588,21 +582,21 @@ export default function EstoqueTransitoPage() {
           <CardHeader>
             <CardTitle>Confiabilidade da apuracao</CardTitle>
           </CardHeader>
-          <p className="text-xs text-gray-500 -mt-2 mb-3">Quanto do recorte o ERP confirma documento a documento, e quanto ainda e aproximacao nossa.</p>
+          <p className="text-xs text-gray-500 -mt-2 mb-3">Quanto do recorte o ERP relaciona a um documento de entrada, e quanto ele nao relaciona a nenhum.</p>
           {data && (
             <div className="space-y-3">
               {(
                 [
                   {
                     chave: 'vinculo' as const,
-                    label: 'Vinculo TOTVS',
+                    label: 'Com vinculo no ERP',
                     pecas: data.confiabilidade.pecasComVinculo,
                     linhas: data.confiabilidade.linhasComVinculo,
                     abertas: data.kpis.pecasAbertasComVinculo,
                   },
                   {
-                    chave: 'fifo' as const,
-                    label: 'Aproximado (FIFO)',
+                    chave: 'sem_vinculo' as const,
+                    label: 'Sem vinculo nenhum',
                     pecas: data.confiabilidade.pecasSemVinculo,
                     linhas: data.confiabilidade.linhasSemVinculo,
                     abertas: data.kpis.pecasAbertasSemVinculo,
@@ -628,9 +622,9 @@ export default function EstoqueTransitoPage() {
               ))}
 
               <p className="border-t border-gray-100 pt-3 text-[11px] text-gray-500">
-                O vinculo do TOTVS existe para saidas a partir de{' '}
-                <strong>{data.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '-'}</strong>. Antes disso o
-                ERP nao gravava a amarracao, entao nao ha como ser exato — a conta e aproximada por desenho, nao por falha.
+                O vinculo e lido direto do TOTVS (`originDestination`) e cobre a janela inteira — a saida mais antiga com vinculo e de{' '}
+                <strong>{data.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '-'}</strong>. Nao ha
+                estimativa no calculo: o que o ERP nao relaciona fica aberto.
               </p>
             </div>
           )}
