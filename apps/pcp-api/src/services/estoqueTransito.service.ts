@@ -45,7 +45,46 @@ export interface EstoqueTransitoFiltro {
   apenasPendentes?: boolean;
   /** 'vinculo' = saidas que o ERP relaciona a um documento de entrada; 'sem_vinculo' = as que nao. */
   confiabilidade?: 'vinculo' | 'sem_vinculo';
+  /** Coluna da ordenacao - precisa ser do servidor, senao paginar embaralha o resultado. */
+  ordenarPor?: string;
+  direcao?: 'asc' | 'desc';
+  offset?: number;
+  limite?: number;
 }
+
+// Ordenacao e feita no banco, nao no navegador. Antes a tela ordenava as 2.000 linhas
+// que ja tinham chegado, mas essas 2.000 eram escolhidas por outro criterio (quantidade
+// aberta, depois idade) - o resultado era uma amostra enviesada que parecia buraco no
+// historico: a tabela pulava de out/2026 pra nov/2025 porque os 11 meses do meio
+// (45.360 linhas) nunca entravam no corte.
+const COLUNAS_ORDENAVEIS: Record<string, string> = {
+  statusTransito: 'status_transito',
+  metodoBaixa: 'metodo_baixa',
+  entradaDocs: 'entrada_docs',
+  destinoBranchName: 'destino_branch_name',
+  saidaTransactionCode: 'saida_transaction_code',
+  saidaTransactionDate: 'saida_transaction_date',
+  diasEmTransito: 'dias_em_transito',
+  saidaOperationCode: 'saida_operation_code',
+  saidaOperationDescription: 'saida_operation_description',
+  productSku: 'product_sku',
+  referenceCode: 'reference_code',
+  productName: 'product_name',
+  colorName: 'color_name',
+  size: 'size',
+  categoria: 'categoria',
+  linha: 'linha',
+  genero: 'genero',
+  colecao: 'colecao',
+  quantidadeSaida: 'quantidade_saida',
+  quantidadeRecebida: 'quantidade_recebida',
+  quantidadeEmTransito: 'quantidade_em_transito',
+  primeiraEntradaDate: 'primeira_entrada_date',
+  ultimaEntradaDate: 'ultima_entrada_date',
+};
+
+const LIMITE_PADRAO = 2000;
+const LIMITE_MAXIMO = 5000;
 
 export interface EstoqueTransitoRow {
   id: number;
@@ -89,8 +128,11 @@ export interface EstoqueTransitoResponse {
     defasagemDias: number | null;
     incompleta: boolean;
   };
-  linhasTruncadas: boolean;
-  limiteLinhas: number;
+  // Paginacao: `rows` e a fatia pedida, `kpis.linhas` e o total do recorte e `temMais`
+  // diz se vale buscar a proxima pagina (a tela carrega conforme a rolagem).
+  temMais: boolean;
+  offset: number;
+  limite: number;
   kpis: {
     documentos: number;
     lojas: number;
@@ -230,8 +272,6 @@ function mapRow(row: RawRow): EstoqueTransitoRow {
   };
 }
 
-const LIMITE_LINHAS = 2000;
-
 // Faixas de idade da pendencia. Ficam aqui (nao no SQL) pra o rotulo e o corte
 // morarem no mesmo lugar; o CASE da query e gerado a partir desta lista.
 const FAIXAS_IDADE: Array<{ label: string; min: number; max: number | null }> = [
@@ -256,6 +296,17 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
   const filtroSql = buildFiltro(filtro);
   const lojasFechadasSql = LOJAS_FECHADAS.size > 0 ? Prisma.join(Array.from(LOJAS_FECHADAS)) : Prisma.sql`NULL`;
 
+  const offset = Math.max(0, Math.floor(filtro.offset ?? 0));
+  const limite = Math.min(Math.max(1, Math.floor(filtro.limite ?? LIMITE_PADRAO)), LIMITE_MAXIMO);
+
+  // `t.id` no fim e o desempate: sem ordem total, paginar por OFFSET pode repetir ou
+  // pular linha quando ha empate na coluna escolhida.
+  const coluna = COLUNAS_ORDENAVEIS[filtro.ordenarPor ?? ''];
+  const direcao = filtro.direcao === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+  const ordenacaoSql = coluna
+    ? Prisma.sql`${Prisma.raw(`t.${coluna}`)} ${direcao} NULLS LAST, t.id ASC`
+    : Prisma.sql`t.quantidade_em_transito DESC, t.dias_em_transito DESC, t.saida_transaction_date DESC, t.id ASC`;
+
   // As linhas vem com LIMIT (a tabela de auditoria nao precisa de 40 mil linhas no
   // navegador), mas TODA agregacao e feita em SQL sobre o conjunto filtrado inteiro.
   // Somar em memoria sobre as linhas limitadas dava total errado sem avisar - era o
@@ -266,8 +317,8 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       SELECT *
       FROM pcp_estoque_transito t
       ${filtroSql}
-      ORDER BY t.quantidade_em_transito DESC, t.dias_em_transito DESC, t.saida_transaction_date DESC, t.destino_branch_code
-      LIMIT ${LIMITE_LINHAS}
+      ORDER BY ${ordenacaoSql}
+      LIMIT ${limite} OFFSET ${offset}
     `,
 
     // Sem filtro de proposito: descreve a FOTO inteira, nao o recorte. `primeira_saida_com_vinculo`
@@ -374,10 +425,9 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       defasagemDias,
       incompleta: defasagemDias !== null && defasagemDias > DIAS_TOLERANCIA_COBERTURA,
     },
-    // `linhas` e o total do recorte; `rows.length` pode ser menor por causa do LIMIT.
-    // `linhasTruncadas` deixa isso explicito pra tela avisar antes de exportar.
-    linhasTruncadas: linhasTotais > rows.length,
-    limiteLinhas: LIMITE_LINHAS,
+    temMais: offset + rows.length < linhasTotais,
+    offset,
+    limite,
     kpis: {
       documentos: kpisRow?.documentos ?? 0,
       lojas: kpisRow?.lojas ?? 0,

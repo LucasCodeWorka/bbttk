@@ -152,6 +152,15 @@ export default function EstoqueTransitoPage() {
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<EstoqueTransitoFiltrosResponse | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('quantidadeEmTransito');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // As linhas chegam paginadas; a ordenacao e do servidor. Ordenar no navegador sobre
+  // uma pagina so daria amostra enviesada - foi o bug que fazia a tabela pular de
+  // out/2026 pra nov/2025, escondendo 11 meses.
+  const [rows, setRows] = useState<EstoqueTransitoRow[]>([]);
+  const [carregandoMais, setCarregandoMais] = useState(false);
+  const temMaisRef = useRef(false);
+  const carregandoMaisRef = useRef(false);
+  const rowsRef = useRef<EstoqueTransitoRow[]>([]);
+  rowsRef.current = rows;
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
@@ -183,19 +192,58 @@ export default function EstoqueTransitoPage() {
         idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
         apenasPendentes,
         confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        ordenarPor: sortKey,
+        direcao: sortDir,
+        offset: 0,
       });
       setData(response);
+      setRows(response.rows);
+      temMaisRef.current = response.temMais;
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Erro ao carregar Estoque em Transito', 'error');
       console.error(error);
     } finally {
       setIsLoading(false);
     }
-  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, showToast]);
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, sortKey, sortDir, showToast]);
 
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  // Proxima pagina, disparada pela rolagem. Usa refs pro handler de scroll nao precisar
+  // ser recriado a cada render.
+  const carregarMais = useCallback(async () => {
+    if (!token || carregandoMaisRef.current || !temMaisRef.current) return;
+    carregandoMaisRef.current = true;
+    setCarregandoMais(true);
+    try {
+      const response = await estoqueTransitoApi.getEstoqueTransito(token, {
+        status: statusSelecionado.length > 0 ? statusSelecionado : undefined,
+        branches: branches.length > 0 ? branches : undefined,
+        categoria: produtoFiltro.categoria,
+        linha: produtoFiltro.linha,
+        genero: produtoFiltro.genero,
+        statusProduto: produtoFiltro.statusProduto,
+        search: search.trim() || undefined,
+        idadeMin: idadeMin.trim() ? Number(idadeMin) : undefined,
+        idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
+        apenasPendentes,
+        confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        ordenarPor: sortKey,
+        direcao: sortDir,
+        offset: rowsRef.current.length,
+      });
+      setRows((anteriores) => [...anteriores, ...response.rows]);
+      temMaisRef.current = response.temMais;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao carregar mais linhas', 'error');
+      console.error(error);
+    } finally {
+      carregandoMaisRef.current = false;
+      setCarregandoMais(false);
+    }
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, sortKey, sortDir, showToast]);
 
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
@@ -209,17 +257,8 @@ export default function EstoqueTransitoPage() {
     }
   }
 
-  const rowsOrdenadas = useMemo(() => {
-    const rows = data?.rows || [];
-    return [...rows].sort((a, b) => {
-      const va = a[sortKey];
-      const vb = b[sortKey];
-      if (va === null || va === undefined) return 1;
-      if (vb === null || vb === undefined) return -1;
-      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR', { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [data, sortKey, sortDir]);
+  // A ordenacao vem pronta do servidor - aqui so damos nome pra ela.
+  const rowsOrdenadas = rows;
 
   useEffect(() => {
     const tabela = tabelaScrollRef.current;
@@ -236,6 +275,10 @@ export default function EstoqueTransitoPage() {
     };
     const sincronizarTopo = () => {
       topo.scrollLeft = tabela.scrollLeft;
+      // Busca a proxima pagina quando falta menos de uma tela pro fim.
+      if (tabela.scrollHeight - tabela.scrollTop - tabela.clientHeight < tabela.clientHeight) {
+        carregarMais();
+      }
     };
 
     tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
@@ -251,7 +294,7 @@ export default function EstoqueTransitoPage() {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', atualizarLargura);
     };
-  }, [rowsOrdenadas.length, isLoading]);
+  }, [rowsOrdenadas.length, isLoading, carregarMais]);
 
   function sincronizarScrollPeloTopo() {
     const topo = topScrollRef.current;
@@ -321,7 +364,7 @@ export default function EstoqueTransitoPage() {
       columns,
       data: rowsOrdenadas as unknown as Record<string, unknown>[],
       totals: {
-        statusTransito: data.linhasTruncadas
+        statusTransito: data.temMais
           ? `SUBTOTAL (${rowsOrdenadas.length} de ${data.kpis.linhas} linhas do recorte)`
           : `TOTAL (${rowsOrdenadas.length} linhas)`,
         quantidadeSaida: totais.quantidadeSaida,
@@ -682,14 +725,14 @@ export default function EstoqueTransitoPage() {
           <CardTitle>Auditoria documento a documento</CardTitle>
         </CardHeader>
         <p className="text-xs text-gray-500 -mt-2 mb-3">
-          Uma linha por item de documento de saida.{' '}
-          {data?.linhasTruncadas ? (
-            <span className="font-medium text-[var(--bbtk-red)]">
-              O recorte atual tem {formatNumber(data.kpis.linhas)} linhas e a tabela mostra as {formatNumber(data.limiteLinhas)} maiores — os KPIs e as
-              distribuicoes acima seguem calculados sobre o total, mas o Excel exporta so o que esta na tabela. Feche mais o filtro pra exportar completo.
-            </span>
+          Uma linha por item de documento de saida. Ordenacao e feita no servidor, e as linhas carregam conforme voce rola.{' '}
+          <span className="font-medium text-gray-700">
+            Mostrando {formatNumber(rowsOrdenadas.length)} de {formatNumber(data?.kpis.linhas || 0)}.
+          </span>{' '}
+          {data?.temMais ? (
+            <span className="text-[var(--bbtk-red)]">O Excel exporta so o que ja foi carregado — role ate o fim ou feche o filtro antes de exportar.</span>
           ) : (
-            <>Mostrando as {formatNumber(data?.kpis.linhas || 0)} linhas do recorte, sem corte.</>
+            <>Recorte inteiro carregado.</>
           )}
         </p>
 
@@ -773,8 +816,8 @@ export default function EstoqueTransitoPage() {
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-20 bg-yellow-50 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
                   <TableCell colSpan={18} className="font-bold">
-                    {data?.linhasTruncadas
-                      ? `SUBTOTAL DA TABELA (${formatNumber(rowsOrdenadas.length)} de ${formatNumber(data.kpis.linhas)} linhas)`
+                    {data?.temMais
+                      ? `SUBTOTAL CARREGADO (${formatNumber(rowsOrdenadas.length)} de ${formatNumber(data.kpis.linhas)} linhas)`
                       : `TOTAL (${formatNumber(rowsOrdenadas.length)} linhas)`}
                   </TableCell>
                   <TableCell align="right" className="font-bold">

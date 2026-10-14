@@ -1270,6 +1270,27 @@ entre "mandei pra" e "vim de".
 Faixas de idade voltaram a fazer sentido: 324 peças com até 7 dias (trânsito recente de
 verdade), 25 de 8 a 15, e 946 com 91+ (Terrazo).
 
+### 🐛 Bug corrigido na mesma sessão: ordenar no navegador sobre uma página enviesada
+
+A tabela carregava `LIMIT 2000` com `ORDER BY quantidade_em_transito DESC,
+dias_em_transito DESC` e **ordenava no navegador**. Com o ciclo completo
+(`apenasPendentes=false`, 59.716 linhas), essas 2.000 eram: todas as abertas, e depois as
+recebidas **mais antigas**. Resultado medido — meses presentes nas 2.000: out/2025,
+nov/2025, dez/2025 e out/2026. **Os 11 meses do meio (45.360 linhas) nunca entravam.**
+Clicando pra ordenar por data, a tela pulava de 05/10/2026 pra 03/11/2025 e parecia
+buraco no histórico.
+
+Corrigido: **ordenação e paginação agora são do servidor** (`ordenarPor`/`direcao`/
+`offset`/`limite`, coluna validada contra `COLUNAS_ORDENAVEIS`), e a tela carrega a
+próxima página conforme a rolagem. `t.id ASC` entra como desempate — sem ordem total,
+`OFFSET` repete ou pula linha em caso de empate. A resposta traz `temMais`/`offset`/
+`limite` no lugar do antigo `linhasTruncadas`.
+
+**Lição que vale pra qualquer tela paginada do PCP**: ordenar no cliente só é honesto
+quando o cliente tem o conjunto inteiro. Se há `LIMIT`, a ordenação tem que ser a mesma
+que escolheu as linhas — senão o usuário ordena uma amostra selecionada por outro
+critério, e não tem como perceber.
+
 ### ⚠️ As 1.295 que sobraram NÃO são pendência de negócio
 
 Medido: em **30 de 30** pares ainda abertos, o documento de entrada **existe** no TOTVS e

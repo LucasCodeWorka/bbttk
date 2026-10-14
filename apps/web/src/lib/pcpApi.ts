@@ -1725,6 +1725,11 @@ export interface EstoqueTransitoFiltro {
   idadeMax?: number;
   apenasPendentes?: boolean;
   confiabilidade?: 'vinculo' | 'sem_vinculo';
+  /** Ordenacao e paginacao sao do servidor: ordenar no navegador sobre uma pagina daria amostra enviesada. */
+  ordenarPor?: string;
+  direcao?: 'asc' | 'desc';
+  offset?: number;
+  limite?: number;
 }
 
 export interface EstoqueTransitoRow {
@@ -1818,9 +1823,10 @@ export interface EstoqueTransitoResponse {
   atualizadoEm: string | null;
   janela: { inicio: string | null; fim: string | null };
   cobertura: EstoqueTransitoCobertura;
-  /** true quando o recorte tem mais linhas do que o LIMIT devolve (KPIs seguem completos). */
-  linhasTruncadas: boolean;
-  limiteLinhas: number;
+  /** true quando ainda ha pagina seguinte (KPIs sempre descrevem o recorte inteiro). */
+  temMais: boolean;
+  offset: number;
+  limite: number;
   kpis: EstoqueTransitoKpis;
   confiabilidade: EstoqueTransitoConfiabilidade;
   idadeBuckets: EstoqueTransitoIdadeBucket[];
@@ -1848,6 +1854,10 @@ export const estoqueTransitoApi = {
     if (filtro.idadeMax !== undefined) params.set('idadeMax', String(filtro.idadeMax));
     if (filtro.apenasPendentes !== undefined) params.set('apenasPendentes', String(filtro.apenasPendentes));
     if (filtro.confiabilidade) params.set('confiabilidade', filtro.confiabilidade);
+    if (filtro.ordenarPor) params.set('ordenarPor', filtro.ordenarPor);
+    if (filtro.direcao) params.set('direcao', filtro.direcao);
+    if (filtro.offset !== undefined) params.set('offset', String(filtro.offset));
+    if (filtro.limite !== undefined) params.set('limite', String(filtro.limite));
     const query = params.toString();
     return fetchPcpApi<EstoqueTransitoResponse>(`/api/pcp/estoque-transito${query ? `?${query}` : ''}`, { token });
   },
