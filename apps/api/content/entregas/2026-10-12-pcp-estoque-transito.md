@@ -21,11 +21,13 @@ A tabela de baixo é a prova documento a documento: uma linha por item de docume
 
 ## Como o cálculo funciona (e o limite dele)
 
-O TOTVS **não** guarda vínculo documento-a-documento de transferência: não existe campo dizendo "esta entrada baixou aquela saída". A amarração é feita por fila FIFO por loja de destino + produto — a entrada mais antiga abate a saída mais antiga daquele produto naquela loja.
+Na versão inicial, a amarração é feita por fila FIFO por loja de destino + produto — a entrada mais antiga abate a saída mais antiga daquele produto naquela loja. **Correção do diagnóstico:** a API do TOTVS oferece vínculo documento-a-documento via `expand=originDestination`; esse campo não era recuperado pelo ETL.
 
 Consequência prática: uma linha pendente significa **saída sem entrada equivalente registrada**, o que pode ser mercadoria em trânsito de verdade ou atraso de lançamento no TOTVS. A faixa de idade é o que separa os dois casos.
 
-## ⚠️ Hoje o relatório não mostra trânsito atual
+## Cobertura na primeira apuração (12/10/2026)
+
+O diagnóstico abaixo descreve a primeira apuração, antes da recuperação dos itens. Consulte também a novidade **Estoque em Trânsito com dados recuperados**.
 
 O ETL que traz os dados do TOTVS parou de gravar os **itens** das operações de transferência. A saída mais recente com item registrado é de **24/06/2026** — de julho em diante não há item pra contar. Isso não significa que a rede parou de transferir mercadoria; significa que o dado não está chegando.
 
