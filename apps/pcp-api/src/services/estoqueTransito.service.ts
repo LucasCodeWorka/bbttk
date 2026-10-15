@@ -50,7 +50,24 @@ export interface EstoqueTransitoFiltro {
   direcao?: 'asc' | 'desc';
   offset?: number;
   limite?: number;
+  /** Janela do prazo medio por loja (30/90/180 dias). Nao afeta o resto do relatorio. */
+  prazoDias?: number;
 }
+
+export interface EstoqueTransitoPrazoLoja {
+  branchCode: number;
+  branchName: string;
+  lojaFechada: boolean;
+  /** Media de dias entre a saida e a ultima baixa, so de linhas ja encerradas. */
+  diasMedio: number;
+  diasMediana: number;
+  diasMaximo: number;
+  linhas: number;
+  pecas: number;
+}
+
+const PRAZO_DIAS_PERMITIDOS = [30, 90, 180];
+const PRAZO_DIAS_PADRAO = 90;
 
 // Ordenacao e feita no banco, nao no navegador. Antes a tela ordenava as 2.000 linhas
 // que ja tinham chegado, mas essas 2.000 eram escolhidas por outro criterio (quantidade
@@ -161,6 +178,16 @@ export interface EstoqueTransitoResponse {
   idadeBuckets: Array<{ label: string; min: number; max: number | null; pecas: number; linhas: number }>;
   porLoja: Array<{ branchCode: number; branchName: string; lojaFechada: boolean; documentos: number; linhas: number; pecasEmTransito: number; maisAntiga: string | null; maisRecente: string | null }>;
   porStatus: Array<{ status: EstoqueTransitoStatus; label: string; linhas: number; pecas: number }>;
+  // Prazo medio de entrega por loja. Diferente do resto da resposta, NAO respeita os
+  // filtros de recorte (status/idade/busca): ele descreve o desempenho historico da
+  // operacao, e filtrar por "so pendentes" deixaria a amostra so com o que nao chegou.
+  // O filtro de loja e respeitado, porque ai o usuario quer comparar um subconjunto.
+  prazoEntrega: {
+    dias: number;
+    porLoja: EstoqueTransitoPrazoLoja[];
+    mediaGeral: number | null;
+    linhasConsideradas: number;
+  };
   rows: EstoqueTransitoRow[];
 }
 
@@ -292,6 +319,58 @@ function faixaIdadeSql(): Prisma.Sql {
   return Prisma.sql`CASE ${Prisma.join(ramos, ' ')} END`;
 }
 
+// Prazo de entrega por loja: media de dias entre a saida da Fabrica e a ultima baixa.
+//
+// So entra linha JA ENCERRADA (`quantidade_em_transito = 0` com data de baixa), porque
+// so nela `dias_em_transito` significa "quanto tempo levou" - na linha aberta o contador
+// ainda corre e inflaria a media com mercadoria que nem chegou.
+//
+// A janela e pela DATA DE SAIDA: "das remessas que sairam nos ultimos N dias, quanto
+// tempo levaram". Cortar pela data de baixa misturaria remessas antigas que so foram
+// baixadas agora.
+async function getPrazoEntregaPorLoja(dias: number, branches?: number[]): Promise<EstoqueTransitoPrazoLoja[]> {
+  const filtroLoja = branches?.length
+    ? Prisma.sql`AND t.destino_branch_code IN (${Prisma.join(branches)})`
+    : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<Array<{
+    branch_code: number;
+    branch_name: string | null;
+    dias_medio: Decimal | null;
+    dias_mediana: number | null;
+    dias_maximo: number | null;
+    linhas: number;
+    pecas: Decimal | null;
+  }>>`
+    SELECT
+      t.destino_branch_code AS branch_code,
+      MAX(t.destino_branch_name) AS branch_name,
+      AVG(t.dias_em_transito) AS dias_medio,
+      percentile_disc(0.5) WITHIN GROUP (ORDER BY t.dias_em_transito)::int AS dias_mediana,
+      MAX(t.dias_em_transito)::int AS dias_maximo,
+      COUNT(*)::int AS linhas,
+      SUM(t.quantidade_saida) AS pecas
+    FROM pcp_estoque_transito t
+    WHERE t.quantidade_em_transito = 0
+      AND t.ultima_entrada_date IS NOT NULL
+      AND t.saida_transaction_date >= current_date - ${dias}::int
+      ${filtroLoja}
+    GROUP BY t.destino_branch_code
+    ORDER BY AVG(t.dias_em_transito) DESC
+  `;
+
+  return rows.map((item) => ({
+    branchCode: item.branch_code,
+    branchName: item.branch_name || `Filial ${item.branch_code}`,
+    lojaFechada: LOJAS_FECHADAS.has(item.branch_code),
+    diasMedio: round(decimalToNumber(item.dias_medio), 1),
+    diasMediana: item.dias_mediana ?? 0,
+    diasMaximo: item.dias_maximo ?? 0,
+    linhas: item.linhas,
+    pecas: round(decimalToNumber(item.pecas), 0),
+  }));
+}
+
 export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Promise<EstoqueTransitoResponse> {
   const filtroSql = buildFiltro(filtro);
   const lojasFechadasSql = LOJAS_FECHADAS.size > 0 ? Prisma.join(Array.from(LOJAS_FECHADAS)) : Prisma.sql`NULL`;
@@ -312,7 +391,11 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
   // Somar em memoria sobre as linhas limitadas dava total errado sem avisar - era o
   // caso de `apenasPendentes=false`, onde o recorte estourava o limite e os KPIs
   // passavam a descrever so as 2000 primeiras linhas.
-  const [rowsRaw, meta, kpisRaw, faixasRaw, porLojaRaw, porStatusRaw] = await Promise.all([
+  const prazoDias = PRAZO_DIAS_PERMITIDOS.includes(filtro.prazoDias ?? 0)
+    ? (filtro.prazoDias as number)
+    : PRAZO_DIAS_PADRAO;
+
+  const [rowsRaw, meta, kpisRaw, faixasRaw, porLojaRaw, porStatusRaw, prazoRaw] = await Promise.all([
     prisma.$queryRaw<RawRow[]>`
       SELECT *
       FROM pcp_estoque_transito t
@@ -405,6 +488,8 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       GROUP BY t.status_transito
       ORDER BY SUM(t.quantidade_em_transito) DESC
     `,
+
+    getPrazoEntregaPorLoja(prazoDias, filtro.branches),
   ]);
 
   const rows = rowsRaw.map(mapRow);
@@ -476,6 +561,20 @@ export async function getEstoqueTransito(filtro: EstoqueTransitoFiltro = {}): Pr
       linhas: item.linhas,
       pecas: round(decimalToNumber(item.pecas), 0),
     })),
+    prazoEntrega: {
+      dias: prazoDias,
+      porLoja: prazoRaw,
+      // Media ponderada por LINHA, nao media das medias: loja com 1.000 remessas pesa
+      // mais que uma com 50, que e o que descreve a operacao de verdade.
+      mediaGeral: prazoRaw.length
+        ? round(
+            prazoRaw.reduce((total, l) => total + l.diasMedio * l.linhas, 0) /
+              prazoRaw.reduce((total, l) => total + l.linhas, 0),
+            1
+          )
+        : null,
+      linhasConsideradas: prazoRaw.reduce((total, l) => total + l.linhas, 0),
+    },
     rows,
   };
 }

@@ -50,6 +50,7 @@ router.get('/estoque-transito', async (req: Request, res: Response) => {
       direcao: req.query.direcao === 'asc' ? 'asc' : req.query.direcao === 'desc' ? 'desc' : undefined,
       offset: parseNumber(req.query.offset),
       limite: parseNumber(req.query.limite),
+      prazoDias: parseNumber(req.query.prazoDias),
     };
 
     res.json(await getEstoqueTransito(filtro));

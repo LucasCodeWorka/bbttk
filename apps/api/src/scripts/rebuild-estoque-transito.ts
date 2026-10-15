@@ -268,6 +268,20 @@ async function ensureTables(): Promise<void> {
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_pcp_estoque_transito_ref ON pcp_estoque_transito (reference_code)`);
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_pcp_estoque_transito_metodo ON pcp_estoque_transito (metodo_baixa)`);
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_pcp_estoque_transito_mov_saida ON pcp_estoque_transito_movimentos (saida_branch_code, saida_transaction_code, saida_item_index)`);
+
+  // Chave de negocio das duas tabelas. A PK continua sendo o BIGSERIAL (nao da pra
+  // trocar sem recriar), mas o indice unico e o que permite o ON CONFLICT do upsert.
+  // Validado em 15/10/2026: zero duplicatas nas duas (53.823 e 53.821 linhas,
+  // mesma quantidade de chaves distintas).
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_pcp_estoque_transito_item
+     ON pcp_estoque_transito (saida_branch_code, saida_transaction_code, saida_item_index)`
+  );
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_pcp_estoque_transito_mov
+     ON pcp_estoque_transito_movimentos (saida_branch_code, saida_transaction_code, saida_item_index,
+                                         entrada_branch_code, entrada_transaction_code, entrada_item_index)`
+  );
 }
 
 // A filial de destino continua vindo de `branches.person_code = customer_code` como
@@ -518,6 +532,19 @@ function calcular(
       saida.entradasCasadas.find((item) => item.entrada.branch_code === saida.destinoBranchCode)?.entrada.branch_name ||
       null;
 
+    // `diasEmTransito` ENCERRA na baixa. Enquanto ha saldo aberto o contador corre ate
+    // hoje ("ha quanto tempo esta parado"); quando a linha fecha, congela na ultima
+    // entrada e passa a significar "quanto tempo a transferencia levou".
+    //
+    // Antes era sempre `hoje - saida`, o que media a idade do DOCUMENTO e nao o tempo em
+    // transito: linha recebida no dia seguinte aparecia com 189 dias de media (max 365),
+    // quando o transito real foi de 1,6 dia. Alem de errado, fazia as 53 mil linhas ja
+    // recebidas mudarem de valor todo dia, impedindo qualquer escrita incremental.
+    const ultimaEntrada = datas[datas.length - 1] || null;
+    const diasEmTransito = saida.quantidadeAberta > 0.0001 || !ultimaEntrada
+      ? diffDias(saida.transaction_date, hoje)
+      : diffDias(saida.transaction_date, ultimaEntrada);
+
     linhas.push({
       janelaInicio,
       janelaFim,
@@ -549,8 +576,8 @@ function calcular(
       quantidadeRecebida,
       quantidadeEmTransito: Math.max(saida.quantidadeAberta, 0),
       primeiraEntradaDate: datas[0] || null,
-      ultimaEntradaDate: datas[datas.length - 1] || null,
-      diasEmTransito: diffDias(saida.transaction_date, hoje),
+      ultimaEntradaDate: ultimaEntrada,
+      diasEmTransito,
     });
 
     for (const baixa of saida.entradasCasadas) {
@@ -598,6 +625,37 @@ async function insertLinhas(linhas: LinhaTransito[]): Promise<void> {
         ${l.ultimaEntradaDate ? toDateOnly(l.ultimaEntradaDate) : null}::date,
         ${l.diasEmTransito}, now()
       )`))}
+      ON CONFLICT (saida_branch_code, saida_transaction_code, saida_item_index) DO UPDATE SET
+        janela_inicio = EXCLUDED.janela_inicio,
+        janela_fim = EXCLUDED.janela_fim,
+        status_transito = EXCLUDED.status_transito,
+        metodo_baixa = EXCLUDED.metodo_baixa,
+        tem_vinculo = EXCLUDED.tem_vinculo,
+        entrada_docs = EXCLUDED.entrada_docs,
+        destino_branch_code = EXCLUDED.destino_branch_code,
+        destino_branch_name = EXCLUDED.destino_branch_name,
+        quantidade_saida = EXCLUDED.quantidade_saida,
+        quantidade_recebida = EXCLUDED.quantidade_recebida,
+        quantidade_em_transito = EXCLUDED.quantidade_em_transito,
+        primeira_entrada_date = EXCLUDED.primeira_entrada_date,
+        ultima_entrada_date = EXCLUDED.ultima_entrada_date,
+        dias_em_transito = EXCLUDED.dias_em_transito,
+        updated_at = now()
+      -- So reescreve quando algo de NEGOCIO mudou. Sem este WHERE, o upsert sujaria as
+      -- ~54 mil linhas a cada execucao e nao teria vantagem nenhuma sobre o TRUNCATE
+      -- que ele substitui. A coluna snapshot_at fica de fora de proposito: ela marca
+      -- quando a linha foi calculada pela primeira vez.
+      WHERE pcp_estoque_transito.status_transito IS DISTINCT FROM EXCLUDED.status_transito
+         OR pcp_estoque_transito.metodo_baixa IS DISTINCT FROM EXCLUDED.metodo_baixa
+         OR pcp_estoque_transito.tem_vinculo IS DISTINCT FROM EXCLUDED.tem_vinculo
+         OR pcp_estoque_transito.entrada_docs IS DISTINCT FROM EXCLUDED.entrada_docs
+         OR pcp_estoque_transito.destino_branch_code IS DISTINCT FROM EXCLUDED.destino_branch_code
+         OR pcp_estoque_transito.quantidade_saida IS DISTINCT FROM EXCLUDED.quantidade_saida
+         OR pcp_estoque_transito.quantidade_recebida IS DISTINCT FROM EXCLUDED.quantidade_recebida
+         OR pcp_estoque_transito.quantidade_em_transito IS DISTINCT FROM EXCLUDED.quantidade_em_transito
+         OR pcp_estoque_transito.primeira_entrada_date IS DISTINCT FROM EXCLUDED.primeira_entrada_date
+         OR pcp_estoque_transito.ultima_entrada_date IS DISTINCT FROM EXCLUDED.ultima_entrada_date
+         OR pcp_estoque_transito.dias_em_transito IS DISTINCT FROM EXCLUDED.dias_em_transito
     `;
   }
 }
@@ -616,8 +674,68 @@ async function insertMovimentos(movimentos: MovimentoBaixa[]): Promise<void> {
         ${m.entradaBranchCode}, ${m.entradaTransactionCode}, ${m.entradaItemIndex},
         ${toDateOnly(m.entradaTransactionDate)}::date, ${m.entradaOperationCode}, ${m.quantidadeBaixada}, ${m.metodo}
       )`))}
+      ON CONFLICT (saida_branch_code, saida_transaction_code, saida_item_index,
+                   entrada_branch_code, entrada_transaction_code, entrada_item_index) DO UPDATE SET
+        entrada_transaction_date = EXCLUDED.entrada_transaction_date,
+        entrada_operation_code = EXCLUDED.entrada_operation_code,
+        quantidade_baixada = EXCLUDED.quantidade_baixada,
+        metodo = EXCLUDED.metodo
+      WHERE pcp_estoque_transito_movimentos.quantidade_baixada IS DISTINCT FROM EXCLUDED.quantidade_baixada
+         OR pcp_estoque_transito_movimentos.metodo IS DISTINCT FROM EXCLUDED.metodo
+         OR pcp_estoque_transito_movimentos.entrada_transaction_date IS DISTINCT FROM EXCLUDED.entrada_transaction_date
     `;
   }
+}
+
+// Remove o que deixou de existir. O TRUNCATE fazia isso de graca; com upsert e preciso
+// ser explicito, e sao tres casos reais:
+//   1. a janela de 12 meses rolou e a saida saiu do recorte;
+//   2. o documento foi cancelado (status deixou de ser 4) - ja vimos acontecer;
+//   3. o item sumiu do documento (o ETL regrava itens, e uma transacao pode ter menos
+//      itens hoje do que na carga anterior - e a armadilha registrada no AGENTS.md).
+// O anti-join e contra a FONTE, nao contra o conjunto calculado: evita mandar 54 mil
+// chaves pro banco so pra dizer quais sobreviveram.
+async function removerObsoletas(janelaInicio: string, meses: number): Promise<number> {
+  const removidasMovimentos = await prisma.$executeRaw`
+    DELETE FROM pcp_estoque_transito_movimentos m
+    WHERE NOT EXISTS (
+      SELECT 1 FROM pcp_estoque_transito e
+      WHERE e.saida_branch_code = m.saida_branch_code
+        AND e.saida_transaction_code = m.saida_transaction_code
+        AND e.saida_item_index = m.saida_item_index
+    )
+  `;
+
+  const removidasLinhas = await prisma.$executeRaw`
+    DELETE FROM pcp_estoque_transito e
+    WHERE e.saida_transaction_date < ${janelaInicio}::date
+       OR NOT EXISTS (
+         SELECT 1
+         FROM transacoes t
+         JOIN transacao_itens ti
+           ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
+         WHERE t.branch_code = e.saida_branch_code
+           AND t.transaction_code = e.saida_transaction_code
+           AND ti.item_index = e.saida_item_index
+           AND t.status = 4
+           AND t.operation_code IN (${Prisma.join(SAIDA_OPS)})
+           AND t.transaction_date >= current_date - (${meses}::text || ' months')::interval
+       )
+  `;
+
+  // Os movimentos sao limpos de novo porque a remocao das linhas acima pode ter deixado
+  // novos orfaos (a primeira passada rodou antes dela).
+  const orfaosRestantes = await prisma.$executeRaw`
+    DELETE FROM pcp_estoque_transito_movimentos m
+    WHERE NOT EXISTS (
+      SELECT 1 FROM pcp_estoque_transito e
+      WHERE e.saida_branch_code = m.saida_branch_code
+        AND e.saida_transaction_code = m.saida_transaction_code
+        AND e.saida_item_index = m.saida_item_index
+    )
+  `;
+
+  return removidasLinhas + removidasMovimentos + orfaosRestantes;
 }
 
 async function main(): Promise<void> {
@@ -678,14 +796,16 @@ async function main(): Promise<void> {
   if (!apply) return;
 
   await ensureTables();
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe('TRUNCATE TABLE pcp_estoque_transito_movimentos');
-    await tx.$executeRawUnsafe('TRUNCATE TABLE pcp_estoque_transito RESTART IDENTITY');
-  });
 
+  // Upsert em vez de TRUNCATE + reinsert. Dois motivos: o TRUNCATE deixava a tabela
+  // vazia por um instante (quem abrisse a tela nesse momento via zero), e reescrevia
+  // ~108 mil linhas a cada execucao numa tabela onde quase nada muda - inviabilizando
+  // rodar junto com o ciclo de 30 minutos das transacoes.
   await insertLinhas(linhas);
   await insertMovimentos(movimentos);
-  console.log('[estoque-transito] materializacao concluida');
+  const removidas = await removerObsoletas(janelaInicio, meses);
+
+  console.log(`[estoque-transito] materializacao concluida | ${removidas} linha(s) obsoleta(s) removida(s)`);
 }
 
 main()

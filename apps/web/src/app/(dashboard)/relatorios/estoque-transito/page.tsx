@@ -32,7 +32,7 @@ const COLUNAS: Array<{ key: SortKey; label: string; align?: 'left' | 'right' | '
   { key: 'destinoBranchName', label: 'LOJA DESTINO', width: 22, type: 'text' },
   { key: 'saidaTransactionCode', label: 'DOC. SAIDA', align: 'right', width: 12, type: 'text' },
   { key: 'saidaTransactionDate', label: 'DT. SAIDA', align: 'center', width: 12, type: 'text' },
-  { key: 'diasEmTransito', label: 'IDADE (D)', align: 'right', width: 11, type: 'number' },
+  { key: 'diasEmTransito', label: 'DIAS EM TRANSITO', align: 'right', width: 16, type: 'number' },
   { key: 'saidaOperationCode', label: 'OPER.', align: 'right', width: 9, type: 'text' },
   { key: 'saidaOperationDescription', label: 'DESC. OPERACAO', width: 24, type: 'text' },
   { key: 'productSku', label: 'SKU', width: 16, type: 'text' },
@@ -147,6 +147,7 @@ export default function EstoqueTransitoPage() {
   const [idadeMax, setIdadeMax] = useState('');
   const [apenasPendentes, setApenasPendentes] = useState(true);
   const [confiabilidade, setConfiabilidade] = useState<'todas' | 'vinculo' | 'sem_vinculo'>('todas');
+  const [prazoDias, setPrazoDias] = useState<30 | 90 | 180>(90);
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<EstoqueTransitoResponse | null>(null);
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<EstoqueTransitoFiltrosResponse | null>(null);
@@ -192,6 +193,7 @@ export default function EstoqueTransitoPage() {
         idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
         apenasPendentes,
         confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        prazoDias,
         ordenarPor: sortKey,
         direcao: sortDir,
         offset: 0,
@@ -205,7 +207,7 @@ export default function EstoqueTransitoPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, sortKey, sortDir, showToast]);
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, prazoDias, sortKey, sortDir, showToast]);
 
   useEffect(() => {
     carregarDados();
@@ -230,6 +232,7 @@ export default function EstoqueTransitoPage() {
         idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
         apenasPendentes,
         confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        prazoDias,
         ordenarPor: sortKey,
         direcao: sortDir,
         offset: rowsRef.current.length,
@@ -243,7 +246,7 @@ export default function EstoqueTransitoPage() {
       carregandoMaisRef.current = false;
       setCarregandoMais(false);
     }
-  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, sortKey, sortDir, showToast]);
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, prazoDias, sortKey, sortDir, showToast]);
 
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
@@ -434,7 +437,11 @@ export default function EstoqueTransitoPage() {
         </p>
         <p className="mt-1">
           Linha marcada <strong>Sem vinculo</strong> e o caso mais grave: o ERP nao relaciona aquela saida a entrada nenhuma, entao ela aparece 100% aberta.
-          Idade alta continua indicando atraso de lancamento ou residuo contabil, nao caminhao na estrada.
+        </p>
+        <p className="mt-1">
+          <strong>DIAS EM TRANSITO</strong> encerra na baixa: enquanto ha saldo aberto o contador corre ate hoje (ha quanto tempo esta parado); quando a linha
+          fecha, congela e passa a dizer quanto tempo a transferencia levou. Valor alto numa linha aberta indica atraso de lancamento ou residuo contabil, nao
+          caminhao na estrada.
         </p>
         {data && (
           <p className="mt-2">
@@ -719,6 +726,78 @@ export default function EstoqueTransitoPage() {
           )}
         </Card>
       </div>
+
+      {/* Prazo de entrega: serie unica, barra horizontal em HTML/CSS e valor escrito em
+          toda barra - a paleta da marca nao passa no validador de contraste, entao o
+          numero nunca depende da cor pra ser lido. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Prazo de entrega por loja</CardTitle>
+        </CardHeader>
+        <div className="-mt-2 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-gray-500">
+            Media de dias entre a saida da Fabrica e a baixa na loja, contando so as remessas ja encerradas. Mede quanto a transferencia leva, nao quanto esta
+            parada.
+          </p>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Saidas dos ultimos</span>
+            {([30, 90, 180] as const).map((dias) => (
+              <button
+                key={dias}
+                type="button"
+                onClick={() => setPrazoDias(dias)}
+                className={cn(
+                  'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  prazoDias === dias
+                    ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
+                    : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                )}
+              >
+                {dias} dias
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isLoading ? (
+          <p className="py-10 text-center text-sm text-gray-500">Carregando...</p>
+        ) : !data || data.prazoEntrega.porLoja.length === 0 ? (
+          <p className="py-10 text-center text-sm text-gray-500">
+            Nenhuma remessa encerrada nos ultimos {prazoDias} dias para calcular o prazo.
+          </p>
+        ) : (
+          <>
+            <div className="space-y-3">
+              {data.prazoEntrega.porLoja.map((loja) => (
+                <div key={loja.branchCode}>
+                  <div className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="truncate text-gray-700">
+                      {loja.branchName}
+                      {loja.lojaFechada && <span className="ml-1 rounded bg-gray-200 px-1 py-0.5 text-[10px] font-medium text-gray-600">FECHADA</span>}
+                    </span>
+                    <span className="shrink-0 font-semibold text-gray-900">
+                      {loja.diasMedio.toFixed(1)} <span className="font-normal text-gray-400">dias · mediana {loja.diasMediana} · max {loja.diasMaximo}</span>
+                    </span>
+                  </div>
+                  <div className="mt-1" title={`${formatNumber(loja.linhas)} remessas, ${formatNumber(loja.pecas)} peças`}>
+                    <BarraProporcao
+                      valor={loja.diasMedio}
+                      maximo={Math.max(1, ...data.prazoEntrega.porLoja.map((l) => l.diasMedio))}
+                      tom={loja.lojaFechada ? 'cinza' : 'roxo'}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+              Media da rede: <strong>{data.prazoEntrega.mediaGeral?.toFixed(1) ?? '-'} dias</strong>, sobre{' '}
+              {formatNumber(data.prazoEntrega.linhasConsideradas)} remessas encerradas. A media da rede e ponderada por volume, entao nao e a media das barras
+              acima. Este painel ignora os filtros de status, idade e busca — so o filtro de loja vale aqui.
+            </p>
+          </>
+        )}
+      </Card>
 
       <Card>
         <CardHeader>

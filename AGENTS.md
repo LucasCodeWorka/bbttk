@@ -1209,6 +1209,96 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
   `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.
 
+## Sessão 15/10/2026 — 🚨 o ETL APAGAVA o backfill; causa raiz corrigida em produção
+
+**O achado mais importante da sequência.** `sync_transactions.py` faz
+`DELETE FROM transacao_itens` da data inteira antes de reinserir, e o `item_rows`
+descartava toda operação sem sinal definido (`if sign == 0: continue`). As duas coisas
+juntas significam que **cada passada do ETL apagava os itens de transferência que um
+backfill tivesse reposto**. O remendo e o ETL se desfaziam mutuamente.
+
+Eu mesmo disparei a versão grave disso: rodei o `run_daily_transactions_d30.sh`
+manualmente pra cronometrar, e o reprocesso de 30 dias **zerou 1.130 documentos** de uma
+vez. Antes disso o ciclo horário D-3 já vinha corroendo os últimos 3 dias continuamente —
+o que explica por que o buraco "voltava" sempre.
+
+**Corrigido** em `projetobb@386112b`: `if sign == 0: sign = 1`. Operação sem sinal passa a
+ser gravada como neutra, sem inverter quantidade. Validado end-to-end: um dia que estava
+com 0 itens foi de **0 → 677** depois de reprocessado. Hoje o ETL grava transferência
+sozinho (14.431 itens em 15/10, sem backfill nenhum).
+
+Não afeta faturamento: quem lê quantidade com sinal filtra por
+`operations_type`/`operation_mode`. Conferido contra o Dashboard de Vendas — 544.488,36 e
+9.077 peças nas 13 lojas, idêntico antes e depois.
+
+### Armadilhas da operação na VPS (repetir o cuidado)
+
+- O repo `projetobb` tem trabalho **não commitado do Lucas** em
+  `sync_transactions.py`. Para corrigir sem levar junto: `git stash push -- <arquivos>`,
+  aplicar, commitar, `git stash pop` (guardar também um `git diff > patch` antes).
+- Script commitado do Windows entra como **100644** e o `git pull` o entrega **sem bit de
+  execução**. Como o cron chama o caminho direto, falharia com "Permission denied" em
+  silêncio. Corrigido com `git update-index --chmod=+x` (`4fb9b15`). Os outros runners da
+  pasta estão 100755 — comparar sempre.
+- `git pull` na VPS aborta se houver arquivo solto/modificado que o commit vai
+  sobrescrever. Conferir se é idêntico ao commitado (`git show origin/main:<f> | diff - <f>`)
+  antes de remover.
+
+### Rede de segurança D-30 (`run_daily_transactions_d30.sh`, cron 04:00)
+
+Reprocessa 30 dias por data de emissão. **Com o fix do `sign` virou autocurativo**; sem
+ele era destrutivo. Protegido por `flock` compartilhado com o runner horário.
+
+Duração medida: **37min** na primeira passada (populando), **12min32s** nas seguintes.
+Roda às 04:00 porque o analítico do Relatório Base é às 05:30 e lê essas transações.
+
+⚠️ **A janela rola**: o dia mais antigo sai do recorte a cada madrugada. Se houver dano
+numa data específica, corrigir **antes** de ela sair dos 30 dias — não dá pra contar com
+o cron do dia seguinte.
+
+## Sessão 15/10/2026 — trânsito: upsert, idade congelada e prazo de entrega
+
+### `dias_em_transito` agora ENCERRA na baixa
+
+Era sempre `hoje − saída`, o que media a idade do **documento**: linha recebida no dia
+seguinte aparecia com média de **189 dias** (máx 365), quando o trânsito real foi de 1,6.
+Agora: linha aberta corre até hoje; linha recebida congela na última entrada.
+
+Além de corrigir o número, isso torna as ~54 mil linhas recebidas **imutáveis** — é o que
+viabiliza o upsert e o painel de prazo.
+
+### `TRUNCATE` → upsert condicional + delete
+
+Chave natural validada (zero duplicatas): `(saida_branch_code, saida_transaction_code,
+saida_item_index)`, e nos movimentos a mesma mais o trio da entrada. Índices únicos
+criados em `ensureTables()`.
+
+O `DO UPDATE ... WHERE <IS DISTINCT FROM>` só grava quando algo de negócio mudou —
+**medido: 0 linhas escritas quando nada muda**, contra 108 mil do TRUNCATE. O tempo (≈45s)
+quase não cai, porque o gargalo são as 108 idas ao Neon enviando as linhas, não o disco.
+
+`removerObsoletas()` cobre o que o TRUNCATE fazia de graça: janela que rolou, documento
+cancelado e item removido. Anti-join contra a **fonte**, não contra o conjunto calculado.
+
+### Painel de prazo de entrega por loja (30/90/180 dias)
+
+`prazoEntrega` na resposta: média, mediana, máximo e volume por loja. Só linhas
+**encerradas** (`quantidade_em_transito = 0` com data de baixa) — a aberta ainda está
+correndo e inflaria a média.
+
+A janela é pela **data de saída** ("das remessas que saíram nos últimos N dias, quanto
+levaram"), não pela data de baixa, que misturaria remessa antiga baixada agora.
+
+**Não respeita os filtros de recorte** (status/idade/busca) de propósito: descreve o
+desempenho histórico, e filtrar por "só pendentes" deixaria a amostra só com o que não
+chegou. O filtro de loja vale.
+
+`mediaGeral` é ponderada por linha, não média das médias — loja com mil remessas pesa mais
+que uma com cinquenta.
+
+Medido em 15/10/2026: 30d → 1,1 dia (5.107 remessas); 90d → 1,4 (14.933); 180d → 1,6
+(34.130). A operação está mais rápida agora que no semestre.
+
 ## Sessão 14/10/2026 (parte 2) — "Acompanhamento por Linha" ganhou as 3 colunas de trânsito
 
 Fecha os três pontos da devolutiva de 25/08 que estavam em aberto: `pecasEmTransito`,

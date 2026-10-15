@@ -1736,6 +1736,19 @@ export interface EstoqueTransitoFiltro {
   direcao?: 'asc' | 'desc';
   offset?: number;
   limite?: number;
+  /** Janela do prazo medio por loja: 30, 90 ou 180 dias. */
+  prazoDias?: number;
+}
+
+export interface EstoqueTransitoPrazoLoja {
+  branchCode: number;
+  branchName: string;
+  lojaFechada: boolean;
+  diasMedio: number;
+  diasMediana: number;
+  diasMaximo: number;
+  linhas: number;
+  pecas: number;
 }
 
 export interface EstoqueTransitoRow {
@@ -1838,6 +1851,13 @@ export interface EstoqueTransitoResponse {
   idadeBuckets: EstoqueTransitoIdadeBucket[];
   porLoja: EstoqueTransitoPorLoja[];
   porStatus: EstoqueTransitoPorStatus[];
+  /** Prazo de entrega por loja. Nao respeita os filtros de recorte, so o de loja. */
+  prazoEntrega: {
+    dias: number;
+    porLoja: EstoqueTransitoPrazoLoja[];
+    mediaGeral: number | null;
+    linhasConsideradas: number;
+  };
   rows: EstoqueTransitoRow[];
 }
 
@@ -1864,6 +1884,7 @@ export const estoqueTransitoApi = {
     if (filtro.direcao) params.set('direcao', filtro.direcao);
     if (filtro.offset !== undefined) params.set('offset', String(filtro.offset));
     if (filtro.limite !== undefined) params.set('limite', String(filtro.limite));
+    if (filtro.prazoDias !== undefined) params.set('prazoDias', String(filtro.prazoDias));
     const query = params.toString();
     return fetchPcpApi<EstoqueTransitoResponse>(`/api/pcp/estoque-transito${query ? `?${query}` : ''}`, { token });
   },
