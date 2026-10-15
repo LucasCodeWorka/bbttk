@@ -424,33 +424,15 @@ export default function EstoqueTransitoPage() {
         </div>
       )}
 
-      {/* Aviso estrutural: sem esse contexto o relatorio e lido como "estoque futuro", o que ele nao e. */}
-      <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-xs text-yellow-900">
-        <p className="font-semibold">Como ler este relatorio</p>
-        <p className="mt-1">
-          Toda baixa vem do <strong>vinculo documento-a-documento do TOTVS</strong>: o ERP aponta exatamente qual documento de entrada recebeu cada saida, e a
-          coluna <strong>DOC. ENTRADA</strong> mostra qual e, pra abrir e conferir. Nao ha estimativa no calculo.
+      {/* A procedencia da foto fica, em uma linha: sem ela nao da pra saber se o que
+          esta na tela e de hoje ou de tres dias atras. O resto da explicacao saiu - a
+          baixa agora vem toda do vinculo do TOTVS e os rotulos das colunas ja dizem. */}
+      {data && (
+        <p className="text-xs text-gray-500">
+          Janela {data.janela.inicio ? formatDate(data.janela.inicio) : '-'} a {data.janela.fim ? formatDate(data.janela.fim) : '-'} · foto de{' '}
+          {data.atualizadoEm ? new Date(data.atualizadoEm).toLocaleString('pt-BR') : '-'} · baixa pelo vinculo documento-a-documento do TOTVS
         </p>
-        <p className="mt-1">
-          Por isso, uma linha pendente significa uma coisa so: <strong>a saida nao tem entrada correspondente registrada no ERP</strong>. Ou a mercadoria nao
-          chegou, ou a loja nao lancou o recebimento. Nos dois casos ha o que cobrar, e o documento de saida identifica de quem.
-        </p>
-        <p className="mt-1">
-          Linha marcada <strong>Sem vinculo</strong> e o caso mais grave: o ERP nao relaciona aquela saida a entrada nenhuma, entao ela aparece 100% aberta.
-        </p>
-        <p className="mt-1">
-          <strong>DIAS EM TRANSITO</strong> encerra na baixa: enquanto ha saldo aberto o contador corre ate hoje (ha quanto tempo esta parado); quando a linha
-          fecha, congela e passa a dizer quanto tempo a transferencia levou. Valor alto numa linha aberta indica atraso de lancamento ou residuo contabil, nao
-          caminhao na estrada.
-        </p>
-        {data && (
-          <p className="mt-2">
-            Janela apurada: {data.janela.inicio ? formatDate(data.janela.inicio) : '-'} a {data.janela.fim ? formatDate(data.janela.fim) : '-'} · Foto gerada
-            em {data.atualizadoEm ? new Date(data.atualizadoEm).toLocaleString('pt-BR') : '-'} (materializada por{' '}
-            <code className="rounded bg-yellow-100 px-1">npm run rebuild:estoque-transito -w apps/api</code>)
-          </p>
-        )}
-      </div>
+      )}
 
       <Card>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -541,16 +523,8 @@ export default function EstoqueTransitoPage() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <KPICard title="Pecas abertas" value={formatNumber(data?.kpis.pecasEmTransito || 0)} color="red" valueSize="sm" isLoading={isLoading} />
-        <KPICard
-          title="Abertas c/ vinculo"
-          value={formatNumber(data?.kpis.pecasAbertasComVinculo || 0)}
-          subtitle="confirmado pelo ERP"
-          color="red"
-          valueSize="sm"
-          isLoading={isLoading}
-        />
         <KPICard title="Abertas +90 dias" value={formatNumber(data?.kpis.pendenciasAntigas90d || 0)} color="yellow" valueSize="sm" isLoading={isLoading} />
         <KPICard
           title="Em loja fechada"
@@ -628,55 +602,66 @@ export default function EstoqueTransitoPage() {
           </div>
         </Card>
 
+        {/* Prazo de entrega ocupa o lugar do antigo painel de confiabilidade, que saiu:
+            ele media a cobertura do vinculo, e isso deixou de ser pergunta aberta depois
+            que a captura passou a cobrir a janela inteira. O que resta sem vinculo e
+            remessa que ainda nao chegou - estado de negocio, nao falha de dado, e a
+            coluna STATUS ja diz. */}
         <Card>
           <CardHeader>
-            <CardTitle>Confiabilidade da apuracao</CardTitle>
+            <CardTitle>Prazo de entrega por loja</CardTitle>
           </CardHeader>
-          <p className="text-xs text-gray-500 -mt-2 mb-3">Quanto do recorte o ERP relaciona a um documento de entrada, e quanto ele nao relaciona a nenhum.</p>
-          {data && (
-            <div className="space-y-3">
-              {(
-                [
-                  {
-                    chave: 'vinculo' as const,
-                    label: 'Com vinculo no ERP',
-                    pecas: data.confiabilidade.pecasComVinculo,
-                    linhas: data.confiabilidade.linhasComVinculo,
-                    abertas: data.kpis.pecasAbertasComVinculo,
-                  },
-                  {
-                    chave: 'sem_vinculo' as const,
-                    label: 'Sem vinculo nenhum',
-                    pecas: data.confiabilidade.pecasSemVinculo,
-                    linhas: data.confiabilidade.linhasSemVinculo,
-                    abertas: data.kpis.pecasAbertasSemVinculo,
-                  },
-                ]
-              ).map((item) => (
-                <button key={item.chave} type="button" onClick={() => setConfiabilidade(item.chave)} className="block w-full text-left">
-                  <div className="flex items-baseline justify-between gap-2 text-xs">
-                    <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', METODO_BADGE[item.chave])}>{item.label}</span>
-                    <span className="font-semibold text-gray-900">
-                      {formatNumber(item.pecas)} <span className="font-normal text-gray-400">pcs · {formatNumber(item.linhas)} linhas</span>
-                    </span>
-                  </div>
-                  <div className="mt-1">
-                    <BarraProporcao
-                      valor={item.pecas}
-                      maximo={Math.max(1, data.confiabilidade.pecasComVinculo + data.confiabilidade.pecasSemVinculo)}
-                      tom={item.chave === 'vinculo' ? 'roxo' : 'cinza'}
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-gray-500">{formatNumber(item.abertas)} pecas abertas nesse grupo</p>
+          <div className="-mt-2 mb-3 space-y-2">
+            <p className="text-xs text-gray-500">Dias da saida ate a baixa, so de remessas ja encerradas.</p>
+            <div className="flex items-center gap-1.5">
+              {([30, 90, 180] as const).map((dias) => (
+                <button
+                  key={dias}
+                  type="button"
+                  onClick={() => setPrazoDias(dias)}
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                    prazoDias === dias
+                      ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
+                      : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                  )}
+                >
+                  {dias}d
                 </button>
               ))}
-
-              <p className="border-t border-gray-100 pt-3 text-[11px] text-gray-500">
-                O vinculo e lido direto do TOTVS (`originDestination`) e cobre a janela inteira — a saida mais antiga com vinculo e de{' '}
-                <strong>{data.confiabilidade.primeiraSaidaComVinculo ? formatDate(data.confiabilidade.primeiraSaidaComVinculo) : '-'}</strong>. Nao ha
-                estimativa no calculo: o que o ERP nao relaciona fica aberto.
-              </p>
             </div>
+          </div>
+
+          {isLoading ? (
+            <p className="py-6 text-center text-xs text-gray-500">Carregando...</p>
+          ) : !data || data.prazoEntrega.porLoja.length === 0 ? (
+            <p className="py-6 text-center text-xs text-gray-500">Nenhuma remessa encerrada nos ultimos {prazoDias} dias.</p>
+          ) : (
+            <>
+              <div className="max-h-[320px] space-y-2.5 overflow-y-auto pr-1">
+                {data.prazoEntrega.porLoja.map((loja) => (
+                  <div key={loja.branchCode}>
+                    <div className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="truncate text-gray-700">{loja.branchName}</span>
+                      <span className="shrink-0 font-semibold text-gray-900">
+                        {loja.diasMedio.toFixed(1)} <span className="font-normal text-gray-400">d · max {loja.diasMaximo}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1" title={`Mediana ${loja.diasMediana} dias · ${formatNumber(loja.linhas)} remessas`}>
+                      <BarraProporcao
+                        valor={loja.diasMedio}
+                        maximo={Math.max(1, ...data.prazoEntrega.porLoja.map((l) => l.diasMedio))}
+                        tom={loja.lojaFechada ? 'cinza' : 'roxo'}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+                Media da rede <strong>{data.prazoEntrega.mediaGeral?.toFixed(1) ?? '-'} dias</strong>, ponderada por volume sobre{' '}
+                {formatNumber(data.prazoEntrega.linhasConsideradas)} remessas. Ignora os filtros de status, idade e busca.
+              </p>
+            </>
           )}
         </Card>
       </div>
@@ -730,75 +715,6 @@ export default function EstoqueTransitoPage() {
       {/* Prazo de entrega: serie unica, barra horizontal em HTML/CSS e valor escrito em
           toda barra - a paleta da marca nao passa no validador de contraste, entao o
           numero nunca depende da cor pra ser lido. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Prazo de entrega por loja</CardTitle>
-        </CardHeader>
-        <div className="-mt-2 mb-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-gray-500">
-            Media de dias entre a saida da Fabrica e a baixa na loja, contando so as remessas ja encerradas. Mede quanto a transferencia leva, nao quanto esta
-            parada.
-          </p>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Saidas dos ultimos</span>
-            {([30, 90, 180] as const).map((dias) => (
-              <button
-                key={dias}
-                type="button"
-                onClick={() => setPrazoDias(dias)}
-                className={cn(
-                  'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                  prazoDias === dias
-                    ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
-                    : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-                )}
-              >
-                {dias} dias
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {isLoading ? (
-          <p className="py-10 text-center text-sm text-gray-500">Carregando...</p>
-        ) : !data || data.prazoEntrega.porLoja.length === 0 ? (
-          <p className="py-10 text-center text-sm text-gray-500">
-            Nenhuma remessa encerrada nos ultimos {prazoDias} dias para calcular o prazo.
-          </p>
-        ) : (
-          <>
-            <div className="space-y-3">
-              {data.prazoEntrega.porLoja.map((loja) => (
-                <div key={loja.branchCode}>
-                  <div className="flex items-baseline justify-between gap-2 text-xs">
-                    <span className="truncate text-gray-700">
-                      {loja.branchName}
-                      {loja.lojaFechada && <span className="ml-1 rounded bg-gray-200 px-1 py-0.5 text-[10px] font-medium text-gray-600">FECHADA</span>}
-                    </span>
-                    <span className="shrink-0 font-semibold text-gray-900">
-                      {loja.diasMedio.toFixed(1)} <span className="font-normal text-gray-400">dias · mediana {loja.diasMediana} · max {loja.diasMaximo}</span>
-                    </span>
-                  </div>
-                  <div className="mt-1" title={`${formatNumber(loja.linhas)} remessas, ${formatNumber(loja.pecas)} peças`}>
-                    <BarraProporcao
-                      valor={loja.diasMedio}
-                      maximo={Math.max(1, ...data.prazoEntrega.porLoja.map((l) => l.diasMedio))}
-                      tom={loja.lojaFechada ? 'cinza' : 'roxo'}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
-              Media da rede: <strong>{data.prazoEntrega.mediaGeral?.toFixed(1) ?? '-'} dias</strong>, sobre{' '}
-              {formatNumber(data.prazoEntrega.linhasConsideradas)} remessas encerradas. A media da rede e ponderada por volume, entao nao e a media das barras
-              acima. Este painel ignora os filtros de status, idade e busca — so o filtro de loja vale aqui.
-            </p>
-          </>
-        )}
-      </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>Auditoria documento a documento</CardTitle>

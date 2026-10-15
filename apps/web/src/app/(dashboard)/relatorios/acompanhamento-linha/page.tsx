@@ -239,9 +239,7 @@ export default function AcompanhamentoLinhaPage() {
         { key: 'participacaoPercent', header: 'PART %', width: 10, type: 'number' },
         { key: 'coberturaMesesAtual', header: 'COB MESES', width: 11, type: 'number' },
         { key: 'coberturaMesesEstoqueTransito', header: 'COB MESES C/ TRÂNSITO', width: 20, type: 'number' },
-        // Mesma ressalva da tela: historico de estoque pre-2026 e incompleto, entao a
-        // coluna A.A. e um piso. Vai no cabecalho pra ressalva nao se perder no Excel.
-        { key: 'coberturaMesesAnoAnterior', header: 'COB MESES A.A. (piso*)', width: 20, type: 'number' },
+        { key: 'coberturaMesesAnoAnterior', header: 'COB MESES A.A.', width: 15, type: 'number' },
         { key: 'estoqueFisico', header: 'ESTOQUE FISICO', width: 13, type: 'number' },
         { key: 'pecasEmTransito', header: 'PEÇAS EM TRÂNSITO', width: 17, type: 'number' },
         { key: 'estoqueMaisTransito', header: 'ESTOQUE + TRÂNSITO', width: 18, type: 'number' },
@@ -251,7 +249,7 @@ export default function AcompanhamentoLinhaPage() {
       exportToExcel({
         filename: `Acompanhamento_${tipoClassificacao}_${new Date().toISOString().slice(0, 10)}`,
         sheetName: 'Acompanhamento',
-        title: `Acompanhamento Diário por ${TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label} - Canal: ${CANAL_OPTIONS.find((o) => o.value === canal)?.label}  |  COB MESES do TOTAL é recalculada (estoque total ÷ venda média mensal), não é a média da coluna  |  * COB MESES A.A.: histórico de estoque pré-2026 é incompleto, o valor é um piso`,
+        title: `Acompanhamento Diário por ${TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label} - Canal: ${CANAL_OPTIONS.find((o) => o.value === canal)?.label}  |  COB MESES do TOTAL é recalculada (estoque total ÷ venda média mensal), não é a média da coluna`,
         columns,
         data: sortedLinhas as unknown as Record<string, unknown>[],
         totals: {
@@ -381,13 +379,6 @@ export default function AcompanhamentoLinhaPage() {
             <span className="font-medium">Períodos:</span> Atual: {formatDate(data.periodoAtual.inicio)} a {formatDate(data.periodoAtual.fim)} |
             {' '}Ano Anterior: {formatDate(data.periodoAnoAnterior.inicio)} a {formatDate(data.periodoAnoAnterior.fim)}
           </div>
-          {/* O estoque historico do TOTVS (prd_saldo) e muito mais esparso antes de
-              2026 - a coluna A.A. subestima de forma estrutural. Avisado aqui e no
-              tooltip da coluna em vez de esconder o dado. */}
-          <div className="text-amber-700">
-            <span className="font-medium">* COB MESES A.A.:</span> o histórico de estoque anterior a 2026 é incompleto no TOTVS,
-            então essa coluna é um piso (subestima o estoque da época). Serve para tendência, não como valor absoluto.
-          </div>
         </div>
       )}
 
@@ -419,7 +410,7 @@ export default function AcompanhamentoLinhaPage() {
                 <ThSortPcp label="PART %" sortKeyName="participacaoPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Participação no total vendido no filtro atual" />
                 <ThSortPcp label="COB MESES" sortKeyName="coberturaMesesAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura atual em meses = estoque físico / venda média mensal" />
                 <ThSortPcp label="COB C/ TRÂNSITO" sortKeyName="coberturaMesesEstoqueTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses contando também o que está a caminho = (estoque + trânsito) / venda média mensal. Sempre maior ou igual à COB MESES." />
-                <ThSortPcp label="COB MESES A.A. *" sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior (estoque e venda de então). ATENÇÃO: o histórico de estoque anterior a 2026 é incompleto no TOTVS — a captura passou a ser muito mais densa a partir de 2026, então este número é um PISO, não o estoque real da época. Use para tendência, não como valor absoluto." />
+                <ThSortPcp label="COB MESES A.A." sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior, com o estoque e a venda de então" />
                 <ThSortPcp label="ESTOQUE" sortKeyName="estoqueFisico" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Estoque físico disponível na loja" />
                 <ThSortPcp label="EM TRÂNSITO" sortKeyName="pecasEmTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças transferidas do DPA que ainda não chegaram ao destino. Não constam no estoque de nenhuma loja, por isso são contadas à parte. Fonte: vínculo documento-a-documento do TOTVS (relatório Estoque em Trânsito)." />
                 <ThSortPcp label="ESTOQUE + TRÂNSITO" sortKeyName="estoqueMaisTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Soma do estoque físico com as peças a caminho" />
