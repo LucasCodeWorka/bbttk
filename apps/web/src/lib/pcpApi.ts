@@ -1248,6 +1248,10 @@ export interface AcompanhamentoDiarioLinha {
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
+  /** Saiu da Fabrica e ainda nao entrou na loja: nao esta no estoque de ninguem. */
+  pecasEmTransito: number;
+  estoqueMaisTransito: number;
+  coberturaMesesEstoqueTransito: number | null;
   pecasEmProducao: number;
 }
 
@@ -1263,6 +1267,8 @@ export interface AcompanhamentoDiarioResponse {
     vendaValorAnoAnteriorTotal: number;
     evolucaoValorPercent: number | null;
     estoqueFisicoTotal: number;
+    pecasEmTransitoTotal: number;
+    estoqueMaisTransitoTotal: number;
     pecasEmProducaoTotal: number;
     metaPeriodoTotal: number | null;
     metaDiaria: number | null;

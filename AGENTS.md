@@ -1209,6 +1209,30 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
   `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.
 
+## Sessão 14/10/2026 (parte 2) — "Acompanhamento por Linha" ganhou as 3 colunas de trânsito
+
+Fecha os três pontos da devolutiva de 25/08 que estavam em aberto: `pecasEmTransito`,
+`estoqueMaisTransito` e `coberturaMesesEstoqueTransito`, em
+`vendaDia.service.ts` (`getTransitoPorClassificacaoDiario`) + a tela.
+
+Duas decisões que não são óbvias:
+
+- **A classificação vem de JOIN FRESCO em `produto_analitico`**, não das colunas copiadas
+  em `pcp_estoque_transito`. Se a categoria de um produto mudar depois da materialização,
+  estoque e trânsito têm que cair no mesmo balde — senão a coluna "estoque + trânsito"
+  somaria duas linhas que descrevem universos diferentes. Mesmo motivo do
+  `is_finished_product` + `PCP_ESTOQUE_LIQUIDO_SKU_FILTER` replicados ali.
+- **`estoqueMaisTransito` soma os dois valores JÁ arredondados**, não arredonda a soma —
+  mesma regra dos totais (`Σ round(x) ≠ round(Σ x)`), pra conferência na mão fechar.
+
+Canal `atacado` devolve trânsito **0 por construção**: o rebuild descarta destino =
+Fábrica, então DPA/ATACADO nunca têm peça a caminho. Não é bug, e o filtro de loja só
+considera `branch_code > 0`.
+
+Validado contra o relatório dedicado em 14/10/2026: 119 peças nos dois, e por loja
+também (IGUATEMI EXP. 118, NORTH SHOPPING 1). O total é idêntico em qualquer
+`tipoClassificacao`, que é o teste de que o agrupamento não perde nem duplica linha.
+
 ## Sessão 14/10/2026 — o FIFO foi REMOVIDO; o vínculo vem do lado da ENTRADA
 
 > Esta seção substitui o desenho descrito em "Sessão 13/10/2026" logo abaixo. O híbrido

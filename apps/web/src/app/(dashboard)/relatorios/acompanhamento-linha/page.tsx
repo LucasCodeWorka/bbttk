@@ -238,10 +238,13 @@ export default function AcompanhamentoLinhaPage() {
         { key: 'evolucaoPecasPercent', header: 'EVOL PÇ %', width: 12, type: 'number' },
         { key: 'participacaoPercent', header: 'PART %', width: 10, type: 'number' },
         { key: 'coberturaMesesAtual', header: 'COB MESES', width: 11, type: 'number' },
+        { key: 'coberturaMesesEstoqueTransito', header: 'COB MESES C/ TRÂNSITO', width: 20, type: 'number' },
         // Mesma ressalva da tela: historico de estoque pre-2026 e incompleto, entao a
         // coluna A.A. e um piso. Vai no cabecalho pra ressalva nao se perder no Excel.
         { key: 'coberturaMesesAnoAnterior', header: 'COB MESES A.A. (piso*)', width: 20, type: 'number' },
         { key: 'estoqueFisico', header: 'ESTOQUE FISICO', width: 13, type: 'number' },
+        { key: 'pecasEmTransito', header: 'PEÇAS EM TRÂNSITO', width: 17, type: 'number' },
+        { key: 'estoqueMaisTransito', header: 'ESTOQUE + TRÂNSITO', width: 18, type: 'number' },
         { key: 'pecasEmProducao', header: 'PEÇAS EM PRODUÇÃO', width: 17, type: 'number' },
       ];
 
@@ -263,8 +266,11 @@ export default function AcompanhamentoLinhaPage() {
           metaPeriodo: data.totais.metaPeriodo ?? '',
           atingimentoMetaPercent: data.totais.atingimentoMetaPercent ?? '',
           coberturaMesesAtual: data.totais.coberturaMesesAtual ?? '',
+          coberturaMesesEstoqueTransito: data.totais.coberturaMesesEstoqueTransito ?? '',
           coberturaMesesAnoAnterior: data.totais.coberturaMesesAnoAnterior ?? '',
           estoqueFisico: data.totais.estoqueFisico,
+          pecasEmTransito: data.totais.pecasEmTransito,
+          estoqueMaisTransito: data.totais.estoqueMaisTransito,
           pecasEmProducao: data.totais.pecasEmProducao,
         },
       });
@@ -339,7 +345,7 @@ export default function AcompanhamentoLinhaPage() {
       </div>
 
       {data && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-4">
           <KPICard title="Venda Atual" value={formatMoney(data.kpis.vendaValorTotal)} color="green" isLoading={isLoading} />
           {/* Meta do periodo = meta mensal / dias do mes * dias selecionados (formula
               pedida na devolutiva). Fica em branco quando nenhuma classificacao tem
@@ -358,6 +364,13 @@ export default function AcompanhamentoLinhaPage() {
           <KPICard title="Venda Ano Anterior" value={formatMoney(data.kpis.vendaValorAnoAnteriorTotal)} color="blue" isLoading={isLoading} />
           <KPICard title="Evolução vs A.A." value={formatPercentDelta(data.kpis.evolucaoValorPercent)} color="purple" isLoading={isLoading} />
           <KPICard title="Estoque Físico" value={formatNumber(data.kpis.estoqueFisicoTotal)} color="yellow" isLoading={isLoading} />
+          <KPICard
+            title="Em Trânsito"
+            value={formatNumber(data.kpis.pecasEmTransitoTotal)}
+            subtitle={`Estoque + trânsito: ${formatNumber(data.kpis.estoqueMaisTransitoTotal)}`}
+            color="purple"
+            isLoading={isLoading}
+          />
           <KPICard title="Peças em Produção" value={formatNumber(data.kpis.pecasEmProducaoTotal)} color="red" isLoading={isLoading} />
         </div>
       )}
@@ -405,19 +418,22 @@ export default function AcompanhamentoLinhaPage() {
                 <ThSortPcp label="EVOL PÇ" sortKeyName="evolucaoPecasPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" />
                 <ThSortPcp label="PART %" sortKeyName="participacaoPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Participação no total vendido no filtro atual" />
                 <ThSortPcp label="COB MESES" sortKeyName="coberturaMesesAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura atual em meses = estoque físico / venda média mensal" />
+                <ThSortPcp label="COB C/ TRÂNSITO" sortKeyName="coberturaMesesEstoqueTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses contando também o que está a caminho = (estoque + trânsito) / venda média mensal. Sempre maior ou igual à COB MESES." />
                 <ThSortPcp label="COB MESES A.A. *" sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior (estoque e venda de então). ATENÇÃO: o histórico de estoque anterior a 2026 é incompleto no TOTVS — a captura passou a ser muito mais densa a partir de 2026, então este número é um PISO, não o estoque real da época. Use para tendência, não como valor absoluto." />
                 <ThSortPcp label="ESTOQUE" sortKeyName="estoqueFisico" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Estoque físico disponível na loja" />
+                <ThSortPcp label="EM TRÂNSITO" sortKeyName="pecasEmTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças transferidas do DPA que ainda não chegaram ao destino. Não constam no estoque de nenhuma loja, por isso são contadas à parte. Fonte: vínculo documento-a-documento do TOTVS (relatório Estoque em Trânsito)." />
+                <ThSortPcp label="ESTOQUE + TRÂNSITO" sortKeyName="estoqueMaisTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Soma do estoque físico com as peças a caminho" />
                 <ThSortPcp label="EM PRODUÇÃO" sortKeyName="pecasEmProducao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças em Ordem de Produção aberta (rede toda)" />
               </TableRow>
             </TableHead>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={14} align="center" className="py-8"><div className="animate-pulse text-gray-400">Carregando...</div></TableCell>
+                  <TableCell colSpan={17} align="center" className="py-8"><div className="animate-pulse text-gray-400">Carregando...</div></TableCell>
                 </TableRow>
               ) : sortedLinhas.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={14} align="center" className="py-8 text-gray-500">Nenhum dado encontrado para os filtros selecionados</TableCell>
+                  <TableCell colSpan={17} align="center" className="py-8 text-gray-500">Nenhum dado encontrado para os filtros selecionados</TableCell>
                 </TableRow>
               ) : data ? (
                 <>
@@ -440,8 +456,13 @@ export default function AcompanhamentoLinhaPage() {
                     </TableCell>
                     <TableCell align="right">{linha.participacaoPercent.toFixed(1)}%</TableCell>
                     <TableCell align="right">{linha.coberturaMesesAtual !== null ? linha.coberturaMesesAtual.toFixed(1) : '-'}</TableCell>
+                    <TableCell align="right">{linha.coberturaMesesEstoqueTransito !== null ? linha.coberturaMesesEstoqueTransito.toFixed(1) : '-'}</TableCell>
                     <TableCell align="right">{linha.coberturaMesesAnoAnterior !== null ? linha.coberturaMesesAnoAnterior.toFixed(1) : '-'}</TableCell>
                     <TableCell align="right">{formatNumber(linha.estoqueFisico)}</TableCell>
+                    <TableCell align="right" className={linha.pecasEmTransito > 0 ? 'text-[var(--bbtk-purple)]' : 'text-gray-400'}>
+                      {formatNumber(linha.pecasEmTransito)}
+                    </TableCell>
+                    <TableCell align="right">{formatNumber(linha.estoqueMaisTransito)}</TableCell>
                     <TableCell align="right">{formatNumber(linha.pecasEmProducao)}</TableCell>
                   </TableRow>
                   ))}
@@ -457,8 +478,11 @@ export default function AcompanhamentoLinhaPage() {
                     <TableCell align="right">{formatPercentDelta(data.totais.evolucaoPecasPercent)}</TableCell>
                     <TableCell align="right">{data.totais.participacaoPercent.toFixed(1)}%</TableCell>
                     <TableCell align="right">{data.totais.coberturaMesesAtual !== null ? data.totais.coberturaMesesAtual.toFixed(1) : '-'}</TableCell>
+                    <TableCell align="right">{data.totais.coberturaMesesEstoqueTransito !== null ? data.totais.coberturaMesesEstoqueTransito.toFixed(1) : '-'}</TableCell>
                     <TableCell align="right">{data.totais.coberturaMesesAnoAnterior !== null ? data.totais.coberturaMesesAnoAnterior.toFixed(1) : '-'}</TableCell>
                     <TableCell align="right">{formatNumber(data.totais.estoqueFisico)}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.pecasEmTransito)}</TableCell>
+                    <TableCell align="right">{formatNumber(data.totais.estoqueMaisTransito)}</TableCell>
                     <TableCell align="right">{formatNumber(data.totais.pecasEmProducao)}</TableCell>
                   </TableRow>
                 </>
