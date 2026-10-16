@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { DATA_VENDA, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
 import { FILIAIS } from '../config/constants.js';
 
 // V1 direto ao ponto (pedido do usuario) - relatorio de rede inteira, sem quebra por
@@ -175,7 +175,7 @@ async function getVendaPorPeriodoRows(inicio: Date, fim: Date, productCodes: num
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${inicio} AND t.transaction_date < ${fim}
+    WHERE ${DATA_VENDA} >= ${inicio} AND ${DATA_VENDA} < ${fim}
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}

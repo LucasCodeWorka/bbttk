@@ -3,6 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { FILIAIS } from '../config/constants.js';
 import {
+  DATA_VENDA,
   PCP_ESTOQUE_LIQUIDO_SKU_FILTER,
   OPERACAO_JOIN,
   SALE_OPERATION_FILTER,
@@ -626,7 +627,7 @@ async function getSkusElegiveisEnvio(
       ${OPERACAO_JOIN}
       WHERE t.status = 4
         AND ${SALE_OPERATION_FILTER}
-        AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'
+        AND ${DATA_VENDA} >= CURRENT_DATE - INTERVAL '3 months'
         AND t.branch_code != 2
         AND t.customer_code < 110000000
       GROUP BY ti.product_code, t.branch_code
@@ -779,7 +780,7 @@ async function getDestinosElegiveis(
       ${OPERACAO_JOIN}
       WHERE t.status = 4
         AND ${SALE_OPERATION_FILTER}
-        AND t.transaction_date >= CURRENT_DATE - INTERVAL '3 months'
+        AND ${DATA_VENDA} >= CURRENT_DATE - INTERVAL '3 months'
         AND t.branch_code != 2
         AND t.customer_code < 110000000
         ${whereBranches}

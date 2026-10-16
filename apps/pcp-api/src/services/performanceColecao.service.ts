@@ -3,6 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
 import {
+  DATA_VENDA,
   CUSTO_PRODUCAO_BRANCH_CODE,
   CUSTO_PRODUCAO_CODE,
   FABRICA_BRANCH_CODE,
@@ -258,8 +259,8 @@ async function getVendaPeriodoTotal(filtro: PerformanceColecaoFiltro): Promise<n
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     JOIN produtos_filtrados pf ON pf.product_code = ti.product_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${filtro.dataInicio}::date
-      AND t.transaction_date <= ${filtro.dataFim}::date
+    WHERE ${DATA_VENDA} >= ${filtro.dataInicio}::date
+      AND ${DATA_VENDA} <= ${filtro.dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${vendaBranchFiltro}
@@ -309,7 +310,7 @@ async function getResumoMensal(
         COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS pecas_vendidas_colecao,
         COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END), 0) AS venda_colecao_valor
       FROM periodos p
-      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacoes t ON ${DATA_VENDA} >= p.venda_inicio AND ${DATA_VENDA} <= p.venda_fim
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
       JOIN produtos_colecao pc ON pc.product_code = ti.product_code
       ${OPERACAO_JOIN}
@@ -323,7 +324,7 @@ async function getResumoMensal(
         p.mes_inicio,
         COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS venda_total_pecas
       FROM periodos p
-      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacoes t ON ${DATA_VENDA} >= p.venda_inicio AND ${DATA_VENDA} <= p.venda_fim
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
       JOIN produtos_total pt ON pt.product_code = ti.product_code
       ${OPERACAO_JOIN}
@@ -337,7 +338,7 @@ async function getResumoMensal(
         p.mes_inicio,
         COALESCE(SUM(ABS(COALESCE(ti.quantity, 0))), 0) AS qtde_entregue
       FROM periodos p
-      JOIN transacoes t ON t.transaction_date >= p.venda_inicio AND t.transaction_date <= p.venda_fim
+      JOIN transacoes t ON ${DATA_VENDA} >= p.venda_inicio AND ${DATA_VENDA} <= p.venda_fim
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
       JOIN produtos_colecao pc ON pc.product_code = ti.product_code
       ${OPERACAO_JOIN}
@@ -678,35 +679,35 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           COALESCE(SUM(${QUANTIDADE_COM_SINAL}), 0) AS qtde_vendida,
           COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END), 0) AS total_venda_valor,
           COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END) FILTER (
-            WHERE t.transaction_date >= ${filtro.dataInicio}::date
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '1 month')
+            WHERE ${DATA_VENDA} >= ${filtro.dataInicio}::date
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '1 month')
           ), 0) AS valor_mes_1,
           COALESCE(SUM(${QUANTIDADE_COM_SINAL}) FILTER (
-            WHERE t.transaction_date >= ${filtro.dataInicio}::date
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '1 month')
+            WHERE ${DATA_VENDA} >= ${filtro.dataInicio}::date
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '1 month')
           ), 0) AS venda_mes_1,
           COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END) FILTER (
-            WHERE t.transaction_date >= (${filtro.dataInicio}::date + INTERVAL '1 month')
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '2 months')
+            WHERE ${DATA_VENDA} >= (${filtro.dataInicio}::date + INTERVAL '1 month')
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '2 months')
           ), 0) AS valor_mes_2,
           COALESCE(SUM(${QUANTIDADE_COM_SINAL}) FILTER (
-            WHERE t.transaction_date >= (${filtro.dataInicio}::date + INTERVAL '1 month')
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '2 months')
+            WHERE ${DATA_VENDA} >= (${filtro.dataInicio}::date + INTERVAL '1 month')
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '2 months')
           ), 0) AS venda_mes_2,
           COALESCE(SUM(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(COALESCE(ti.net_value, ti.value, 0)) ELSE COALESCE(ti.net_value, ti.value, 0) END) FILTER (
-            WHERE t.transaction_date >= (${filtro.dataInicio}::date + INTERVAL '2 months')
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '3 months')
+            WHERE ${DATA_VENDA} >= (${filtro.dataInicio}::date + INTERVAL '2 months')
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '3 months')
           ), 0) AS valor_mes_3,
           COALESCE(SUM(${QUANTIDADE_COM_SINAL}) FILTER (
-            WHERE t.transaction_date >= (${filtro.dataInicio}::date + INTERVAL '2 months')
-              AND t.transaction_date < (${filtro.dataInicio}::date + INTERVAL '3 months')
+            WHERE ${DATA_VENDA} >= (${filtro.dataInicio}::date + INTERVAL '2 months')
+              AND ${DATA_VENDA} < (${filtro.dataInicio}::date + INTERVAL '3 months')
           ), 0) AS venda_mes_3
         FROM transacoes t
         JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
         JOIN produto_ref pr ON pr.product_code = ti.product_code
         ${OPERACAO_JOIN}
-        WHERE t.transaction_date >= ${filtro.dataInicio}::date
-          AND t.transaction_date <= ${filtro.dataFim}::date
+        WHERE ${DATA_VENDA} >= ${filtro.dataInicio}::date
+          AND ${DATA_VENDA} <= ${filtro.dataFim}::date
           AND t.status = 4
           AND ${SALE_OPERATION_FILTER}
           ${vendaBranchFiltro}
@@ -723,8 +724,8 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
         JOIN produto_ref pr ON pr.product_code = ti.product_code
         ${OPERACAO_JOIN}
-        WHERE t.transaction_date >= ${filtro.dataInicio}::date
-          AND t.transaction_date <= CURRENT_DATE
+        WHERE ${DATA_VENDA} >= ${filtro.dataInicio}::date
+          AND ${DATA_VENDA} <= CURRENT_DATE
           AND t.status = 4
           AND ${SALE_OPERATION_FILTER}
           ${vendaBranchFiltro}

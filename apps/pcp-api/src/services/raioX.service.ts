@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
+import { DATA_VENDA, FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 // Tipos de filtros
 export interface RaioXFiltro {
@@ -199,8 +199,8 @@ async function getVendasEmLote(
     ${OPERACAO_JOIN}
     WHERE ti.product_code IN (${Prisma.join(productCodes.map(pc => Prisma.sql`${pc}`))})
       AND t.branch_code IN (${Prisma.join(branchCodes.map(bc => Prisma.sql`${bc}`))})
-      AND t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+      AND ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
     GROUP BY ti.product_code, local_code, is_atacado

@@ -26,6 +26,18 @@ export const QUANTIDADE_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -
 // positivo, as vezes negativo) antes de aplicar o sinal negativo de verdade.
 export const VALOR_COM_SINAL = Prisma.sql`(CASE WHEN ${IS_DEVOLUCAO} THEN -ABS(ti.net_value) ELSE ti.net_value END)`;
 
+// Data de competencia da VENDA - mesma regra do DATA_PERIODO em
+// apps/api/src/services/vendas.service.ts. `transaction_date` e a data em que a
+// transacao foi criada no TOTVS; `dt_fatura` e a data da nota fiscal, que e quando a
+// venda virou faturamento e nao se move quando a transacao e alterada depois. Sem isso,
+// venda do atacado lancada num mes e faturada no seguinte cai no mes errado do giro, e
+// o PCP diverge do Comercial no mesmo periodo.
+//
+// Use SO para datar VENDA. Para datar ENTRADA de mercadoria (primeira/ultima entrada,
+// idade de estoque) continua valendo `transaction_date`: ali o que interessa e quando a
+// peca chegou fisicamente na filial, nao a competencia fiscal do documento.
+export const DATA_VENDA = Prisma.sql`COALESCE(t.dt_fatura, t.transaction_date)`;
+
 // produto_analitico tem product_sku como PK, mas product_code NAO e unico nela: 182
 // product_codes aparecem em duas linhas. Nao e erro de modelagem e sim residuo do ETL -
 // quando o SKU real ainda nao e conhecido, a carga grava um placeholder
@@ -705,8 +717,8 @@ async function getGiroRows(dias: number, productCodes: number[] | null, dataPosi
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+    WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
@@ -736,8 +748,8 @@ async function getGiroTotalDias(dias: number, productCodes: number[] | null, bra
       FROM transacoes t
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
       ${OPERACAO_JOIN}
-      WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-        AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+      WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+        AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         ${filtroProductCodeTi(productCodes)}
@@ -757,8 +769,8 @@ async function getGiroAtacadoRows(dias: number, productCodes: number[] | null, d
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+    WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
@@ -784,8 +796,8 @@ async function getVendaPorMesesRows(meses: number, productCodes: number[] | null
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+    WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}
@@ -805,8 +817,8 @@ async function getVendaAtacadoPorMesesRows(meses: number, productCodes: number[]
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+    WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND t.branch_code = ${FABRICA_BRANCH_CODE}
       AND co.description ILIKE '%ATACADO%'
@@ -832,8 +844,8 @@ async function getGiroTtRows(meses: number, productCodes: number[] | null, dataP
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataBase} - make_interval(days => ${dias}::int)
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
+    WHERE ${DATA_VENDA} >= ${dataBase} - make_interval(days => ${dias}::int)
+      AND ${DATA_VENDA} < ${dataBase} + INTERVAL '1 day'
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroProductCodeTi(productCodes)}

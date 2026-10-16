@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
+import { DATA_VENDA, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 // Relatorio de Pesos e Grades para Producao ("Rel. 3"): a partir da venda GERAL
 // (atacado + varejo somados, sem separar canal - diferente do resto do PCP) de um
@@ -161,7 +161,7 @@ async function getVendaPorReferenciaTamanho(filtro: PesosGradesFiltro, grupos: s
       JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
       ${joinProdutoAnaliticoUnico('ti.product_code', 'INNER')}
       ${OPERACAO_JOIN}
-      WHERE t.transaction_date >= ${dataInicio}::date AND t.transaction_date <= ${dataFim}::date
+      WHERE ${DATA_VENDA} >= ${dataInicio}::date AND ${DATA_VENDA} <= ${dataFim}::date
         AND t.status = 4 AND ${SALE_OPERATION_FILTER}
         AND TRIM(a.class_categoria) IN (${Prisma.join(grupos)})
         ${filtro.linhas?.length ? Prisma.sql`AND TRIM(a.class_linha) IN (${Prisma.join(filtro.linhas)})` : Prisma.empty}
@@ -176,8 +176,8 @@ async function getVendaPorReferenciaTamanho(filtro: PesosGradesFiltro, grupos: s
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${joinProdutoAnaliticoUnico('ti.product_code', 'INNER')}
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+    WHERE ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND a.reference_code IN (${Prisma.join(grupos)})

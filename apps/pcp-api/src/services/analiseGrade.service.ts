@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN, COR_AGRUPADA_SELECT } from './relatorioBase.service.js';
+import { DATA_VENDA, FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN, COR_AGRUPADA_SELECT } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
 const RELATORIO_BASE_CONFIG_KEY = 'relatorio_base';
@@ -241,21 +241,21 @@ async function getVendasMensaisPorProductCode(filtro: AnaliseGradeFiltro = {}, p
     )
     SELECT
       ti.product_code,
-      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE t.transaction_date >= l.inicio_mes_1 AND t.transaction_date < l.inicio_mes_2) AS venda_mes_1,
-      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE t.transaction_date >= l.inicio_mes_2 AND t.transaction_date < l.inicio_mes_3) AS venda_mes_2,
-      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE t.transaction_date >= l.inicio_mes_3 AND t.transaction_date < l.inicio_mes_atual) AS venda_mes_3,
+      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_1 AND ${DATA_VENDA} < l.inicio_mes_2) AS venda_mes_1,
+      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_2 AND ${DATA_VENDA} < l.inicio_mes_3) AS venda_mes_2,
+      SUM(${QUANTIDADE_COM_SINAL}) FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_3 AND ${DATA_VENDA} < l.inicio_mes_atual) AS venda_mes_3,
       SUM(CASE WHEN (co.operations_type = 'E' AND co.operation_mode = '3') THEN -ABS(ti.net_value) ELSE ti.net_value END)
-        FILTER (WHERE t.transaction_date >= l.inicio_mes_1 AND t.transaction_date < l.inicio_mes_2) AS valor_mes_1,
+        FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_1 AND ${DATA_VENDA} < l.inicio_mes_2) AS valor_mes_1,
       SUM(CASE WHEN (co.operations_type = 'E' AND co.operation_mode = '3') THEN -ABS(ti.net_value) ELSE ti.net_value END)
-        FILTER (WHERE t.transaction_date >= l.inicio_mes_2 AND t.transaction_date < l.inicio_mes_3) AS valor_mes_2,
+        FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_2 AND ${DATA_VENDA} < l.inicio_mes_3) AS valor_mes_2,
       SUM(CASE WHEN (co.operations_type = 'E' AND co.operation_mode = '3') THEN -ABS(ti.net_value) ELSE ti.net_value END)
-        FILTER (WHERE t.transaction_date >= l.inicio_mes_3 AND t.transaction_date < l.inicio_mes_atual) AS valor_mes_3
+        FILTER (WHERE ${DATA_VENDA} >= l.inicio_mes_3 AND ${DATA_VENDA} < l.inicio_mes_atual) AS valor_mes_3
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
     CROSS JOIN limites l
-    WHERE t.transaction_date >= l.inicio_mes_1
-      AND t.transaction_date < l.inicio_mes_atual
+    WHERE ${DATA_VENDA} >= l.inicio_mes_1
+      AND ${DATA_VENDA} < l.inicio_mes_atual
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroBranch}
@@ -573,7 +573,7 @@ async function getGiroPorProductCode(meses: number, productCodes: number[] | nul
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - make_interval(months => ${meses}::int)
+    WHERE ${DATA_VENDA} >= CURRENT_DATE - make_interval(months => ${meses}::int)
       AND t.status = 4 AND ${SALE_OPERATION_FILTER}
       ${filtroProductCode}
     GROUP BY ti.product_code

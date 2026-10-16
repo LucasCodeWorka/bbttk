@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import {
+  DATA_VENDA,
   OPERACAO_JOIN,
   SALE_OPERATION_FILTER,
   QUANTIDADE_COM_SINAL,
@@ -150,8 +151,8 @@ async function getVendasPorPeriodo(
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     JOIN produtos_filtrados pf ON pf.product_code = ti.product_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+    WHERE ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
@@ -559,8 +560,8 @@ async function getVendaPorClassificacaoDiario(
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${joinProdutoAnaliticoUnico('ti.product_code')}
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+    WHERE ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroLocal}
