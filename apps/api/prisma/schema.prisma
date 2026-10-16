@@ -250,6 +250,12 @@ model transacoes {
   branch_name            String?   @db.VarChar(100)
   transaction_code       Int
   transaction_date       DateTime  @db.Date
+  // Data da nota fiscal ("Data fatura" no TOTVS), gravada pelo ETL em
+  // sync_transaction_invoices.py. E a data de competencia da venda: ao contrario da
+  // transaction_date, nao se move quando a transacao e alterada depois. Precisa estar
+  // declarada aqui mesmo sendo usada so em $queryRaw - um `prisma db push` com o schema
+  // desatualizado DERRUBARIA a coluna.
+  dt_fatura              DateTime? @db.Date
   customer_code          BigInt?
   last_change_date       DateTime? @db.Timestamp(6)
   operation_code         Int?
@@ -266,6 +272,7 @@ model transacoes {
   @@unique([branch_code, transaction_code])
   @@index([branch_code], map: "idx_transacoes_branch")
   @@index([transaction_date], map: "idx_transacoes_date")
+  @@index([dt_fatura], map: "idx_transacoes_dt_fatura")
   @@index([operation_code], map: "idx_transacoes_operation")
   @@index([status], map: "idx_transacoes_status")
 }

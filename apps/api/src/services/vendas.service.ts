@@ -134,20 +134,39 @@ function buildBranchFilter(branchCodes?: number[]) {
 // Formato 'YYYY-MM-DD'; fora do intervalo e ignorado pelo proprio BETWEEN.
 export type DiasExcluidos = string[] | undefined;
 
+// Data de competencia da venda - use SEMPRE esta, nunca `t.transaction_date` solta.
+//
+// `transaction_date` e a data em que a transacao foi criada no TOTVS. No atacado/fabrica
+// o pedido pode ser lancado num dia e faturado em outro, e o TOTVS reporta a venda na
+// data da NOTA FISCAL (coluna `dt_fatura`, preenchida pelo ETL a partir do endpoint
+// fiscal/v2/invoices/search). Caso que motivou a mudanca: a transacao 914090 da Janaina,
+// criada em 30/09 e faturada em 01/10 - o COMFL007 conta em outubro, nos contavamos em
+// setembro, e a vendedora fechava 145 pc / R$ 2.185,05 contra 199 pc / R$ 4.682,71.
+//
+// Antes disso tentamos `COALESCE(last_change_date, transaction_date)`: consertava a
+// Janaina e QUEBRAVA Larissa e Lauriane, porque venda antiga que sofre correcao depois
+// nao muda de competencia. A data da NF resolve os dois casos - reproduz as quatro
+// vendedoras do COMFL007. Verificado em 16/10/2026.
+//
+// O COALESCE cobre a transacao sem NF (venda de funcionario, operacao que nao emite
+// documento) e o varejo, onde a NF sai sempre no mesmo dia da venda - 12.823 saidas
+// conferidas em out/2025 e mai/2026, zero divergencias.
+const DATA_PERIODO = Prisma.sql`COALESCE(t.dt_fatura, t.transaction_date)`;
+
 function buildDiasExcluidosFilter(diasExcluidos: DiasExcluidos): Prisma.Sql {
   if (!diasExcluidos || diasExcluidos.length === 0) return Prisma.empty;
   // Cast explicito pra `date`: passar `new Date('2026-09-15T00:00:00')` daria meia-noite
   // LOCAL (03:00Z no Brasil) e a comparacao com a coluna `date` escorregava de dia.
   // Com a string crua + ::date a comparacao e dia contra dia, sem fuso no meio.
   const datas = diasExcluidos.map((d) => Prisma.sql`${d}::date`);
-  return Prisma.sql`AND t.transaction_date NOT IN (${Prisma.join(datas)})`;
+  return Prisma.sql`AND ${DATA_PERIODO} NOT IN (${Prisma.join(datas)})`;
 }
 
 // Periodo + furos numa fragmento so. Substitui o `t.transaction_date BETWEEN a AND b`
 // solto que estava repetido em toda query - centralizar evita que uma consulta nova
 // esqueca de aplicar as exclusoes e passe a divergir das outras.
 function buildPeriodoFilter(startDate: Date, endDate: Date, diasExcluidos?: DiasExcluidos): Prisma.Sql {
-  return Prisma.sql`t.transaction_date BETWEEN ${startDate} AND ${endDate} ${buildDiasExcluidosFilter(diasExcluidos)}`;
+  return Prisma.sql`${DATA_PERIODO} BETWEEN ${startDate} AND ${endDate} ${buildDiasExcluidosFilter(diasExcluidos)}`;
 }
 
 // Espelha os dias excluidos um ano pra tras, pra comparacao "ano anterior" ficar com a
@@ -436,7 +455,9 @@ export async function getVendasDiarias(
     faturamento: Decimal;
   }>>`
     SELECT
-      t.transaction_date as data,
+      -- Agrupa pela MESMA data que filtra o periodo (DATA_PERIODO). Agrupar por
+      -- transaction_date aqui colocaria a venda numa barra fora do intervalo escolhido.
+      ${DATA_PERIODO} as data,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
       COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
       COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -451,8 +472,8 @@ export async function getVendasDiarias(
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
       ${produtoFilter}
-    GROUP BY t.transaction_date
-    ORDER BY t.transaction_date
+    GROUP BY ${DATA_PERIODO}
+    ORDER BY ${DATA_PERIODO}
   `;
 
   return results.map(row => ({
@@ -558,7 +579,7 @@ export async function getVendasDiaSemana(
       FROM generate_series(${startDate}::date, ${endDate}::date, interval '1 day') dia
     ), vendas_dia AS (
       SELECT
-        t.transaction_date::date as dia,
+        ${DATA_PERIODO} as dia,
         COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (t.branch_code, t.transaction_code) END) as transacoes,
         COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
         COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -573,7 +594,7 @@ export async function getVendasDiaSemana(
         AND ${STORE_BRANCH_FILTER}
         ${branchFilter}
         ${produtoFilter}
-      GROUP BY t.transaction_date::date
+      GROUP BY ${DATA_PERIODO}
     )
     SELECT
       c.dia_semana,
@@ -622,7 +643,7 @@ export async function getVendasMensais(
     faturamento: Decimal;
   }>>`
     SELECT
-      DATE_TRUNC('month', t.transaction_date) as mes,
+      DATE_TRUNC('month', ${DATA_PERIODO}) as mes,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
       COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
       COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -637,7 +658,7 @@ export async function getVendasMensais(
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
       ${produtoFilter}
-    GROUP BY DATE_TRUNC('month', t.transaction_date)
+    GROUP BY DATE_TRUNC('month', ${DATA_PERIODO})
     ORDER BY mes
   `;
 
@@ -964,7 +985,10 @@ export async function getClientesNovosPorFilial(
     faturamento_cn: Decimal;
   }>>`
     WITH primeira_compra AS (
-      SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
+      -- Mesmo calendario do resto do dashboard (DATA_PERIODO): "cliente novo no
+      -- periodo" tem que usar a mesma regra que define o periodo, senao a primeira
+      -- compra e comparada numa data e o faturamento dele e somado em outra.
+      SELECT t.customer_code, MIN(${DATA_PERIODO}) as primeira_data
       FROM transacoes t
       ${OPERACAO_JOIN}
       WHERE t.customer_code IS NOT NULL
