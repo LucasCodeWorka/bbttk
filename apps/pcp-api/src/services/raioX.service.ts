@@ -26,6 +26,10 @@ export interface RaioXGrade {
   estoqueFinal: number;
   pecasEmProducao: number;
   cobertura: number;
+  // true quando a celula tem estoque mas nao teve venda no periodo. Nesse caso a
+  // cobertura e calculada assumindo 1 peca vendida, so pra nao exibir "INF" - ver
+  // calcularCobertura. A tela marca esses numeros pra deixar claro que sao estimados.
+  coberturaSemVenda: boolean;
 }
 
 export interface RaioXLoja {
@@ -40,6 +44,7 @@ export interface RaioXLoja {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+    coberturaSemVenda: boolean;
   };
 }
 
@@ -60,6 +65,7 @@ export interface RaioXProduto {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+    coberturaSemVenda: boolean;
   };
 }
 
@@ -84,7 +90,7 @@ interface LocalRaioX {
 }
 
 function totaisVazios() {
-  return { estoqueInicial: 0, transferencias: 0, vendasVarejo: 0, vendasAtacado: 0, estoqueFinal: 0, pecasEmProducao: 0, cobertura: 0 };
+  return { estoqueInicial: 0, transferencias: 0, vendasVarejo: 0, vendasAtacado: 0, estoqueFinal: 0, pecasEmProducao: 0, cobertura: 0, coberturaSemVenda: false };
 }
 
 // A filial física 02 nunca é apresentada diretamente: ela é desmembrada em
@@ -232,31 +238,40 @@ async function getProducaoEmLote(productCodes: number[]): Promise<Map<number, nu
   return new Map(rows.map(row => [row.product_code, decimalToNumber(row.quantidade)]));
 }
 
-/**
- * Calcula a cobertura em meses para um produto.
- * Cobertura = estoqueFinal / ((vendasVarejo + vendasAtacado) / dias do período * 30)
- */
+// Cobertura em meses da celula, separando os tres casos que antes viravam todos o
+// sentinela 999 ("INF" na tela). Devolutiva de 25/08: metade das celulas da grade
+// aparecia como INF sem ter estoque nenhum - medido em 14 de 28 numa referencia real.
+//
+//   estoque = 0                -> 0. Nao ha o que cobrir; a celula esta vazia.
+//   estoque > 0 e venda = 0    -> calcula assumindo 1 peca vendida, e marca
+//                                 coberturaSemVenda. Decisao do usuario: um numero
+//                                 alto e sinalizado comunica melhor que "INF".
+//   caso normal                -> estoque / venda media mensal.
 function calcularCobertura(
   estoqueFinal: number,
   vendasVarejo: number,
   vendasAtacado: number,
   dataInicio: string,
   dataFim: string
-): number {
-  const totalVendas = vendasVarejo + vendasAtacado;
-  if (totalVendas === 0) return 999; // Sem vendas = cobertura infinita
+): { cobertura: number; semVenda: boolean } {
+  if (estoqueFinal <= 0) return { cobertura: 0, semVenda: false };
 
-  // Calcula os dias do período
+  const totalVendas = vendasVarejo + vendasAtacado;
+  const semVenda = totalVendas <= 0;
+  // 1 peca e o piso: sem isso a divisao por zero devolvia infinito.
+  const vendasBase = semVenda ? 1 : totalVendas;
+
   const inicio = new Date(dataInicio);
   const fim = new Date(dataFim);
-  const dias = Math.ceil((fim.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  const dias = Math.max(
+    Math.ceil((fim.getTime() - inicio.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+    1
+  );
 
-  // Média de vendas por mês (30 dias)
-  const mediaMensal = (totalVendas / dias) * 30;
+  const mediaMensal = (vendasBase / dias) * 30;
+  if (mediaMensal <= 0) return { cobertura: 0, semVenda };
 
-  if (mediaMensal === 0) return 999;
-
-  return estoqueFinal / mediaMensal;
+  return { cobertura: estoqueFinal / mediaMensal, semVenda };
 }
 
 /**
@@ -414,6 +429,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
         estoqueFinal: 0,
         pecasEmProducao: 0,
         cobertura: 0,
+        coberturaSemVenda: false,
       },
     };
 
@@ -432,6 +448,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
           estoqueFinal: 0,
           pecasEmProducao: 0,
           cobertura: 0,
+          coberturaSemVenda: false,
         },
       };
 
@@ -466,6 +483,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
           estoqueFinal: 0,
           pecasEmProducao: 0,
           cobertura: 0,
+          coberturaSemVenda: false,
         };
 
         grade.estoqueInicial += estoqueInicial;
@@ -486,23 +504,27 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
 
       lojaResult.grades = [...gradesPorTamanho.values()];
       for (const grade of lojaResult.grades) {
-        grade.cobertura = calcularCobertura(
+        const coberturaGrade = calcularCobertura(
           grade.estoqueFinal,
           grade.vendasVarejo,
           grade.vendasAtacado,
           filtro.dataInicio,
           filtro.dataFim
         );
+        grade.cobertura = coberturaGrade.cobertura;
+        grade.coberturaSemVenda = coberturaGrade.semVenda;
       }
 
       // Calcula cobertura total da loja
-      lojaResult.totais.cobertura = calcularCobertura(
+      const coberturaLoja = calcularCobertura(
         lojaResult.totais.estoqueFinal,
         lojaResult.totais.vendasVarejo,
         lojaResult.totais.vendasAtacado,
         filtro.dataInicio,
         filtro.dataFim
       );
+      lojaResult.totais.cobertura = coberturaLoja.cobertura;
+      lojaResult.totais.coberturaSemVenda = coberturaLoja.semVenda;
 
       produtoResult.lojas.push(lojaResult);
 
@@ -516,13 +538,15 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     }
 
     // Calcula cobertura total geral
-    produtoResult.totalGeral.cobertura = calcularCobertura(
+    const coberturaTotal = calcularCobertura(
       produtoResult.totalGeral.estoqueFinal,
       produtoResult.totalGeral.vendasVarejo,
       produtoResult.totalGeral.vendasAtacado,
       filtro.dataInicio,
       filtro.dataFim
     );
+    produtoResult.totalGeral.cobertura = coberturaTotal.cobertura;
+    produtoResult.totalGeral.coberturaSemVenda = coberturaTotal.semVenda;
 
     resultado.push(produtoResult);
   }

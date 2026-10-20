@@ -1064,6 +1064,9 @@ export interface RaioXGrade {
   estoqueFinal: number;
   pecasEmProducao: number;
   cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
 }
 
 export interface RaioXLoja {
@@ -1078,6 +1081,9 @@ export interface RaioXLoja {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
   };
 }
 
@@ -1098,6 +1104,9 @@ export interface RaioXProduto {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
   };
 }
 
