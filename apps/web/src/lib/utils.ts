@@ -24,6 +24,20 @@ export const FILIAIS: Record<number, string> = {
 // filtro nenhum, so nos pontos que tratam meta/comissao explicitamente.
 export const VOLANTE_BRANCH_CODE = 0;
 
+// A filial 02 abriga dois negocios distintos: DPA e ATACADO, separados pela descricao
+// da operacao e nao por branch_code (no TOTVS os dois sao a filial 2). O 2.3 e
+// sintetico, igual ao que a API ja usa - ver ATACADO_BRANCH_CODE em vendas.service.
+//
+// Fica FORA de FILIAIS de proposito: FILIAIS e o mapa de filiais REAIS e tambem
+// alimenta os filtros de Metas e Comissoes, que nao tem como separar por operacao.
+// Quem quiser oferecer as metades compoe com FABRICA_METADES, como o Dashboard faz.
+export const FABRICA_BRANCH_CODE = 2;
+export const ATACADO_BRANCH_CODE = 2.3;
+export const FABRICA_METADES: { value: number; label: string }[] = [
+  { value: FABRICA_BRANCH_CODE, label: 'DPA' },
+  { value: ATACADO_BRANCH_CODE, label: 'ATACADO' },
+];
+
 export const MESES = [
   '',
   'Janeiro',

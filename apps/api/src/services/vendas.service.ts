@@ -22,6 +22,22 @@ const OPERACAO_JOIN = Prisma.sql`LEFT JOIN classificacao_operacoes co ON co.oper
 const IS_VENDA = Prisma.sql`(co.operations_type = 'S' AND co.operation_mode = '4')`;
 const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operation_mode = '3')`;
 
+// A filial 02 abriga dois negocios distintos, separados pela DESCRICAO DA OPERACAO e
+// nao por branch_code - no TOTVS os dois sao a filial 2. O 2.3 e um codigo sintetico:
+// nao existe no banco, so na aplicacao, e e o mesmo que getVendasFabricaDividida ja
+// devolve pra desenhar as duas linhas da tabela do dashboard.
+//
+// E_ATACADO/E_DPA existem pra que filtro e tabela NUNCA possam divergir: as duas linhas
+// da tabela saem do mesmo par de predicados que o filtro usa. Medido em set/2026, o
+// corte e bem desigual - DPA R$ 4.274,28 contra ATACADO R$ 212.577,68 -, e era por isso
+// que filtrar "FABRICA" na pratica mostrava so o atacado, com o DPA sumindo no
+// arredondamento.
+export const FABRICA_BRANCH_CODE = 2;
+export const ATACADO_BRANCH_CODE = 2.3;
+const E_ATACADO = Prisma.sql`co.description ILIKE '%ATACADO%'`;
+// Espelha o ELSE do CASE: descricao nula nao casa com ILIKE e portanto e DPA.
+const E_DPA = Prisma.sql`(co.description NOT ILIKE '%ATACADO%' OR co.description IS NULL)`;
+
 // HISTÓRICO: customer_code >= 110000000 já foi usado como heurística pra excluir "conta
 // interna do TOTVS" (transferência entre filiais, ajuste de estoque, amostra, perda) que
 // entrava como faturamento de verdade por causa das listas antigas de operation_code fixas
@@ -124,9 +140,32 @@ function round(value: number, decimals: number = 2): number {
 }
 
 // Filtro de filiais reutilizado: aceita uma ou varias (undefined/vazio = todas)
+// Aceita, alem das filiais reais, as duas metades da Fabrica: 2 = DPA e 2.3 = ATACADO.
+// Como toda query que chama esta funcao ja traz o OPERACAO_JOIN, da pra cortar pela
+// descricao da operacao aqui mesmo - e assim os 9 pontos que filtram por filial ganham
+// o comportamento de uma vez, sem cada servico ter que saber do assunto.
 function buildBranchFilter(branchCodes?: number[]) {
   if (!branchCodes || branchCodes.length === 0) return Prisma.empty;
-  return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
+
+  const querDpa = branchCodes.includes(FABRICA_BRANCH_CODE);
+  const querAtacado = branchCodes.includes(ATACADO_BRANCH_CODE);
+  const outras = branchCodes.filter(
+    (c) => c !== FABRICA_BRANCH_CODE && c !== ATACADO_BRANCH_CODE
+  );
+
+  if (!querDpa && !querAtacado) {
+    return Prisma.sql`AND t.branch_code IN (${Prisma.join(outras)})`;
+  }
+
+  // As duas metades juntas sao a filial 2 inteira: nao vale pagar o custo de olhar a
+  // descricao da operacao so pra reunir o que nunca foi separado no banco.
+  const fabrica =
+    querDpa && querAtacado
+      ? Prisma.sql`t.branch_code = ${FABRICA_BRANCH_CODE}`
+      : Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND ${querAtacado ? E_ATACADO : E_DPA})`;
+
+  if (outras.length === 0) return Prisma.sql`AND ${fabrica}`;
+  return Prisma.sql`AND (t.branch_code IN (${Prisma.join(outras)}) OR ${fabrica})`;
 }
 
 // Dias "furados" dentro do periodo: o usuario escolhe o intervalo no calendario e
@@ -379,7 +418,7 @@ export async function getVendasFabricaDividida(
   }>>`
     SELECT
       CASE
-        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN ${E_ATACADO} THEN '2.3'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
@@ -937,7 +976,7 @@ export async function getDevolucoesFabricaDividida(
   }>>`
     SELECT
       CASE
-        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN ${E_ATACADO} THEN '2.3'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT t.transaction_code) as qtde_dev,
