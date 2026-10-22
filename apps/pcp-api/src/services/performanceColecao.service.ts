@@ -213,6 +213,7 @@ interface QueryRow {
   pdv_atacado: Decimal | null;
   qtdes_liberadas: Decimal | null;
   qtde_entregue: Decimal | null;
+  qtde_entregue_periodo: Decimal | null;
   qtde_vendida: Decimal | null;
   qtde_vendida_ate_hoje: Decimal | null;
   venda_mes_1: Decimal | null;
@@ -334,18 +335,31 @@ async function getResumoMensal(
       GROUP BY p.mes_inicio
     ),
     entradas AS (
+      -- "Qtde entregue" do mes = OP FINALIZADA naquele mes. Mesma fonte e mesma regra
+      -- da CTE producao do relatorio principal, pra tela nao mostrar dois numeros
+      -- diferentes pro mesmo conceito.
+      --
+      -- Esta CTE somava QUALQUER operacao de entrada de estoque. O resultado era
+      -- dominado por transferencia entre filiais - a mesma peca contada de novo a
+      -- cada vez que circulava na rede. Na COLECAO JULHO 2026 dava 15.962 pecas.
+      -- Foi o que o cliente reportou em 01/09: "esta somando todas as entradas de
+      -- estoque do mes, em todas as filiais".
+      --
+      -- Segunda qualidade (operacao 105) fica de fora de proposito: sao pecas com
+      -- defeito, que podem ou nao voltar ao estoque, e nao contam como produzido.
+      -- Vindo de ops_producao, elas ja nao entram.
       SELECT
         p.mes_inicio,
-        COALESCE(SUM(ABS(COALESCE(ti.quantity, 0))), 0) AS qtde_entregue
+        COALESCE(SUM(i.quantidade_finalizada), 0) AS qtde_entregue
       FROM periodos p
-      JOIN transacoes t ON ${DATA_VENDA} >= p.venda_inicio AND ${DATA_VENDA} <= p.venda_fim
-      JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
-      JOIN produtos_colecao pc ON pc.product_code = ti.product_code
-      ${OPERACAO_JOIN}
-      WHERE t.status = 4
-        AND co.operations_type = 'E'
-        AND NOT ${IS_DEVOLUCAO}
-        ${vendaBranchFiltro}
+      JOIN ops_producao o
+        ON o.status = 30
+       AND o.end_date IS NOT NULL
+       AND o.end_date::date >= p.venda_inicio
+       AND o.end_date::date <= p.venda_fim
+      JOIN ops_producao_itens i
+        ON i.branch_code = o.branch_code AND i.order_code = o.order_code
+      JOIN produtos_colecao pc ON pc.product_code = i.product_code
       GROUP BY p.mes_inicio
     ),
     precos AS (
@@ -731,22 +745,61 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           ${vendaBranchFiltro}
         GROUP BY ti.product_code
       ),
-      -- Producao de verdade (nao documento fiscal de entrada) - ops_em_producao,
-      -- sincronizada via totvs.service.ts syncEmProducao. qtdes_liberadas =
-      -- quantidade_op (tudo que foi aberto de OP), qtde_entregue =
-      -- quantidade_finalizada (o que ja finalizou/entrou no DPA de fato). Filtra pela
-      -- data de ABERTURA da OP (<=dataFim) pra decidir quais OPs entram na conta da
-      -- colecao/periodo - mas as quantidades em si sao sempre o estado ATUAL
-      -- (ops_em_producao e um snapshot regravado por inteiro a cada sync).
+      -- Producao = OP FINALIZADA (status 30), contada pela data em que a OP fechou.
+      --
+      -- Antes isso vinha de ops_em_producao, que e um snapshot so das OPs ABERTAS:
+      -- quando a OP fecha, ela sai da tabela. O relatorio enxergava apenas o residuo
+      -- do que nao tinha fechado - na COLECAO JULHO 2026 mostrava 176 pecas de 5.659
+      -- reais, 3% do total, e Valor total / Custo total / precos medios saiam todos
+      -- sobre essa base. Ver ops_producao (carregada por sync_ops_historico.py).
+      --
+      -- So o status 30 conta. Medido em 21/10/2026, na base inteira:
+      --   20 (em andamento) 110 OPs,   39,4% concluido, NENHUMA com end_date
+      --   30 (finalizada) 3.151 OPs,  100,0% concluido, TODAS com end_date
+      --   40 (cancelada)    334 OPs,    0,0% concluido - 122 mil pecas planejadas
+      --                                 e zero produzidas
+      --
+      -- qtdes_liberadas soma as OPs em andamento e as finalizadas - o que foi liberado
+      -- pra producao vale mesmo que ainda nao tenha fechado -, mas EXCLUI as canceladas:
+      -- dela saem "saldo a entregar" (liberadas - entregue) e "% entregue"
+      -- (entregue / liberadas), e OP cancelada nao e peca a entregar. Deixar o status 40
+      -- entrar aqui prometia 122 mil pecas que nunca virao e rebaixava o % entregue de
+      -- uma colecao ja 100% concluida no que nao foi cancelado.
       producao AS (
         SELECT
-          op.product_code,
-          SUM(op.quantidade_op) AS qtdes_liberadas,
-          SUM(op.quantidade_finalizada) AS qtde_entregue
-        FROM ops_em_producao op
-        JOIN produto_ref pr ON pr.product_code = op.product_code
-        WHERE op.dt_inicio IS NULL OR op.dt_inicio <= ${filtro.dataFim}::date
-        GROUP BY op.product_code
+          i.product_code,
+          SUM(i.quantidade) FILTER (WHERE o.status <> 40) AS qtdes_liberadas,
+          -- Duas medidas de propósito, e elas respondem a perguntas diferentes:
+          --
+          -- qtde_entregue = tudo que a colecao ja produziu ate a data fim, sem piso. E
+          -- disso que saem "saldo a entregar" e "% entregue", que sao progresso da
+          -- colecao: uma colecao fechada em junho esta 100% entregue mesmo que a tela
+          -- esteja filtrada em julho. Janelar aqui faria uma colecao pronta aparecer
+          -- com 0% entregue e o saldo cheio.
+          --
+          -- qtde_entregue_periodo = so o que fechou DENTRO da janela escolhida. E disso
+          -- que sai o card QUANTIDADE PRODUZIDA, pra ele bater com a coluna "Qtde
+          -- entregue" do Resumo Final, que ja era mes a mes dentro da janela. Sem o
+          -- piso, a COLECAO JULHO 2026 mostrava 4.578 no card contra 3.861 somando a
+          -- tabela: as 717 pecas de diferenca fecharam em junho/26, antes da janela -
+          -- producao normal de uma colecao que so entra em venda em julho.
+          SUM(i.quantidade_finalizada) FILTER (
+            WHERE o.status = 30
+              AND o.end_date IS NOT NULL
+              AND o.end_date::date <= ${filtro.dataFim}::date
+          ) AS qtde_entregue,
+          SUM(i.quantidade_finalizada) FILTER (
+            WHERE o.status = 30
+              AND o.end_date IS NOT NULL
+              AND o.end_date::date >= ${filtro.dataInicio}::date
+              AND o.end_date::date <= ${filtro.dataFim}::date
+          ) AS qtde_entregue_periodo
+        FROM ops_producao o
+        JOIN ops_producao_itens i
+          ON i.branch_code = o.branch_code AND i.order_code = o.order_code
+        JOIN produto_ref pr ON pr.product_code = i.product_code
+        WHERE (o.insert_date IS NULL OR o.insert_date::date <= ${filtro.dataFim}::date)
+        GROUP BY i.product_code
       ),
       precos AS (
         SELECT
@@ -771,6 +824,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           p.pdv_atacado,
           COALESCE(op.qtdes_liberadas, 0) AS qtdes_liberadas,
           COALESCE(op.qtde_entregue, 0) AS qtde_entregue,
+          COALESCE(op.qtde_entregue_periodo, 0) AS qtde_entregue_periodo,
           COALESCE(v.qtde_vendida, 0) AS qtde_vendida,
           COALESCE(vah.qtde_vendida_ate_hoje, 0) AS qtde_vendida_ate_hoje,
           COALESCE(v.venda_mes_1, 0) AS venda_mes_1,
@@ -785,8 +839,12 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
           COALESCE(v.qtde_vendida, 0) * p.custo AS total_venda_custo,
           COALESCE(es.estoque_final, 0) * p.custo AS total_estoque_custo,
           COALESCE(es.estoque_final, 0) * COALESCE(p.pdv_varejo, p.pdv_atacado) AS total_estoque_venda,
-          COALESCE(op.qtde_entregue, 0) * COALESCE(p.pdv_varejo, 0) AS total_producao_valor,
-          COALESCE(op.qtde_entregue, 0) * COALESCE(p.custo, 0) AS total_producao_custo
+          -- Valor e custo acompanham a quantidade do CARD (a do periodo), senao o card
+          -- mostraria "4.578 pecas" ao lado de um valor calculado sobre outra base e os
+          -- precos medios sairiam de uma divisao com numerador e denominador de janelas
+          -- diferentes.
+          COALESCE(op.qtde_entregue_periodo, 0) * COALESCE(p.pdv_varejo, 0) AS total_producao_valor,
+          COALESCE(op.qtde_entregue_periodo, 0) * COALESCE(p.custo, 0) AS total_producao_custo
         FROM produto_ref pr
         LEFT JOIN vendas v ON v.product_code = pr.product_code
         LEFT JOIN vendas_ate_hoje vah ON vah.product_code = pr.product_code
@@ -808,6 +866,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         AVG(pdv_atacado) FILTER (WHERE pdv_atacado IS NOT NULL) AS pdv_atacado,
         SUM(qtdes_liberadas) AS qtdes_liberadas,
         SUM(qtde_entregue) AS qtde_entregue,
+        SUM(qtde_entregue_periodo) AS qtde_entregue_periodo,
         SUM(qtde_vendida) AS qtde_vendida,
         SUM(qtde_vendida_ate_hoje) AS qtde_vendida_ate_hoje,
         SUM(venda_mes_1) AS venda_mes_1,
@@ -858,6 +917,10 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
 
   const totalProducaoValor = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_valor), 0);
   const totalProducaoCusto = rows.reduce((s, r) => s + decimalToNumber(r.total_producao_custo), 0);
+  // Card QUANTIDADE PRODUZIDA: so o que fechou DENTRO da janela, pra bater com a coluna
+  // "Qtde entregue" do Resumo Final. Sai daqui e nao de totals.qtdeEntregue de proposito
+  // - aquele e o acumulado da colecao, que as colunas de saldo/% entregue precisam.
+  const qtdeProduzidaPeriodo = rows.reduce((s, r) => s + decimalToNumber(r.qtde_entregue_periodo), 0);
 
   const inicio = new Date(`${filtro.dataInicio}T00:00:00`);
   const meses = [0, 1, 2].map((offset) => {
@@ -900,9 +963,9 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       valorTotal: round(totalProducaoValor, 2),
       custoTotal: round(totalProducaoCusto, 2),
       markup: totalProducaoCusto > 0 ? round(totalProducaoValor / totalProducaoCusto, 2) : null,
-      pecas: round(totals.qtdeEntregue, 0),
-      precoVendaMedio: totals.qtdeEntregue > 0 ? round(totalProducaoValor / totals.qtdeEntregue, 2) : null,
-      precoCustoMedio: totals.qtdeEntregue > 0 ? round(totalProducaoCusto / totals.qtdeEntregue, 2) : null,
+      pecas: round(qtdeProduzidaPeriodo, 0),
+      precoVendaMedio: qtdeProduzidaPeriodo > 0 ? round(totalProducaoValor / qtdeProduzidaPeriodo, 2) : null,
+      precoCustoMedio: qtdeProduzidaPeriodo > 0 ? round(totalProducaoCusto / qtdeProduzidaPeriodo, 2) : null,
     },
     resumoMensal,
     rows: mappedRows,
