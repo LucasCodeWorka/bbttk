@@ -476,6 +476,45 @@ export async function getVendasFabricaDividida(
   });
 }
 
+// Quais metades da Fabrica o filtro pediu. Sem filtro, as duas.
+export function metadesFabricaPedidas(branchCodes?: number[]) {
+  return {
+    dpa: !branchCodes || branchCodes.includes(FABRICA_BRANCH_CODE),
+    atacado: !branchCodes || branchCodes.includes(ATACADO_BRANCH_CODE),
+  };
+}
+
+// Troca a linha unica da Fabrica pelas duas metades, DPA e ATACADO, respeitando o
+// filtro: se o usuario pediu so uma delas, so ela volta.
+//
+// ATENCAO ao total: nao da pra chamar calcularTotais depois disto. Ele soma `clientes`
+// linha a linha, e o mesmo cliente pode comprar no DPA e no ATACADO - partindo a
+// Fabrica ele seria contado duas vezes e os cards de Clientes, TM/cliente e PA/cliente
+// subiriam sem que nada tivesse mudado na venda. Calcule o total ANTES do split.
+//
+// Faturamento, pecas e transacoes nao sofrem disso: cada transacao pertence a exatamente
+// uma das metades, porque o corte e pela operacao da propria transacao. Conferido em
+// set/2026 - DPA + ATACADO = R$ 216.851,96, identico a linha unica da Fabrica.
+export async function dividirFabricaNasLinhas(
+  linhas: VendasFilial[],
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
+): Promise<VendasFilial[]> {
+  const { dpa, atacado } = metadesFabricaPedidas(branchCodes);
+  if (!dpa && !atacado) return linhas;
+  if (!linhas.some(f => f.branch_code === FABRICA_BRANCH_CODE)) return linhas;
+
+  const metades = await getVendasFabricaDividida(startDate, endDate, produtoFiltro, diasExcluidos);
+  const pedida = (code: number) => (code === ATACADO_BRANCH_CODE ? atacado : dpa);
+
+  return linhas
+    .filter(f => f.branch_code !== FABRICA_BRANCH_CODE)
+    .concat(metades.filter(f => pedida(f.branch_code)));
+}
+
 // Vendas diárias (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasDiarias(
   startDate: Date,

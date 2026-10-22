@@ -110,9 +110,16 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
+    const filiaisBase = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
-    const total = vendasService.calcularTotais(filiais);
+    // O total sai da lista ANTES do split - ver o aviso em dividirFabricaNasLinhas:
+    // partir a Fabrica contaria duas vezes o cliente que comprou nas duas metades.
+    const total = vendasService.calcularTotais(filiaisBase);
+
+    // O grafico de barras mostra DPA e ATACADO separados, igual a tabela de lojas.
+    const filiais = await vendasService.dividirFabricaNasLinhas(
+      filiaisBase, startDate, endDate, branchCodes, produtoFiltro, diasExcluidos
+    );
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -486,8 +493,7 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     // As duas funcoes acima sempre calculam as DUAS metades (nao recebem branchCodes),
     // entao quando o filtro pede so uma delas e preciso descartar a outra aqui - senao
     // filtrar ATACADO continuaria mostrando o DPA ao lado.
-    const querDpa = !branchCodes || branchCodes.includes(vendasService.FABRICA_BRANCH_CODE);
-    const querAtacado = !branchCodes || branchCodes.includes(vendasService.ATACADO_BRANCH_CODE);
+    const { dpa: querDpa, atacado: querAtacado } = vendasService.metadesFabricaPedidas(branchCodes);
     if (querDpa || querAtacado) {
       const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
         vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro, diasExcluidos),
