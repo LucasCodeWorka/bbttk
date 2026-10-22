@@ -510,9 +510,13 @@ export async function dividirFabricaNasLinhas(
   const metades = await getVendasFabricaDividida(startDate, endDate, produtoFiltro, diasExcluidos);
   const pedida = (code: number) => (code === ATACADO_BRANCH_CODE ? atacado : dpa);
 
+  // Reordena porque o concat quebraria o ORDER BY faturamento DESC que getVendasPeriodo
+  // entrega: as duas metades iam parar no fim da lista, e o ATACADO - que costuma ser a
+  // MAIOR barra do grafico - aparecia depois da menor loja da rede.
   return linhas
     .filter(f => f.branch_code !== FABRICA_BRANCH_CODE)
-    .concat(metades.filter(f => pedida(f.branch_code)));
+    .concat(metades.filter(f => pedida(f.branch_code)))
+    .sort((a, b) => b.faturamento - a.faturamento);
 }
 
 // Vendas diárias (por filial de venda, exclui Fábrica e devoluções)
