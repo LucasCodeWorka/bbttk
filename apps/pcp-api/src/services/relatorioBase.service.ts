@@ -1007,6 +1007,7 @@ interface RelatorioBaseAnaliticoRow {
   color_code: string | null;
   color_name: string | null;
   size: string | null;
+  cor_agrupada: string | null;
   categoria: string | null;
   linha: string | null;
   genero: string | null;
@@ -1276,9 +1277,11 @@ async function getRelatorioBaseAnalitico(
       rb.pdv_atacado,
       rb.ultima_entrada,
       rb.em_producao,
-      rb.valor_estoque_custo_producao
+      rb.valor_estoque_custo_producao,
+      ${COR_AGRUPADA_SELECT} AS cor_agrupada
     FROM pcp_relatorio_base_analitico_diario rb
     LEFT JOIN produto_analitico a ON a.product_sku = rb.product_sku
+    ${AGRUPAMENTO_COR_JOIN}
     WHERE rb.data_posicao = ${dataAnalitica}::date
       ${filtroSql}
   `;
@@ -1347,6 +1350,7 @@ async function getRelatorioBaseAnalitico(
     productName: string;
     descricaoCompleta: string;
     cor: string;
+    corAgrupada: string | null;
     tamanho: string;
     categoria: string | null;
     linha: string | null;
@@ -1394,6 +1398,7 @@ async function getRelatorioBaseAnalitico(
       productName: row.product_name || referenceName,
       descricaoCompleta: row.descricao_completa || row.product_name || referenceName,
       cor: row.color_name || row.color_code || '-',
+      corAgrupada: row.cor_agrupada,
       tamanho: row.size || '-',
       categoria: row.categoria,
       linha: row.linha,
@@ -1466,6 +1471,21 @@ async function getRelatorioBaseAnalitico(
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
 
+  // Acumulado de uma COR dentro da referencia - alimenta o drill-down/visao por cor da
+  // tela. coresOriginais e um Set pra saber quantas cores do TOTVS caíram nesse grupo
+  // quando o Agrupamento de Cores esta ligado.
+  interface CorAcumuladoAnalitico {
+    coresOriginais: Set<string>;
+    totalSkus: number;
+    emProducao: number;
+    estTt: number;
+    giroTt1: number;
+    giroTt3: number;
+    giroTt6: number;
+    consistency: Record<ConsistencyKey, ConsistencyState>;
+    branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+  }
+
   interface RefAgg {
     referenceName: string;
     categoria: string | null;
@@ -1483,8 +1503,10 @@ async function getRelatorioBaseAnalitico(
     totalSkus: number;
     consistency: Record<ConsistencyKey, ConsistencyState>;
     branchesAgg: Map<number, { est: number; giro: number; mediaMensalSum: number }>;
+    coresAgg: Map<string, CorAcumuladoAnalitico>;
   }
   const referenciaAgg = new Map<string, RefAgg>();
+  const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
 
   for (const sku of skus.values()) {
     const estAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.est ?? 0;
@@ -1572,6 +1594,7 @@ async function getRelatorioBaseAnalitico(
       totalSkus: 0,
       consistency: emptyConsistency(),
       branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+      coresAgg: new Map<string, CorAcumuladoAnalitico>(),
     };
     agg.emProducao += round(sku.emProducao, 0);
     agg.estTt += round(sku.estTt, 0);
@@ -1593,6 +1616,44 @@ async function getRelatorioBaseAnalitico(
       acumulado.mediaMensalSum += valores.giro30;
       agg.branchesAgg.set(branchCode, acumulado);
     }
+
+    // Mesmo acumulado, um nivel abaixo: por COR. No modo agrupado a chave e o nome do
+    // grupo do Agrupamento de Cores (com fallback pra cor original quando aquela cor
+    // ainda nao foi agrupada), senao e sempre a cor original do TOTVS.
+    const corOriginal = sku.cor || 'SEM COR';
+    const corExibicao = agruparPorCorSalva ? (sku.corAgrupada?.trim() || corOriginal) : corOriginal;
+    const corAgg = agg.coresAgg.get(corExibicao) || {
+      coresOriginais: new Set<string>(),
+      totalSkus: 0,
+      emProducao: 0,
+      estTt: 0,
+      giroTt1: 0,
+      giroTt3: 0,
+      giroTt6: 0,
+      consistency: emptyConsistency(),
+      branchesAgg: new Map<number, { est: number; giro: number; mediaMensalSum: number }>(),
+    };
+    corAgg.coresOriginais.add(corOriginal);
+    corAgg.totalSkus += 1;
+    corAgg.emProducao += round(sku.emProducao, 0);
+    corAgg.estTt += round(sku.estTt, 0);
+    corAgg.giroTt1 += round(sku.giroTt1, 0);
+    corAgg.giroTt3 += round(sku.giroTt3, 0);
+    corAgg.giroTt6 += round(sku.giroTt6, 0);
+    addConsistency(corAgg.consistency.custo, custo);
+    addConsistency(corAgg.consistency.pdvRealVar, sku.pdvVar);
+    addConsistency(corAgg.consistency.markupVar, markupVar);
+    addConsistency(corAgg.consistency.pdvRealAta, sku.pdvAta);
+    addConsistency(corAgg.consistency.markupAta, markupAta);
+    for (const [branchCode, valores] of sku.branchesAgg) {
+      const acumulado = corAgg.branchesAgg.get(branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+      acumulado.est += valores.est;
+      acumulado.giro += valores.giro;
+      acumulado.mediaMensalSum += valores.giro30;
+      corAgg.branchesAgg.set(branchCode, acumulado);
+    }
+    agg.coresAgg.set(corExibicao, corAgg);
+
     referenciaAgg.set(referenceCode, agg);
   }
 
@@ -1695,6 +1756,43 @@ async function getRelatorioBaseAnalitico(
   }
   for (const row of rowsPaginadas) {
     row.skus.sort((a, b) => a.sku.localeCompare(b.sku));
+
+    // Drill-down/visao por COR: materializado so pras referencias desta pagina (o
+    // acumulado existe pra todas, mas virar objeto no payload so pras ~15 da pagina
+    // mantem a resposta pequena - mesma razao de o detalhe por SKU ser paginado).
+    const agg = referenciaAgg.get(row.referenceCode);
+    row.cores = !agg
+      ? []
+      : [...agg.coresAgg.entries()]
+          .map(([cor, corAgg]) => {
+            const branchesCor: Record<number, RelatorioBaseColunaFilial> = {};
+            for (const coluna of colunasAtivas) {
+              const valores = corAgg.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, mediaMensalSum: 0 };
+              branchesCor[coluna.branchCode] = {
+                est: round(valores.est, 0),
+                giro: round(valores.giro, 0),
+                cob: coberturaDe(valores.est, valores.mediaMensalSum),
+              };
+            }
+            return {
+              cor,
+              refCor: `${row.referenceCode} - ${cor}`,
+              coresOriginais: corAgg.coresOriginais.size,
+              totalSkus: corAgg.totalSkus,
+              custo: getConsistency(corAgg.consistency.custo),
+              pdvRealVar: getConsistency(corAgg.consistency.pdvRealVar),
+              markupVar: getConsistency(corAgg.consistency.markupVar),
+              pdvRealAta: getConsistency(corAgg.consistency.pdvRealAta),
+              markupAta: getConsistency(corAgg.consistency.markupAta),
+              emProducao: round(corAgg.emProducao, 0),
+              estTt: round(corAgg.estTt, 0),
+              giroTt1: round(corAgg.giroTt1, 0),
+              giroTt3: round(corAgg.giroTt3, 0),
+              giroTt6: round(corAgg.giroTt6, 0),
+              branches: branchesCor,
+            };
+          })
+          .sort((a, b) => b.giroTt3 - a.giroTt3 || a.cor.localeCompare(b.cor, 'pt-BR'));
   }
 
   function montarLinhaMatriz(label: string, acc: BucketAcc): RelatorioBaseMatrizLinha {

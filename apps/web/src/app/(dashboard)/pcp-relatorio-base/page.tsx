@@ -48,8 +48,8 @@ function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
 function giroSobreEstoque(giro: number | undefined, estoque: number | undefined): string {
-  if (!estoque || estoque <= 0) return 'Venda/estoque: —';
-  return `Venda/estoque: ${formatNumber(((giro || 0) / estoque) * 100, 1)}%`;
+  if (!estoque || estoque <= 0) return 'Giro: —';
+  return `Giro: ${formatNumber(((giro || 0) / estoque) * 100, 1)}%`;
 }
 function formatMeses(value: number | null | undefined, decimals: number): string {
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
@@ -1254,7 +1254,11 @@ export default function PcpRelatorioBasePage() {
           <div>
             <CardTitle>{porCor ? 'Referência + Cor x Loja' : 'SKU x Loja'}</CardTitle>
             <p className="mt-1 text-sm text-gray-500">
-              {porCor ? 'Visão por referência e cor' : 'Visão por referência e variações'}
+              {visaoLinha === 'cor-agrupada'
+                ? 'Uma linha por referência + cor do Agrupamento de Cores (cores unificadas somam juntas)'
+                : visaoLinha === 'cor'
+                  ? 'Uma linha por referência + cor original do TOTVS'
+                  : 'Uma linha por referência · clique para abrir o detalhe por SKU'}
             </p>
           </div>
           {data && (
@@ -1458,6 +1462,12 @@ export default function PcpRelatorioBasePage() {
                       <TableRow>
                         <TableCell colSpan={totalColunas} className="!p-0 bg-blue-50/30">
                           <div className="overflow-hidden p-3">
+                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                              Detalhe por SKU · cor original do TOTVS
+                              <span className="ml-1 font-normal normal-case tracking-normal text-gray-400">
+                                (para ver as cores unificadas, use POR COR AGRUPADA acima)
+                              </span>
+                            </p>
                             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                             <table className="table-fixed text-xs" style={{ width: larguraDetalheSkuLoja, minWidth: larguraDetalheSkuLoja }}>
                               <colgroup>
