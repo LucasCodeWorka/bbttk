@@ -24,6 +24,25 @@ type Foto = { documento: number; produto: number; saida: unknown; recebida: unkn
 const docKey = (b: number, t: number) => `${b}/${t}`;
 const rowKey = (t: number, p: number) => `${t}/${p}`;
 const round = (n: number) => Math.round(n * 10000) / 10000;
+
+// Uma linha da conferencia: o documento de saida cruzado com o que os documentos
+// vinculados dizem ter entrado, mais a comparacao com a foto materializada.
+interface LinhaConferencia {
+  documento: number;
+  data: string;
+  produto: number;
+  entradas: string;
+  quantidadeSaida: number;
+  quantidadeRecebida: number;
+  semRecebimentoDocumental: number;
+  excessoEntrada: number;
+  situacao: string;
+  presenteNaFoto: boolean;
+  saidaNaFoto: number;
+  recebidaNaFoto: number;
+  abertoNaFoto: number;
+  diferenca: number;
+}
 function itens(doc: Doc): Map<number, number> {
   const result = new Map<number, number>();
   for (const item of doc.items || []) {
@@ -52,7 +71,7 @@ export function conferir(saidas: Doc[], entradas: Doc[], foto: Foto[]) {
     const docs = demandas.get(k) || new Set<number>();
     docs.add(saida.transactionCode); demandas.set(k, docs);
   }
-  const rows = [];
+  const rows: LinhaConferencia[] = [];
   for (const saida of saidas) for (const [produto, quantidade] of itens(saida)) {
     const refs = destinos(saida);
     let recebida = 0;
