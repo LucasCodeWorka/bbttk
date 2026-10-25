@@ -183,6 +183,28 @@ export default function AcompanhamentoLinhaPage() {
     });
   }, [data, sortKey, sortDir]);
 
+  const labelClassificacao =
+    TIPO_CLASSIFICACAO_DIARIO_OPTIONS.find((o) => o.value === tipoClassificacao)?.label.toLowerCase() || 'classificação';
+
+  // A meta do periodo soma apenas as classificacoes que tem meta cadastrada. Sem
+  // dizer isso na tela, o card parece quebrado: o padrao da tela e o mes corrente,
+  // que normalmente ainda nao tem meta lancada, e o valor sai em branco - o que e o
+  // comportamento pedido, mas indistinguivel de erro.
+  const metaCobertura = useMemo(() => {
+    if (!data) return { comMeta: 0, total: 0 };
+    return {
+      comMeta: data.linhas.filter((linha) => linha.metaPeriodo !== null).length,
+      total: data.linhas.length,
+    };
+  }, [data]);
+
+  const rotuloPeriodoMeta = useMemo(() => {
+    if (!data) return '';
+    const [ano, mes] = data.periodoAtual.inicio.split('-');
+    const nome = MESES[Number(mes)];
+    return nome ? `${nome.slice(0, 3).toLowerCase()}/${ano}` : ano;
+  }, [data]);
+
   useEffect(() => {
     const tabela = tabelaScrollRef.current;
     const topo = topScrollRef.current;
@@ -343,18 +365,34 @@ export default function AcompanhamentoLinhaPage() {
       </div>
 
       {data && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-4">
           <KPICard title="Venda Atual" value={formatMoney(data.kpis.vendaValorTotal)} color="green" isLoading={isLoading} />
-          {/* Meta do periodo = meta mensal / dias do mes * dias selecionados (formula
-              pedida na devolutiva). Fica em branco quando nenhuma classificacao tem
-              meta cadastrada; o subtitulo mostra o equivalente por dia. */}
+          {/* Meta do periodo = meta mensal de LOJA (Comercial, nivel_3) / dias do mes *
+              dias selecionados, e a meta diaria e esse valor dividido pelos dias do
+              periodo (formula pedida na devolutiva). Vem da meta que o usuario ja
+              cadastra todo mes no modulo Comercial - nao do cadastro por classificacao
+              desta tela (esse so alimenta as colunas META R$/ATING. META da tabela,
+              que sabem repartir por categoria/linha/colecao). Os dois ficam em branco
+              so quando falta meta de loja cadastrada no Comercial pras lojas/canal
+              selecionados naquele mes. */}
           <KPICard
             title="Meta do Período"
             value={data.kpis.metaPeriodoTotal === null ? '—' : formatMoney(data.kpis.metaPeriodoTotal)}
             subtitle={
+              data.kpis.metaPeriodoTotal === null
+                ? `sem meta de loja cadastrada no Comercial em ${rotuloPeriodoMeta}`
+                : `meta de loja (Comercial) ÷ dias do mês × ${data.diasPeriodo} ${data.diasPeriodo === 1 ? 'dia' : 'dias'}`
+            }
+            color="purple"
+            isLoading={isLoading}
+          />
+          <KPICard
+            title="Meta Diária"
+            value={data.kpis.metaDiaria === null ? '—' : formatMoney(data.kpis.metaDiaria)}
+            subtitle={
               data.kpis.metaDiaria === null
-                ? 'sem meta cadastrada no período'
-                : `${formatMoney(data.kpis.metaDiaria)}/dia · ${data.diasPeriodo} ${data.diasPeriodo === 1 ? 'dia' : 'dias'}`
+                ? `cadastre a meta de loja de ${rotuloPeriodoMeta} no módulo Comercial`
+                : `meta do período ÷ ${data.diasPeriodo} ${data.diasPeriodo === 1 ? 'dia' : 'dias'} do período`
             }
             color="purple"
             isLoading={isLoading}
@@ -378,6 +416,14 @@ export default function AcompanhamentoLinhaPage() {
           <div>
             <span className="font-medium">Períodos:</span> Atual: {formatDate(data.periodoAtual.inicio)} a {formatDate(data.periodoAtual.fim)} |
             {' '}Ano Anterior: {formatDate(data.periodoAnoAnterior.inicio)} a {formatDate(data.periodoAnoAnterior.fim)}
+          </div>
+          {/* As colunas META R$/ATING. META da tabela abaixo vem do cadastro por
+              classificacao desta tela ("Cadastrar Metas"), separado da meta de loja
+              que alimenta os cards acima - por isso a cobertura costuma ser parcial. */}
+          <div>
+            <span className="font-medium">Meta por {labelClassificacao}:</span>{' '}
+            {metaCobertura.comMeta} de {metaCobertura.total} itens com meta cadastrada em {rotuloPeriodoMeta}
+            {metaCobertura.comMeta < metaCobertura.total && ' · cadastre o restante no botão "Cadastrar Metas"'}
           </div>
         </div>
       )}

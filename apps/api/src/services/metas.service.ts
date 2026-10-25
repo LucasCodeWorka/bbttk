@@ -140,6 +140,29 @@ export async function saveMeta(data: {
   const c4 = data.comissao_nivel_4 ?? null;
   const c5 = data.comissao_nivel_5 ?? null;
 
+  // Postgres trata NULL != NULL numa constraint unica: meta de LOJA (seller_code
+  // sempre NULL) nunca aciona o ON CONFLICT abaixo, entao todo save de meta de loja
+  // por aqui criava uma linha NOVA em vez de atualizar a existente - 3 linhas
+  // duplicadas reais encontradas em producao (Iguatemi jul/2026, Benfica ago/2026).
+  // Mesmo contorno de `salvarDistribuicaoCompleta` (delete+insert numa transacao com
+  // lock por loja/mes, pra duas chamadas concorrentes nao racear o delete).
+  if (data.seller_code === null) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`meta-loja:${data.ano}:${data.mes}:${data.branch_code}`}))`;
+      await tx.$executeRaw`
+        DELETE FROM metas WHERE ano = ${data.ano} AND mes = ${data.mes} AND branch_code = ${data.branch_code} AND seller_code IS NULL
+      `;
+      await tx.$executeRaw`
+        INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
+          comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
+        VALUES (${data.ano}, ${data.mes}, ${data.branch_code}, NULL,
+                ${data.nivel_1}, ${data.nivel_2}, ${data.nivel_3}, ${data.nivel_4}, ${data.nivel_5},
+                ${c1}, ${c2}, ${c3}, ${c4}, ${c5})
+      `;
+    });
+    return;
+  }
+
   await prisma.$executeRaw`
     INSERT INTO metas (ano, mes, branch_code, seller_code, nivel_1, nivel_2, nivel_3, nivel_4, nivel_5,
       comissao_nivel_1, comissao_nivel_2, comissao_nivel_3, comissao_nivel_4, comissao_nivel_5)
@@ -384,6 +407,13 @@ export async function salvarDistribuicaoCompleta(data: {
       // tela de Editar Meta por Loja, que re-salva a mesma loja repetidas vezes).
       // Delete+insert dentro da mesma transacao contorna a limitacao so pra esse caso.
       if (sellerCode === null) {
+        // Lock por loja/mes: duas chamadas concorrentes (duplo clique em "Salvar",
+        // ou duas abas) cada uma via o DELETE abaixo achar zero linha da OUTRA
+        // (nenhuma commitou ainda) e as duas INSERT sobrevivem - 3 linhas duplicadas
+        // com o mesmo nivel_3 reais encontradas em produção em 28/07/2026 (Iguatemi,
+        // jul/2026) e 17/08/2026 (Benfica, ago/2026). pg_advisory_xact_lock serializa
+        // as chamadas na mesma loja/mes e libera sozinho no fim da transacao.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`meta-loja:${data.ano}:${data.mes}:${branchCode}`}))`;
         await tx.$executeRaw`
           DELETE FROM metas WHERE ano = ${data.ano} AND mes = ${data.mes} AND branch_code = ${branchCode} AND seller_code IS NULL
         `;

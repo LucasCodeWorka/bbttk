@@ -743,6 +743,56 @@ function calcularMetaPeriodo(
   return round(metaPeriodo, 2);
 }
 
+// Quais filiais reais (nunca os codigos sinteticos DPA/ATACADO) entram na meta de
+// loja do card do topo. Decidido pelo canal/filtro de loja do PROPRIO filtro do
+// relatorio (nao pelo resultado de getBranchesCanal, que mistura DPA na lista de
+// varejo para fins de estoque/venda - a meta de loja do Comercial e sempre por
+// branch_code real, nunca por esses sinteticos).
+function getLojasRealParaMeta(canal: Canal, branchesFiltro?: number[]): number[] {
+  if (canal === 'atacado') return [FABRICA_BRANCH_CODE];
+  const lojas = branchesFiltro && branchesFiltro.length > 0
+    ? LOJAS_VAREJO.filter((b) => branchesFiltro.includes(b))
+    : [...LOJAS_VAREJO];
+  if (canal === 'todos') lojas.push(FABRICA_BRANCH_CODE);
+  return lojas;
+}
+
+// Meta do card do topo: vem da meta de LOJA do modulo Comercial (tabela `metas`,
+// nivel_3 = 100%, seller_code IS NULL), nao do cadastro por categoria/linha do PCP
+// (pcp_meta_classificacao). O usuario ja mantem a meta de loja todo mes; exigir um
+// segundo cadastro so pra este card deixava ele permanentemente vazio. As colunas
+// META R$/ATING. META da TABELA continuam vindo do cadastro por classificacao, que e
+// o unico que sabe repartir a meta entre categoria/linha/colecao/genero/status.
+async function getMetaLojaPeriodo(lojas: number[], periodos: PeriodoCalendario[]): Promise<number | null> {
+  if (lojas.length === 0 || periodos.length === 0) return null;
+
+  // DISTINCT ON desduplica meta de loja gravada em mais de uma linha - seller_code
+  // NULL nao e coberto pelo indice unico (ano, mes, branch_code, seller_code), porque
+  // no Postgres NULL nunca e igual a NULL (ver AGENTS.md). Fica com a ultima por id.
+  const metas = await prisma.$queryRaw<Array<{ ano: number; mes: number; total: Decimal | number | null }>>`
+    SELECT ano, mes, SUM(nivel_3) AS total
+    FROM (
+      SELECT DISTINCT ON (ano, mes, branch_code) ano, mes, branch_code, nivel_3
+      FROM metas
+      WHERE seller_code IS NULL AND branch_code IN (${Prisma.join(lojas)})
+      ORDER BY ano, mes, branch_code, id DESC
+    ) dedup
+    GROUP BY ano, mes
+  `;
+  const porPeriodo = new Map(metas.map((m) => [`${m.ano}-${m.mes}`, decimalToNumber(m.total)]));
+
+  let metaTotal = 0;
+  for (const periodo of periodos) {
+    const metaMensal = porPeriodo.get(`${periodo.ano}-${periodo.mes}`);
+    // Sem meta de loja em QUALQUER mes do periodo (nenhuma das lojas do filtro tem
+    // meta lancada naquele mes), o card fica em branco - mesma regra de
+    // calcularMetaPeriodo acima.
+    if (metaMensal === undefined) return null;
+    metaTotal += (metaMensal / periodo.diasNoMes) * periodo.diasSelecionados;
+  }
+  return round(metaTotal, 2);
+}
+
 // Os campos em R$ saem com centavos (round 2, nao 0). Arredondar pra real inteiro
 // fazia o total fechar em R$ 95.006 onde o Dashboard de Vendas do Comercial mostra
 // R$ 95.005,71 - diferenca pequena, mas o relatorio precisa conciliar na virgula com
@@ -791,7 +841,9 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   const periodosAtual = getPeriodosCalendario(dataInicio, dataFim);
   const periodosAnoAnterior = getPeriodosCalendario(dataInicioAA, dataFimAA);
 
-  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, transitoRows, emProducaoRows, metas] = await Promise.all([
+  const lojasParaMeta = getLojasRealParaMeta(canal, filtro.branches);
+
+  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, transitoRows, emProducaoRows, metas, metaLojaPeriodo] = await Promise.all([
     getVendaPorClassificacaoDiario(dataInicio, dataFim, filtro.tipoClassificacao, branches),
     getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branchesAnoAnterior),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, null),
@@ -799,6 +851,7 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     getTransitoPorClassificacaoDiario(filtro.tipoClassificacao, branches),
     getEmProducaoPorClassificacaoDiario(filtro.tipoClassificacao),
     getMetasPeriodo(filtro.tipoClassificacao, periodosAtual),
+    getMetaLojaPeriodo(lojasParaMeta, periodosAtual),
   ]);
 
   const vendaAtualMap = new Map(vendaAtualRows.map((r) => [r.classificacao, { valor: decimalToNumber(r.valor), pecas: decimalToNumber(r.pecas) }]));
@@ -893,8 +946,11 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   // proporcionalizada por calcularMetaPeriodo (meta mensal / dias do mes * dias
   // selecionados), que e exatamente a formula pedida na devolutiva.
   const diasPeriodo = periodosAtual.reduce((total, p) => total + p.diasSelecionados, 0);
-  const metaDiaria = metaPeriodoTotal !== null && diasPeriodo > 0
-    ? round(metaPeriodoTotal / diasPeriodo, 2)
+  // O CARD do topo usa a meta de LOJA (metaLojaPeriodo), nao a soma das classificacoes
+  // com meta (metaPeriodoTotal) - ver getMetaLojaPeriodo. A linha TOTAL da tabela e o
+  // export continuam usando metaPeriodoTotal, por classificacao.
+  const metaDiaria = metaLojaPeriodo !== null && diasPeriodo > 0
+    ? round(metaLojaPeriodo / diasPeriodo, 2)
     : null;
 
   return {
@@ -917,7 +973,7 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       pecasEmTransitoTotal: pecasEmTransitoTotal,
       estoqueMaisTransitoTotal: estoqueMaisTransitoTotal,
       pecasEmProducaoTotal: pecasEmProducaoTotal,
-      metaPeriodoTotal,
+      metaPeriodoTotal: metaLojaPeriodo,
       metaDiaria,
     },
     diasPeriodo,
