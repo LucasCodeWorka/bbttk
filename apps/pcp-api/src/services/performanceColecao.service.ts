@@ -768,7 +768,10 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
       producao AS (
         SELECT
           i.product_code,
-          SUM(i.quantidade) FILTER (WHERE o.status <> 40) AS qtdes_liberadas,
+          SUM(i.quantidade) FILTER (
+            WHERE o.status <> 40
+              AND (o.insert_date IS NULL OR o.insert_date::date <= ${filtro.dataFim}::date)
+          ) AS qtdes_liberadas,
           -- Duas medidas de propósito, e elas respondem a perguntas diferentes:
           --
           -- qtde_entregue = tudo que a colecao ja produziu ate a data fim, sem piso. E
@@ -798,7 +801,10 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         JOIN ops_producao_itens i
           ON i.branch_code = o.branch_code AND i.order_code = o.order_code
         JOIN produto_ref pr ON pr.product_code = i.product_code
-        WHERE (o.insert_date IS NULL OR o.insert_date::date <= ${filtro.dataFim}::date)
+        -- O cadastro pode ser posterior a finalizacao (ex.: OP 3472, finalizada em
+        -- 08/06/2026 e cadastrada em 09/06). O corte por cadastro pertence somente
+        -- as liberadas; aplica-lo aqui descartava producao valida e fazia o card
+        -- divergir do resumo mensal, que considera a data de finalizacao.
         GROUP BY i.product_code
       ),
       precos AS (
