@@ -397,7 +397,10 @@ export interface RelatorioBaseResponse {
   };
   kpisExtra: RelatorioBaseKpisExtra;
   matriz: {
+    // "linha" agrupa em Basico / Basico Renovavel / Style (o resto cai em NAO
+    // CLASSIFICADO); "linhaCompleta" traz a linha como esta no cadastro.
     linha: RelatorioBaseMatrizLinha[];
+    linhaCompleta: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
     status: RelatorioBaseMatrizLinha[];

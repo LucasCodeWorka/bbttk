@@ -363,7 +363,13 @@ export interface RelatorioBaseResponse {
   };
   kpisExtra: RelatorioBaseKpisExtra;
   matriz: {
+    // "linha" agrupa em baldes (Basico / Basico Renovavel / Style) via linhaBucket, que
+    // joga tudo que nao cai nesses tres em NAO CLASSIFICADO. "linhaCompleta" nao
+    // agrupa: traz a linha como esta no cadastro (Brinde, Embalagem, Promocoes,
+    // Teenkis...), com NAO CLASSIFICADO so pro que realmente nao tem linha - pedido da
+    // devolutiva do cliente, que precisava enxergar as sete linhas reais.
     linha: RelatorioBaseMatrizLinha[];
+    linhaCompleta: RelatorioBaseMatrizLinha[];
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
     status: RelatorioBaseMatrizLinha[];
@@ -1450,6 +1456,7 @@ async function getRelatorioBaseAnalitico(
   }
 
   const matrizLinhaAgg = new Map<string, BucketAcc>();
+  const matrizLinhaCompletaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
   const matrizStatusAgg = new Map<string, BucketAcc>();
@@ -1570,6 +1577,7 @@ async function getRelatorioBaseAnalitico(
       valorEstoque: sku.valorEstoque,
     };
     acumularBucket(matrizLinhaAgg, linhaBucket(sku.linha), bucketValores);
+    acumularBucket(matrizLinhaCompletaAgg, sku.linha?.trim() || null, bucketValores);
     acumularBucket(matrizCategoriaAgg, sku.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, sku.genero?.trim() || null, bucketValores);
     acumularBucket(matrizStatusAgg, sku.status?.trim() || null, bucketValores);
@@ -1834,6 +1842,7 @@ async function getRelatorioBaseAnalitico(
   }
 
   const matrizLinha = buildMatriz(matrizLinhaAgg);
+  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg);
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
   const matrizStatus = buildMatriz(matrizStatusAgg);
@@ -1901,6 +1910,7 @@ async function getRelatorioBaseAnalitico(
     },
     matriz: {
       linha: matrizLinha,
+      linhaCompleta: matrizLinhaCompleta,
       categoria: matrizCategoria,
       genero: matrizGenero,
       status: matrizStatus,
@@ -2099,6 +2109,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   }
 
   const matrizLinhaAgg = new Map<string, BucketAcc>();
+  const matrizLinhaCompletaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
   const matrizStatusAgg = new Map<string, BucketAcc>();
@@ -2333,6 +2344,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       valorEstoque: valorEstoqueSku,
     };
     acumularBucket(matrizLinhaAgg, linhaBucket(identidade.linha), bucketValores);
+    acumularBucket(matrizLinhaCompletaAgg, identidade.linha?.trim() || null, bucketValores);
     acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
     acumularBucket(matrizStatusAgg, identidade.status?.trim() || null, bucketValores);
@@ -2674,6 +2686,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   }
 
   const matrizLinha = buildMatriz(matrizLinhaAgg);
+  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg);
   const matrizCategoria = buildMatriz(matrizCategoriaAgg);
   const matrizGenero = buildMatriz(matrizGeneroAgg);
   const matrizStatus = buildMatriz(matrizStatusAgg);
@@ -2747,6 +2760,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     kpisExtra,
     matriz: {
       linha: matrizLinha,
+      linhaCompleta: matrizLinhaCompleta,
       categoria: matrizCategoria,
       genero: matrizGenero,
       status: matrizStatus,

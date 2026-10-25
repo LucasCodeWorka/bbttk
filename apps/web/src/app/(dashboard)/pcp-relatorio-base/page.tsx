@@ -32,6 +32,7 @@ import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
 
 const DIMENSAO_OPTIONS = [
   { value: 'linha', label: 'Por linha (Básico/Style)' },
+  { value: 'linhaCompleta', label: 'Por linha (todas)' },
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
   { value: 'status', label: 'Por status' },
@@ -223,7 +224,7 @@ interface VisaoGeralPageState {
   verPorLoja?: boolean;
   sortKey?: string | null;
   sortDir?: 'asc' | 'desc';
-  dimensao?: 'linha' | 'categoria' | 'genero' | 'status';
+  dimensao?: 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status';
   visaoLinha?: 'referencia' | 'cor' | 'cor-agrupada';
 }
 
@@ -478,7 +479,7 @@ export default function PcpRelatorioBasePage() {
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
-  const [dimensao, setDimensao] = useState<'linha' | 'categoria' | 'genero' | 'status'>(
+  const [dimensao, setDimensao] = useState<'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status'>(
     () => initialPageState?.dimensao || 'linha'
   );
 
@@ -1237,7 +1238,7 @@ export default function PcpRelatorioBasePage() {
           <CardTitle>Cobertura por linha/categoria/gênero × canal</CardTitle>
           <Select
             value={dimensao}
-            onChange={(e) => setDimensao(e.target.value as 'linha' | 'categoria' | 'genero' | 'status')}
+            onChange={(e) => setDimensao(e.target.value as 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status')}
             options={DIMENSAO_OPTIONS}
             className="w-64"
           />
