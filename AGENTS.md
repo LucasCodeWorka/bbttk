@@ -873,6 +873,32 @@ cobertura; a correção definitiva do ETL continua pendente.
 
 ### ✅ Paliativo criado em 13-14/10/2026 — backfill via API do TOTVS + achado do `expand=originDestination`
 
+**Revalidação direta em 13/10/2026, após publicar `5536d4e`:** o pedido do usuário é
+usar a relação origem/destino da API para desenvolver o relatório. A versão publicada
+nesse commit ainda faz o cálculo por FIFO; recuperar itens e gravar vínculos não
+concluiu esse pedido. A atualização `f06c196` está em `limes/teste`, fora do `main`
+publicado, e usa vínculo com fallback FIFO. Não confundir as duas versões.
+
+Consulta somente de leitura ao Swagger e ao `transactions/search`, com
+`expand=originDestination`, confirmou um caso nos **dois sentidos**:
+
+- Saída **2/916548**, de 08/10/2026, aponta para entrada **6/917149**, de 09/10/2026.
+- A entrada **6/917149** informa `branchCodeOrigin=2` e
+  `transactionCodeOrigin=916548`. Os dois documentos retornaram um item e 30 peças.
+- O schema `TransactionOriginDestinationModel` contém os campos de origem e a lista
+  `destination`; `TransactionDestinationModel` informa filial, documento e data.
+
+**Lacunas a resolver no desenvolvimento:** o backfill atual só revisita documentos
+sem itens e compacta apenas `destination`, perdendo os campos de origem das entradas.
+Não mantém vínculos atualizados após o recebimento. A atualização do Marcelo melhora
+o cruzamento, mas ainda trata destino vazio/ausente como candidato a FIFO; portanto
+não basta integrá-la para ter um relatório exclusivamente documental. A implementação
+precisa conservar os vínculos nos dois sentidos, reconsultar saídas pendentes,
+conferir produto/quantidade nos documentos vinculados e distinguir ausência de vínculo
+de ausência de sincronização. Uma resposta `destination: []` não prova, por si só,
+mercadoria fisicamente em transporte. Esta seção registra a investigação; não indica
+que essas correções já foram implementadas ou publicadas.
+
 O relatório "Estoque em Trânsito" do Marcelo (`c3725a0`, trazido pra `main` nessa mesma
 sessão) ficou pronto mas sem dado: toda saída de transferência desde 25/06 estava sem
 item, então a cobertura (`defasagemDias` em `estoqueTransito.service.ts`) acusava ~110
