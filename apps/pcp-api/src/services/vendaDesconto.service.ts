@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
-import { FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE } from './relatorioBase.service.js';
+import { DATA_VENDA, FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE } from './relatorioBase.service.js';
 
 // Relatório 5: Venda e Desconto por Classificação
 // Relatório 5.1: Resumo da Promoção por Loja
@@ -239,7 +239,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
         LIMIT 1
       ) a ON TRUE
       ${OPERACAO_JOIN}
-      WHERE t.transaction_date BETWEEN ${dataInicio}::date AND ${dataFim}::date
+      WHERE ${DATA_VENDA} BETWEEN ${dataInicio}::date AND ${dataFim}::date
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         AND t.customer_code < 110000000
@@ -403,7 +403,7 @@ export async function getVendaDesconto(filtro: VendaDescontoFiltro): Promise<Ven
     FROM transacoes t
     JOIN transacao_itens ti ON ti.branch_code = t.branch_code AND ti.transaction_code = t.transaction_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date BETWEEN ${dataInicio}::date AND ${dataFim}::date
+    WHERE ${DATA_VENDA} BETWEEN ${dataInicio}::date AND ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       AND t.customer_code < 110000000
@@ -516,7 +516,7 @@ export async function getResumoPromocao(filtro: {
       ) a ON TRUE
       LEFT JOIN branches b ON b.branch_code = t.branch_code
       ${OPERACAO_JOIN}
-      WHERE t.transaction_date BETWEEN ${dataInicio}::date AND ${dataFim}::date
+      WHERE ${DATA_VENDA} BETWEEN ${dataInicio}::date AND ${dataFim}::date
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         AND t.customer_code < 110000000

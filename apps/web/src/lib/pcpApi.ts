@@ -1064,6 +1064,9 @@ export interface RaioXGrade {
   estoqueFinal: number;
   pecasEmProducao: number;
   cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
 }
 
 export interface RaioXLoja {
@@ -1078,6 +1081,9 @@ export interface RaioXLoja {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
   };
 }
 
@@ -1098,6 +1104,9 @@ export interface RaioXProduto {
     estoqueFinal: number;
     pecasEmProducao: number;
     cobertura: number;
+  // true quando a celula tem estoque e nao teve venda no periodo: a cobertura vem
+  // calculada assumindo 1 peca, so pra nao virar "INF". A tela marca esse numero.
+  coberturaSemVenda: boolean;
   };
 }
 
@@ -1248,6 +1257,10 @@ export interface AcompanhamentoDiarioLinha {
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
+  /** Saiu da Fabrica e ainda nao entrou na loja: nao esta no estoque de ninguem. */
+  pecasEmTransito: number;
+  estoqueMaisTransito: number;
+  coberturaMesesEstoqueTransito: number | null;
   pecasEmProducao: number;
 }
 
@@ -1263,6 +1276,8 @@ export interface AcompanhamentoDiarioResponse {
     vendaValorAnoAnteriorTotal: number;
     evolucaoValorPercent: number | null;
     estoqueFisicoTotal: number;
+    pecasEmTransitoTotal: number;
+    estoqueMaisTransitoTotal: number;
     pecasEmProducaoTotal: number;
     metaPeriodoTotal: number | null;
     metaDiaria: number | null;
@@ -1710,6 +1725,9 @@ export const agrupamentoCoberturaApi = {
 
 export type EstoqueTransitoStatus = 'em_transito' | 'parcial' | 'recebido';
 
+/** Desde 14/10/2026 a baixa e sempre 'vinculo'; 'fifo'/'misto' so vem de foto antiga. */
+export type EstoqueTransitoMetodo = 'vinculo' | 'fifo' | 'misto';
+
 export interface EstoqueTransitoFiltro {
   status?: EstoqueTransitoStatus[];
   branches?: number[];
@@ -1721,11 +1739,33 @@ export interface EstoqueTransitoFiltro {
   idadeMin?: number;
   idadeMax?: number;
   apenasPendentes?: boolean;
+  confiabilidade?: 'vinculo' | 'sem_vinculo';
+  /** Ordenacao e paginacao sao do servidor: ordenar no navegador sobre uma pagina daria amostra enviesada. */
+  ordenarPor?: string;
+  direcao?: 'asc' | 'desc';
+  offset?: number;
+  limite?: number;
+  /** Janela do prazo medio por loja: 30, 90 ou 180 dias. */
+  prazoDias?: number;
+}
+
+export interface EstoqueTransitoPrazoLoja {
+  branchCode: number;
+  branchName: string;
+  lojaFechada: boolean;
+  diasMedio: number;
+  diasMediana: number;
+  diasMaximo: number;
+  linhas: number;
+  pecas: number;
 }
 
 export interface EstoqueTransitoRow {
   id: number;
   statusTransito: EstoqueTransitoStatus;
+  metodoBaixa: EstoqueTransitoMetodo | null;
+  temVinculo: boolean;
+  entradaDocs: string | null;
   destinoBranchCode: number;
   destinoBranchName: string;
   saidaTransactionCode: number;
@@ -1763,6 +1803,16 @@ export interface EstoqueTransitoKpis {
   recebidas: number;
   pendenciasAntigas90d: number;
   pecasLojasFechadas: number;
+  pecasAbertasComVinculo: number;
+  pecasAbertasSemVinculo: number;
+}
+
+export interface EstoqueTransitoConfiabilidade {
+  linhasComVinculo: number;
+  linhasSemVinculo: number;
+  pecasComVinculo: number;
+  pecasSemVinculo: number;
+  primeiraSaidaComVinculo: string | null;
 }
 
 export interface EstoqueTransitoIdadeBucket {
@@ -1801,13 +1851,22 @@ export interface EstoqueTransitoResponse {
   atualizadoEm: string | null;
   janela: { inicio: string | null; fim: string | null };
   cobertura: EstoqueTransitoCobertura;
-  /** true quando o recorte tem mais linhas do que o LIMIT devolve (KPIs seguem completos). */
-  linhasTruncadas: boolean;
-  limiteLinhas: number;
+  /** true quando ainda ha pagina seguinte (KPIs sempre descrevem o recorte inteiro). */
+  temMais: boolean;
+  offset: number;
+  limite: number;
   kpis: EstoqueTransitoKpis;
+  confiabilidade: EstoqueTransitoConfiabilidade;
   idadeBuckets: EstoqueTransitoIdadeBucket[];
   porLoja: EstoqueTransitoPorLoja[];
   porStatus: EstoqueTransitoPorStatus[];
+  /** Prazo de entrega por loja. Nao respeita os filtros de recorte, so o de loja. */
+  prazoEntrega: {
+    dias: number;
+    porLoja: EstoqueTransitoPrazoLoja[];
+    mediaGeral: number | null;
+    linhasConsideradas: number;
+  };
   rows: EstoqueTransitoRow[];
 }
 
@@ -1829,6 +1888,12 @@ export const estoqueTransitoApi = {
     if (filtro.idadeMin !== undefined) params.set('idadeMin', String(filtro.idadeMin));
     if (filtro.idadeMax !== undefined) params.set('idadeMax', String(filtro.idadeMax));
     if (filtro.apenasPendentes !== undefined) params.set('apenasPendentes', String(filtro.apenasPendentes));
+    if (filtro.confiabilidade) params.set('confiabilidade', filtro.confiabilidade);
+    if (filtro.ordenarPor) params.set('ordenarPor', filtro.ordenarPor);
+    if (filtro.direcao) params.set('direcao', filtro.direcao);
+    if (filtro.offset !== undefined) params.set('offset', String(filtro.offset));
+    if (filtro.limite !== undefined) params.set('limite', String(filtro.limite));
+    if (filtro.prazoDias !== undefined) params.set('prazoDias', String(filtro.prazoDias));
     const query = params.toString();
     return fetchPcpApi<EstoqueTransitoResponse>(`/api/pcp/estoque-transito${query ? `?${query}` : ''}`, { token });
   },

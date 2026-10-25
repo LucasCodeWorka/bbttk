@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import {
+  DATA_VENDA,
   OPERACAO_JOIN,
   SALE_OPERATION_FILTER,
   QUANTIDADE_COM_SINAL,
@@ -127,7 +128,7 @@ async function getVenda30DiasPorCanal(): Promise<Map<number, { varejo: number; a
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+    WHERE ${DATA_VENDA} >= CURRENT_DATE - INTERVAL '30 days'
       AND t.status = 4 AND ${SALE_OPERATION_FILTER}
     GROUP BY ti.product_code, canal
   `;
@@ -150,8 +151,8 @@ async function getVendaPorProductCodeMesesFechados(mesesInicio: number, mesesFim
     FROM transacoes t
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= (date_trunc('month', CURRENT_DATE)::date - make_interval(months => ${mesesInicio}::int))
-      AND t.transaction_date < (date_trunc('month', CURRENT_DATE)::date - make_interval(months => ${mesesFim}::int))
+    WHERE ${DATA_VENDA} >= (date_trunc('month', CURRENT_DATE)::date - make_interval(months => ${mesesInicio}::int))
+      AND ${DATA_VENDA} < (date_trunc('month', CURRENT_DATE)::date - make_interval(months => ${mesesFim}::int))
       AND t.status = 4 AND ${SALE_OPERATION_FILTER}
     GROUP BY ti.product_code
   `;

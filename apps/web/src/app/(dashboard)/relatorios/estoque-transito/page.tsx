@@ -27,10 +27,12 @@ type SortKey = keyof EstoqueTransitoRow;
 // quanto -> quando baixou), nao a ordem alfabetica.
 const COLUNAS: Array<{ key: SortKey; label: string; align?: 'left' | 'right' | 'center'; type?: 'text' | 'number'; width: number }> = [
   { key: 'statusTransito', label: 'STATUS', width: 13, type: 'text' },
+  { key: 'metodoBaixa', label: 'ORIGEM DA BAIXA', width: 16, type: 'text' },
+  { key: 'entradaDocs', label: 'DOC. ENTRADA', width: 16, type: 'text' },
   { key: 'destinoBranchName', label: 'LOJA DESTINO', width: 22, type: 'text' },
   { key: 'saidaTransactionCode', label: 'DOC. SAIDA', align: 'right', width: 12, type: 'text' },
   { key: 'saidaTransactionDate', label: 'DT. SAIDA', align: 'center', width: 12, type: 'text' },
-  { key: 'diasEmTransito', label: 'IDADE (D)', align: 'right', width: 11, type: 'number' },
+  { key: 'diasEmTransito', label: 'DIAS EM TRANSITO', align: 'right', width: 16, type: 'number' },
   { key: 'saidaOperationCode', label: 'OPER.', align: 'right', width: 9, type: 'text' },
   { key: 'saidaOperationDescription', label: 'DESC. OPERACAO', width: 24, type: 'text' },
   { key: 'productSku', label: 'SKU', width: 16, type: 'text' },
@@ -64,6 +66,20 @@ const STATUS_LABEL: Record<EstoqueTransitoStatus, string> = {
 };
 
 const STATUS_OPCOES: EstoqueTransitoStatus[] = ['em_transito', 'parcial', 'recebido'];
+
+// Toda baixa vem do vinculo do TOTVS. 'fifo'/'misto' so apareceriam numa foto gerada
+// por versao antiga do script - ficam mapeados pra nao quebrar a tela nesse caso.
+const METODO_BADGE: Record<string, string> = {
+  vinculo: 'bg-green-100 text-green-700',
+  fifo: 'bg-gray-100 text-gray-600',
+  misto: 'bg-blue-100 text-blue-700',
+};
+
+const METODO_LABEL: Record<string, string> = {
+  vinculo: 'Vinculo TOTVS',
+  fifo: 'Aproximado (foto antiga)',
+  misto: 'Misto (foto antiga)',
+};
 
 const DIMENSOES = ['categoria', 'linha', 'genero', 'statusProduto'] as const;
 type DimensaoChave = (typeof DIMENSOES)[number];
@@ -130,11 +146,22 @@ export default function EstoqueTransitoPage() {
   const [idadeMin, setIdadeMin] = useState('');
   const [idadeMax, setIdadeMax] = useState('');
   const [apenasPendentes, setApenasPendentes] = useState(true);
+  const [confiabilidade, setConfiabilidade] = useState<'todas' | 'vinculo' | 'sem_vinculo'>('todas');
+  const [prazoDias, setPrazoDias] = useState<30 | 90 | 180>(90);
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<EstoqueTransitoResponse | null>(null);
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<EstoqueTransitoFiltrosResponse | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('quantidadeEmTransito');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // As linhas chegam paginadas; a ordenacao e do servidor. Ordenar no navegador sobre
+  // uma pagina so daria amostra enviesada - foi o bug que fazia a tabela pular de
+  // out/2026 pra nov/2025, escondendo 11 meses.
+  const [rows, setRows] = useState<EstoqueTransitoRow[]>([]);
+  const [carregandoMais, setCarregandoMais] = useState(false);
+  const temMaisRef = useRef(false);
+  const carregandoMaisRef = useRef(false);
+  const rowsRef = useRef<EstoqueTransitoRow[]>([]);
+  rowsRef.current = rows;
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
@@ -165,19 +192,61 @@ export default function EstoqueTransitoPage() {
         idadeMin: idadeMin.trim() ? Number(idadeMin) : undefined,
         idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
         apenasPendentes,
+        confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        prazoDias,
+        ordenarPor: sortKey,
+        direcao: sortDir,
+        offset: 0,
       });
       setData(response);
+      setRows(response.rows);
+      temMaisRef.current = response.temMais;
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Erro ao carregar Estoque em Transito', 'error');
       console.error(error);
     } finally {
       setIsLoading(false);
     }
-  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, showToast]);
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, prazoDias, sortKey, sortDir, showToast]);
 
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  // Proxima pagina, disparada pela rolagem. Usa refs pro handler de scroll nao precisar
+  // ser recriado a cada render.
+  const carregarMais = useCallback(async () => {
+    if (!token || carregandoMaisRef.current || !temMaisRef.current) return;
+    carregandoMaisRef.current = true;
+    setCarregandoMais(true);
+    try {
+      const response = await estoqueTransitoApi.getEstoqueTransito(token, {
+        status: statusSelecionado.length > 0 ? statusSelecionado : undefined,
+        branches: branches.length > 0 ? branches : undefined,
+        categoria: produtoFiltro.categoria,
+        linha: produtoFiltro.linha,
+        genero: produtoFiltro.genero,
+        statusProduto: produtoFiltro.statusProduto,
+        search: search.trim() || undefined,
+        idadeMin: idadeMin.trim() ? Number(idadeMin) : undefined,
+        idadeMax: idadeMax.trim() ? Number(idadeMax) : undefined,
+        apenasPendentes,
+        confiabilidade: confiabilidade === 'todas' ? undefined : confiabilidade,
+        prazoDias,
+        ordenarPor: sortKey,
+        direcao: sortDir,
+        offset: rowsRef.current.length,
+      });
+      setRows((anteriores) => [...anteriores, ...response.rows]);
+      temMaisRef.current = response.temMais;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Erro ao carregar mais linhas', 'error');
+      console.error(error);
+    } finally {
+      carregandoMaisRef.current = false;
+      setCarregandoMais(false);
+    }
+  }, [token, statusSelecionado, branches, produtoFiltro, search, idadeMin, idadeMax, apenasPendentes, confiabilidade, prazoDias, sortKey, sortDir, showToast]);
 
   function atualizarProdutoFiltro(chave: string, valores: string[]) {
     setProdutoFiltro((prev) => ({ ...prev, [chave]: valores.length > 0 ? valores : undefined }));
@@ -191,17 +260,8 @@ export default function EstoqueTransitoPage() {
     }
   }
 
-  const rowsOrdenadas = useMemo(() => {
-    const rows = data?.rows || [];
-    return [...rows].sort((a, b) => {
-      const va = a[sortKey];
-      const vb = b[sortKey];
-      if (va === null || va === undefined) return 1;
-      if (vb === null || vb === undefined) return -1;
-      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR', { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [data, sortKey, sortDir]);
+  // A ordenacao vem pronta do servidor - aqui so damos nome pra ela.
+  const rowsOrdenadas = rows;
 
   useEffect(() => {
     const tabela = tabelaScrollRef.current;
@@ -218,6 +278,10 @@ export default function EstoqueTransitoPage() {
     };
     const sincronizarTopo = () => {
       topo.scrollLeft = tabela.scrollLeft;
+      // Busca a proxima pagina quando falta menos de uma tela pro fim.
+      if (tabela.scrollHeight - tabela.scrollTop - tabela.clientHeight < tabela.clientHeight) {
+        carregarMais();
+      }
     };
 
     tabela.addEventListener('scroll', sincronizarTopo, { passive: true });
@@ -233,7 +297,7 @@ export default function EstoqueTransitoPage() {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', atualizarLargura);
     };
-  }, [rowsOrdenadas.length, isLoading]);
+  }, [rowsOrdenadas.length, isLoading, carregarMais]);
 
   function sincronizarScrollPeloTopo() {
     const topo = topScrollRef.current;
@@ -272,6 +336,7 @@ export default function EstoqueTransitoPage() {
     setIdadeMin('');
     setIdadeMax('');
     setApenasPendentes(true);
+    setConfiabilidade('todas');
   }
 
   function exportarExcel() {
@@ -281,7 +346,17 @@ export default function EstoqueTransitoPage() {
       header: coluna.label,
       width: coluna.width,
       type: coluna.type,
-      getValue: coluna.key === 'statusTransito' ? (row) => STATUS_LABEL[row.statusTransito as EstoqueTransitoStatus] : undefined,
+      getValue:
+        coluna.key === 'statusTransito'
+          ? (row) => STATUS_LABEL[row.statusTransito as EstoqueTransitoStatus]
+          : coluna.key === 'metodoBaixa'
+            ? (row) =>
+                row.metodoBaixa
+                  ? METODO_LABEL[row.metodoBaixa as string]
+                  : row.temVinculo
+                    ? 'Vinculo, sem baixa'
+                    : 'Sem baixa'
+            : undefined,
     }));
     exportToExcel({
       filename: `Estoque_Em_Transito_${new Date().toISOString().slice(0, 10)}`,
@@ -292,7 +367,7 @@ export default function EstoqueTransitoPage() {
       columns,
       data: rowsOrdenadas as unknown as Record<string, unknown>[],
       totals: {
-        statusTransito: data.linhasTruncadas
+        statusTransito: data.temMais
           ? `SUBTOTAL (${rowsOrdenadas.length} de ${data.kpis.linhas} linhas do recorte)`
           : `TOTAL (${rowsOrdenadas.length} linhas)`,
         quantidadeSaida: totais.quantidadeSaida,
@@ -349,22 +424,15 @@ export default function EstoqueTransitoPage() {
         </div>
       )}
 
-      {/* Aviso estrutural: sem esse contexto o relatorio e lido como "estoque futuro", o que ele nao e. */}
-      <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-xs text-yellow-900">
-        <p className="font-semibold">Como ler este relatorio</p>
-        <p className="mt-1">
-          Nao existe vinculo documento-a-documento de transferencia no TOTVS. A baixa e calculada por fila FIFO por loja destino + produto, entao uma linha
-          pendente significa <strong>saida sem entrada equivalente registrada</strong> — pode ser mercadoria em transito de verdade ou atraso de lancamento.
-          Pendencia com idade alta tende a ser atraso de lancamento/residuo contabil, nao caminhao na estrada: use a faixa de idade pra separar os dois casos.
+      {/* A procedencia da foto fica, em uma linha: sem ela nao da pra saber se o que
+          esta na tela e de hoje ou de tres dias atras. O resto da explicacao saiu - a
+          baixa agora vem toda do vinculo do TOTVS e os rotulos das colunas ja dizem. */}
+      {data && (
+        <p className="text-xs text-gray-500">
+          Janela {data.janela.inicio ? formatDate(data.janela.inicio) : '-'} a {data.janela.fim ? formatDate(data.janela.fim) : '-'} · foto de{' '}
+          {data.atualizadoEm ? new Date(data.atualizadoEm).toLocaleString('pt-BR') : '-'} · baixa pelo vinculo documento-a-documento do TOTVS
         </p>
-        {data && (
-          <p className="mt-2">
-            Janela apurada: {data.janela.inicio ? formatDate(data.janela.inicio) : '-'} a {data.janela.fim ? formatDate(data.janela.fim) : '-'} · Foto gerada
-            em {data.atualizadoEm ? new Date(data.atualizadoEm).toLocaleString('pt-BR') : '-'} (materializada por{' '}
-            <code className="rounded bg-yellow-100 px-1">npm run rebuild:estoque-transito -w apps/api</code>)
-          </p>
-        )}
-      </div>
+      )}
 
       <Card>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
@@ -427,6 +495,31 @@ export default function EstoqueTransitoPage() {
             />
             Mostrar so o que ainda tem saldo aberto
           </label>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+          <span className="text-sm font-medium text-gray-700">Confiabilidade:</span>
+          {(
+            [
+              { valor: 'todas', label: 'Tudo' },
+              { valor: 'vinculo', label: 'Com vinculo no ERP' },
+              { valor: 'sem_vinculo', label: 'Sem vinculo nenhum' },
+            ] as const
+          ).map((opcao) => (
+            <button
+              key={opcao.valor}
+              type="button"
+              onClick={() => setConfiabilidade(opcao.valor)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                confiabilidade === opcao.valor
+                  ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+              )}
+            >
+              {opcao.label}
+            </button>
+          ))}
         </div>
       </Card>
 
@@ -509,6 +602,71 @@ export default function EstoqueTransitoPage() {
           </div>
         </Card>
 
+        {/* Prazo de entrega ocupa o lugar do antigo painel de confiabilidade, que saiu:
+            ele media a cobertura do vinculo, e isso deixou de ser pergunta aberta depois
+            que a captura passou a cobrir a janela inteira. O que resta sem vinculo e
+            remessa que ainda nao chegou - estado de negocio, nao falha de dado, e a
+            coluna STATUS ja diz. */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Prazo de entrega por loja</CardTitle>
+          </CardHeader>
+          <div className="-mt-2 mb-3 space-y-2">
+            <p className="text-xs text-gray-500">Dias da saida ate a baixa, so de remessas ja encerradas.</p>
+            <div className="flex items-center gap-1.5">
+              {([30, 90, 180] as const).map((dias) => (
+                <button
+                  key={dias}
+                  type="button"
+                  onClick={() => setPrazoDias(dias)}
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                    prazoDias === dias
+                      ? 'border-[var(--bbtk-purple)] bg-[var(--bbtk-purple)] text-white'
+                      : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                  )}
+                >
+                  {dias}d
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isLoading ? (
+            <p className="py-6 text-center text-xs text-gray-500">Carregando...</p>
+          ) : !data || data.prazoEntrega.porLoja.length === 0 ? (
+            <p className="py-6 text-center text-xs text-gray-500">Nenhuma remessa encerrada nos ultimos {prazoDias} dias.</p>
+          ) : (
+            <>
+              <div className="max-h-[320px] space-y-2.5 overflow-y-auto pr-1">
+                {data.prazoEntrega.porLoja.map((loja) => (
+                  <div key={loja.branchCode}>
+                    <div className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="truncate text-gray-700">{loja.branchName}</span>
+                      <span className="shrink-0 font-semibold text-gray-900">
+                        {loja.diasMedio.toFixed(1)} <span className="font-normal text-gray-400">d · max {loja.diasMaximo}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1" title={`Mediana ${loja.diasMediana} dias · ${formatNumber(loja.linhas)} remessas`}>
+                      <BarraProporcao
+                        valor={loja.diasMedio}
+                        maximo={Math.max(1, ...data.prazoEntrega.porLoja.map((l) => l.diasMedio))}
+                        tom={loja.lojaFechada ? 'cinza' : 'roxo'}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+                Media da rede <strong>{data.prazoEntrega.mediaGeral?.toFixed(1) ?? '-'} dias</strong>, ponderada por volume sobre{' '}
+                {formatNumber(data.prazoEntrega.linhasConsideradas)} remessas. Ignora os filtros de status, idade e busca.
+              </p>
+            </>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Ciclo da transferencia</CardTitle>
@@ -554,19 +712,22 @@ export default function EstoqueTransitoPage() {
         </Card>
       </div>
 
+      {/* Prazo de entrega: serie unica, barra horizontal em HTML/CSS e valor escrito em
+          toda barra - a paleta da marca nao passa no validador de contraste, entao o
+          numero nunca depende da cor pra ser lido. */}
       <Card>
         <CardHeader>
           <CardTitle>Auditoria documento a documento</CardTitle>
         </CardHeader>
         <p className="text-xs text-gray-500 -mt-2 mb-3">
-          Uma linha por item de documento de saida.{' '}
-          {data?.linhasTruncadas ? (
-            <span className="font-medium text-[var(--bbtk-red)]">
-              O recorte atual tem {formatNumber(data.kpis.linhas)} linhas e a tabela mostra as {formatNumber(data.limiteLinhas)} maiores — os KPIs e as
-              distribuicoes acima seguem calculados sobre o total, mas o Excel exporta so o que esta na tabela. Feche mais o filtro pra exportar completo.
-            </span>
+          Uma linha por item de documento de saida. Ordenacao e feita no servidor, e as linhas carregam conforme voce rola.{' '}
+          <span className="font-medium text-gray-700">
+            Mostrando {formatNumber(rowsOrdenadas.length)} de {formatNumber(data?.kpis.linhas || 0)}.
+          </span>{' '}
+          {data?.temMais ? (
+            <span className="text-[var(--bbtk-red)]">O Excel exporta so o que ja foi carregado — role ate o fim ou feche o filtro antes de exportar.</span>
           ) : (
-            <>Mostrando as {formatNumber(data?.kpis.linhas || 0)} linhas do recorte, sem corte.</>
+            <>Recorte inteiro carregado.</>
           )}
         </p>
 
@@ -605,6 +766,24 @@ export default function EstoqueTransitoPage() {
                           <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', STATUS_BADGE[row.statusTransito])}>
                             {STATUS_LABEL[row.statusTransito]}
                           </span>
+                        ) : coluna.key === 'metodoBaixa' ? (
+                          // Sem baixa ainda: o que importa pro auditor nao e "vazio", e se
+                          // existe vinculo pra cobrar ou se a linha e so aproximacao.
+                          row.metodoBaixa ? (
+                            <span className={cn('px-1.5 py-0.5 rounded text-[11px] font-medium', METODO_BADGE[row.metodoBaixa])}>
+                              {METODO_LABEL[row.metodoBaixa]}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-gray-400">{row.temVinculo ? 'Vinculo, sem baixa' : 'Sem baixa'}</span>
+                          )
+                        ) : coluna.key === 'entradaDocs' ? (
+                          row.entradaDocs ? (
+                            <span className="font-medium text-gray-700" title={`Documento(s) de entrada apontado(s) pelo TOTVS: ${row.entradaDocs}`}>
+                              {row.entradaDocs}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )
                         ) : coluna.key === 'saidaTransactionDate' || coluna.key === 'primeiraEntradaDate' || coluna.key === 'ultimaEntradaDate' ? (
                           row[coluna.key] ? (
                             formatDate(String(row[coluna.key]))
@@ -631,9 +810,9 @@ export default function EstoqueTransitoPage() {
                   </TableRow>
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-20 bg-yellow-50 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
-                  <TableCell colSpan={16} className="font-bold">
-                    {data?.linhasTruncadas
-                      ? `SUBTOTAL DA TABELA (${formatNumber(rowsOrdenadas.length)} de ${formatNumber(data.kpis.linhas)} linhas)`
+                  <TableCell colSpan={18} className="font-bold">
+                    {data?.temMais
+                      ? `SUBTOTAL CARREGADO (${formatNumber(rowsOrdenadas.length)} de ${formatNumber(data.kpis.linhas)} linhas)`
                       : `TOTAL (${formatNumber(rowsOrdenadas.length)} linhas)`}
                   </TableCell>
                   <TableCell align="right" className="font-bold">

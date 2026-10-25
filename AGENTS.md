@@ -171,6 +171,10 @@ premissas erradas, mas achou um caminho real:
     agregado (`SUM(saída) − SUM(entrada)` por `product_code`) era um substituto pro
     vínculo exato que faltava — agora que o vínculo existe (ao menos pro período
     coberto pelo backfill), prefira ele.
+    **Quem já consome esse vínculo**: o `rebuild-estoque-transito` casa saída com
+    entrada por ele e só cai no FIFO onde a coluna está vazia — ver "Sessão 13/10/2026"
+    no fim deste arquivo. `guide_code` segue inútil mesmo assim (4.214 linhas, 48
+    valores distintos, **zero** em transferência).
   - ⚠️ **Corrigido em 06/10/2026**: `getTransferencias()` **não existe mais** em
     `raioX.service.ts` (a descrição antiga aqui estava desatualizada). O que existe é um
     campo chamado `transferencias` cujo valor é um **resíduo de reconciliação**
@@ -825,7 +829,28 @@ confirmação externa.
 
 </details>
 
-## 🚨 ETL parou de gravar ITENS de operação que não é venda (desde 25/06/2026, ativo)
+## 🩹 MITIGADO, NÃO RESOLVIDO (13-14/10/2026) — ETL não grava ITENS de operação que não é venda (ativo desde 25/06/2026)
+
+> ⚠️ **Correção de uma conclusão errada desta mesma sessão.** Uma versão anterior deste
+> cabeçalho dizia "✅ RESOLVIDO — corrigido fora deste repo e reprocessado". **Não foi.**
+> Ao ver os itens de jul–out aparecerem em lote (`transacao_itens.created_at =
+> 2026-10-13`), assumi conserto do ETL; era o **backfill manual** do Lucas rodando
+> (`etl/backfill_transacao_itens.py`, seção "Paliativo" abaixo). A causa raiz continua
+> de pé e **o buraco volta a crescer todo dia** — medido: 102 documentos e 968 peças em
+> 4 dias. Não marcar como resolvido de novo sem ver o ETL principal corrigido.
+
+Volume reposto pelo backfill, só no recorte Fábrica→loja: **+19.330 itens de saída
+(50.877 peças) e +19.104 itens de entrada**. Com isso jul/ago/set passaram a ter 100%
+dos documentos de transferência com item — mas por reposição, não por correção.
+
+Isso suspende as duas degradações descritas abaixo — `ÚLT. ENTRADA` do Relatório Base e a
+maturação do Estoque Sem Giro — enquanto o backfill rodar. **Não foram re-medidas**: se
+for mexer nessas telas, conferir antes.
+
+<details>
+<summary>Diagnóstico original (25/06 a 13/10/2026) — mantido para referência</summary>
+
+### 🚨 ETL parou de gravar ITENS de operação que não é venda (desde 25/06/2026)
 
 Achado em 06/10/2026 enquanto se investigava o pedido de "peças em trânsito". **Não tem
 relação com trânsito e é mais grave**: o ETL continua gravando os documentos em
@@ -969,6 +994,8 @@ remover o filtro que restringe quais operações recebem item — suspeita é
 `operationCodeList`/`transactionTypeList`/`modalityList` estreitado perto de 25/06; (2)
 passar `expand=originDestination` nas transferências. Os dois pedidos destravam
 simultaneamente este relatório, a ÚLT. ENTRADA e a maturação do Estoque Sem Giro.
+
+</details>
 
 **Atualização 28-30/08/2026 — achada uma 3ª hipótese real e concreta, corrigida**: numa
 devolutiva do cliente (`.docx` "Projeto BI Estoque - Devolutiva 25 08"), a pergunta
@@ -1120,6 +1147,10 @@ dropá-las** — é exatamente o cenário de drift descrito na seção de banco 
 services leem por `$queryRaw`, não pelo client gerado; não "melhorar" isso trocando por
 `prisma.pcpEstoqueTransito.findMany()` sem medir.
 
+> ⚠️ **Esta seção descreve a 1ª versão (12/10). O casamento foi reestruturado em 13/10**
+> para usar o vínculo real do TOTVS, e os números de apuração abaixo são de uma foto que
+> ainda não tinha 4 meses de dado. Ler a seção "Sessão 13/10/2026" no fim antes de mexer.
+
 ### Como o casamento funciona (e por que FIFO)
 
 - Saída: `operation_code IN (1510, 556)`, `branch_code = 2` (Fábrica), `status = 4`.
@@ -1177,6 +1208,11 @@ devolve `cobertura.ultimaSaida` / `defasagemDias` / `incompleta` (comparando
 Esse padrão (derivar o aviso do próprio dado em vez de hardcodar) vale a pena repetir em
 qualquer relatório que dependa de uma fonte que pode ficar defasada.
 
+> **Estado em 14/10/2026**: o aviso **não está aparecendo** — depois do backfill a
+> defasagem caiu pra ~5 dias, abaixo do `DIAS_TOLERANCIA_COBERTURA`. Ele volta sozinho se
+> o backfill parar de rodar, que é exatamente o comportamento desejado. Não confundir
+> "aviso sumiu" com "ETL consertado": ver o cabeçalho 🩹 MITIGADO acima.
+
 ### Observações menores que contradizem seções antigas deste arquivo
 
 - Rotas de `pcp-api` **não** declaram `authMiddleware`/`moduleAccess` individualmente — a
@@ -1198,3 +1234,301 @@ qualquer relatório que dependa de uma fonte que pode ficar defasada.
   — ele lê UTF-8 como ANSI e corrompe todo acento do arquivo (aconteceu nesta sessão,
   revertido com `git checkout`). Usar ferramenta de edição de arquivo, ou
   `[System.IO.File]::ReadAllText/WriteAllText` com encoding UTF-8 explícito.
+
+## Sessão 15/10/2026 — 🚨 o ETL APAGAVA o backfill; causa raiz corrigida em produção
+
+**O achado mais importante da sequência.** `sync_transactions.py` faz
+`DELETE FROM transacao_itens` da data inteira antes de reinserir, e o `item_rows`
+descartava toda operação sem sinal definido (`if sign == 0: continue`). As duas coisas
+juntas significam que **cada passada do ETL apagava os itens de transferência que um
+backfill tivesse reposto**. O remendo e o ETL se desfaziam mutuamente.
+
+Eu mesmo disparei a versão grave disso: rodei o `run_daily_transactions_d30.sh`
+manualmente pra cronometrar, e o reprocesso de 30 dias **zerou 1.130 documentos** de uma
+vez. Antes disso o ciclo horário D-3 já vinha corroendo os últimos 3 dias continuamente —
+o que explica por que o buraco "voltava" sempre.
+
+**Corrigido** em `projetobb@386112b`: `if sign == 0: sign = 1`. Operação sem sinal passa a
+ser gravada como neutra, sem inverter quantidade. Validado end-to-end: um dia que estava
+com 0 itens foi de **0 → 677** depois de reprocessado. Hoje o ETL grava transferência
+sozinho (14.431 itens em 15/10, sem backfill nenhum).
+
+Não afeta faturamento: quem lê quantidade com sinal filtra por
+`operations_type`/`operation_mode`. Conferido contra o Dashboard de Vendas — 544.488,36 e
+9.077 peças nas 13 lojas, idêntico antes e depois.
+
+### Armadilhas da operação na VPS (repetir o cuidado)
+
+- O repo `projetobb` tem trabalho **não commitado do Lucas** em
+  `sync_transactions.py`. Para corrigir sem levar junto: `git stash push -- <arquivos>`,
+  aplicar, commitar, `git stash pop` (guardar também um `git diff > patch` antes).
+- Script commitado do Windows entra como **100644** e o `git pull` o entrega **sem bit de
+  execução**. Como o cron chama o caminho direto, falharia com "Permission denied" em
+  silêncio. Corrigido com `git update-index --chmod=+x` (`4fb9b15`). Os outros runners da
+  pasta estão 100755 — comparar sempre.
+- `git pull` na VPS aborta se houver arquivo solto/modificado que o commit vai
+  sobrescrever. Conferir se é idêntico ao commitado (`git show origin/main:<f> | diff - <f>`)
+  antes de remover.
+
+### Rede de segurança D-30 (`run_daily_transactions_d30.sh`, cron 04:00)
+
+Reprocessa 30 dias por data de emissão. **Com o fix do `sign` virou autocurativo**; sem
+ele era destrutivo. Protegido por `flock` compartilhado com o runner horário.
+
+Duração medida: **37min** na primeira passada (populando), **12min32s** nas seguintes.
+Roda às 04:00 porque o analítico do Relatório Base é às 05:30 e lê essas transações.
+
+⚠️ **A janela rola**: o dia mais antigo sai do recorte a cada madrugada. Se houver dano
+numa data específica, corrigir **antes** de ela sair dos 30 dias — não dá pra contar com
+o cron do dia seguinte.
+
+## Sessão 15/10/2026 — trânsito: upsert, idade congelada e prazo de entrega
+
+### `dias_em_transito` agora ENCERRA na baixa
+
+Era sempre `hoje − saída`, o que media a idade do **documento**: linha recebida no dia
+seguinte aparecia com média de **189 dias** (máx 365), quando o trânsito real foi de 1,6.
+Agora: linha aberta corre até hoje; linha recebida congela na última entrada.
+
+Além de corrigir o número, isso torna as ~54 mil linhas recebidas **imutáveis** — é o que
+viabiliza o upsert e o painel de prazo.
+
+### `TRUNCATE` → upsert condicional + delete
+
+Chave natural validada (zero duplicatas): `(saida_branch_code, saida_transaction_code,
+saida_item_index)`, e nos movimentos a mesma mais o trio da entrada. Índices únicos
+criados em `ensureTables()`.
+
+O `DO UPDATE ... WHERE <IS DISTINCT FROM>` só grava quando algo de negócio mudou —
+**medido: 0 linhas escritas quando nada muda**, contra 108 mil do TRUNCATE. O tempo (≈45s)
+quase não cai, porque o gargalo são as 108 idas ao Neon enviando as linhas, não o disco.
+
+`removerObsoletas()` cobre o que o TRUNCATE fazia de graça: janela que rolou, documento
+cancelado e item removido. Anti-join contra a **fonte**, não contra o conjunto calculado.
+
+### Painel de prazo de entrega por loja (30/90/180 dias)
+
+`prazoEntrega` na resposta: média, mediana, máximo e volume por loja. Só linhas
+**encerradas** (`quantidade_em_transito = 0` com data de baixa) — a aberta ainda está
+correndo e inflaria a média.
+
+A janela é pela **data de saída** ("das remessas que saíram nos últimos N dias, quanto
+levaram"), não pela data de baixa, que misturaria remessa antiga baixada agora.
+
+**Não respeita os filtros de recorte** (status/idade/busca) de propósito: descreve o
+desempenho histórico, e filtrar por "só pendentes" deixaria a amostra só com o que não
+chegou. O filtro de loja vale.
+
+`mediaGeral` é ponderada por linha, não média das médias — loja com mil remessas pesa mais
+que uma com cinquenta.
+
+Medido em 15/10/2026: 30d → 1,1 dia (5.107 remessas); 90d → 1,4 (14.933); 180d → 1,6
+(34.130). A operação está mais rápida agora que no semestre.
+
+## Sessão 14/10/2026 (parte 2) — "Acompanhamento por Linha" ganhou as 3 colunas de trânsito
+
+Fecha os três pontos da devolutiva de 25/08 que estavam em aberto: `pecasEmTransito`,
+`estoqueMaisTransito` e `coberturaMesesEstoqueTransito`, em
+`vendaDia.service.ts` (`getTransitoPorClassificacaoDiario`) + a tela.
+
+Duas decisões que não são óbvias:
+
+- **A classificação vem de JOIN FRESCO em `produto_analitico`**, não das colunas copiadas
+  em `pcp_estoque_transito`. Se a categoria de um produto mudar depois da materialização,
+  estoque e trânsito têm que cair no mesmo balde — senão a coluna "estoque + trânsito"
+  somaria duas linhas que descrevem universos diferentes. Mesmo motivo do
+  `is_finished_product` + `PCP_ESTOQUE_LIQUIDO_SKU_FILTER` replicados ali.
+- **`estoqueMaisTransito` soma os dois valores JÁ arredondados**, não arredonda a soma —
+  mesma regra dos totais (`Σ round(x) ≠ round(Σ x)`), pra conferência na mão fechar.
+
+Canal `atacado` devolve trânsito **0 por construção**: o rebuild descarta destino =
+Fábrica, então DPA/ATACADO nunca têm peça a caminho. Não é bug, e o filtro de loja só
+considera `branch_code > 0`.
+
+Validado contra o relatório dedicado em 14/10/2026: 119 peças nos dois, e por loja
+também (IGUATEMI EXP. 118, NORTH SHOPPING 1). O total é idêntico em qualquer
+`tipoClassificacao`, que é o teste de que o agrupamento não perde nem duplica linha.
+
+## Sessão 14/10/2026 — o FIFO foi REMOVIDO; o vínculo vem do lado da ENTRADA
+
+> Esta seção substitui o desenho descrito em "Sessão 13/10/2026" logo abaixo. O híbrido
+> (vínculo + FIFO) durou um dia: com a cobertura em 100%, o FIFO só produzia baixa
+> inventada. Leia esta antes da outra.
+
+### O achado que mudou tudo: o ETL nunca pediu o campo
+
+`transacoes.origin_destination` estava nula não porque o TOTVS não tivesse o dado, mas
+porque **a busca de transações nunca pediu `expand=originDestination`**. Testado na API
+para documentos de out/2025 e fev/2026: o vínculo volta completo. A história inteira
+sempre esteve disponível.
+
+### A assimetria do campo — e por que puxar pela ENTRADA
+
+| | Saída | Entrada |
+|---|---|---|
+| Campo preenchido | `destination` (lista) | `origin` (objeto único) |
+| Quando aparece | dias depois, quando a loja recebe | **já nasce no documento** |
+| `lastChangeDate` muda? | **não** (medido: 0 de 10, com entrada até 29 dias depois) | irrelevante |
+| Precisa repescar? | sim, até ~45 dias | **não** |
+
+O ponto decisivo é a terceira linha: **o TOTVS não marca a saída como alterada quando a
+entrada é criada**. Então nenhum sync incremental por data de alteração volta nela — o
+`sync_transactions_changes.py` (que está órfão, nenhum runner o chama) não resolveria com
+janela nenhuma. E a rebusca por emissão que existe (`run_hourly_transactions_prd_saldo.sh`,
+`--closed-days --since D-3`) perde os casos de 4 a 29 dias.
+
+Pela entrada nada disso importa: o documento é novo, o `origin` já vem preenchido, e o
+D-3 atual basta. **Não se perde informação**: uma entrada aponta para exatamente 1 saída
+(2.139 de 2.139 medidos) e uma saída pode ter até 5 entradas — montando pelo lado da
+entrada, o recebimento parcial aparece como N entradas apontando a mesma saída.
+
+Defasagem medida saída→entrada: mediana 1 dia, p95 3, p99 5, **máximo 29**. Logo
+pendência com mais de 30 dias não é atraso de captura.
+
+### `backfill-vinculo-transferencia.ts` + `pcp_transferencia_vinculo`
+
+Script novo (`npm run backfill:vinculo[:dryrun] -w apps/api`), flags `--desde=`,
+`--limite=`, `--lado=entrada|saida`. Grava **a cada 500** e seleciona só quem ainda não
+tem vínculo, então é interrompível e retomável sem refazer trabalho.
+
+Resultado do passe histórico: **25.425 vínculos**, de 19/06/2019 a 13/10/2026.
+Cobertura **100%** — de 18.943 documentos consultados, só 7 vieram sem origem.
+
+Tabela própria, não coluna em `transacoes`: aquela é do ETL (escrever nela é contra a
+regra do projeto e some no próximo sync) e sua coluna já guarda o `destination` em
+formato compacto — gravar o `origin` no mesmo lugar deixaria `[[2,880226]]` ambíguo
+entre "mandei pra" e "vim de".
+
+### Efeito no relatório
+
+| | FIFO puro | Híbrido | **Só vínculo** |
+|---|---|---|---|
+| Peças abertas | 4.187 | 2.431 | **1.295** |
+| Documentos | — | 131 | **33** |
+| Lojas | — | 13 | **5** |
+
+Faixas de idade voltaram a fazer sentido: 324 peças com até 7 dias (trânsito recente de
+verdade), 25 de 8 a 15, e 946 com 91+ (Terrazo).
+
+### 🐛 Bug corrigido na mesma sessão: ordenar no navegador sobre uma página enviesada
+
+A tabela carregava `LIMIT 2000` com `ORDER BY quantidade_em_transito DESC,
+dias_em_transito DESC` e **ordenava no navegador**. Com o ciclo completo
+(`apenasPendentes=false`, 59.716 linhas), essas 2.000 eram: todas as abertas, e depois as
+recebidas **mais antigas**. Resultado medido — meses presentes nas 2.000: out/2025,
+nov/2025, dez/2025 e out/2026. **Os 11 meses do meio (45.360 linhas) nunca entravam.**
+Clicando pra ordenar por data, a tela pulava de 05/10/2026 pra 03/11/2025 e parecia
+buraco no histórico.
+
+Corrigido: **ordenação e paginação agora são do servidor** (`ordenarPor`/`direcao`/
+`offset`/`limite`, coluna validada contra `COLUNAS_ORDENAVEIS`), e a tela carrega a
+próxima página conforme a rolagem. `t.id ASC` entra como desempate — sem ordem total,
+`OFFSET` repete ou pula linha em caso de empate. A resposta traz `temMais`/`offset`/
+`limite` no lugar do antigo `linhasTruncadas`.
+
+**Lição que vale pra qualquer tela paginada do PCP**: ordenar no cliente só é honesto
+quando o cliente tem o conjunto inteiro. Se há `LIMIT`, a ordenação tem que ser a mesma
+que escolheu as linhas — senão o usuário ordena uma amostra selecionada por outro
+critério, e não tem como perceber.
+
+### ⚠️ As 1.295 que sobraram NÃO são pendência de negócio
+
+Medido: em **30 de 30** pares ainda abertos, o documento de entrada **existe** no TOTVS e
+está apontado pelo vínculo, mas **não tem itens no nosso banco**. Zero casos de "entrada
+não existe", zero de "entrada com itens".
+
+É a lacuna de itens do ETL (a mesma do corte de 25/06, mais os furos esparsos de
+out/2025 a jan/2026), não mercadoria sumida. **Rodar `npm run backfill:itens -w apps/api`
+com janela ampla deve derrubar quase tudo isso.** Só o que restar depois é pendência real.
+
+## Sessão 13/10/2026 — `origin_destination` é o vínculo pai-filho; o casamento virou híbrido
+
+O Marcelo achou olhando o banco: **`transacoes.origin_destination` deixou de ser coluna
+morta em 25/06/2026** e hoje carrega o vínculo documento-a-documento que este arquivo
+afirmava não existir (o mesmo dia do corte do ETL — o update que quebrou os itens foi o
+que ligou o vínculo).
+
+### O formato, e como ele se interpreta
+
+Dois formatos convivem na mesma coluna:
+
+```
+[[9,885410]]                                           <- 1.982 docs (lista achatada)
+{"branchCodeOrigin":2,"transactionCodeOrigin":881332,  <- 22 docs (objeto completo)
+ "transactionDateOrigin":"...","destination":[{"branchCodeDestination":9,
+ "transactionCodeDestination":885410,"transactionDateDestination":"..."}]}
+```
+
+O objeto revela a semântica do par: **a lista achatada é o `destination`**, ou seja
+`[[branchCodeDestination, transactionCodeDestination]]`. Num documento de **saída** o
+campo aponta a(s) **entrada(s)** que receberam; numa **entrada**, o `origin` aponta quem
+mandou. `parseDestinos()` no script trata os dois.
+
+### Validação antes de confiar (fazer de novo se mexer)
+
+| Teste | Resultado |
+|---|---|
+| Documento referenciado existe em `transacoes` | 2.139 / 2.139 (**100%**) |
+| Referência órfã | **0** |
+| Contraparte é de tipo oposto (S→E) | 2.139 / 2.139 (**100%**) |
+| Data da referência igual ou posterior | 2.138 / 2.139 |
+| Saída aponta para mais de uma loja | **nunca** (sempre 1) |
+| Destino pelo vínculo × por `customer_code` | **bate em 100%** (655/655) |
+| Mesma entrada referenciada por várias saídas | **nunca** |
+| Produto da saída achado no doc de entrada vinculado | 20.473 / 20.603 itens (99,4%) |
+
+Como o destino pelos dois métodos concorda sempre, `branches.person_code = customer_code`
+continua válido como fallback pro período sem vínculo.
+
+### O algoritmo agora é híbrido, em duas fases — a ordem importa
+
+1. **Fase vínculo**: para cada saída com `origin_destination`, casa dentro do(s)
+   documento(s) apontado(s), por `product_code`.
+2. **Fase FIFO**: só para saídas **sem** vínculo nenhum.
+
+**Saída que tem vínculo nunca recebe baixa por FIFO.** Se o TOTVS diz que o documento
+recebeu 5 de 9, as outras 4 estão abertas de verdade — completar por aproximação apagaria
+a evidência. E a fase vínculo roda primeiro justamente pra que uma entrada explicitamente
+amarrada não seja "roubada" pela aproximação de outro documento (o saldo das entradas é
+compartilhado entre as duas fases, são os mesmos objetos em memória).
+
+Colunas novas em `pcp_estoque_transito`: `metodo_baixa` (`vinculo`/`fifo`/`misto`/NULL),
+`tem_vinculo`, `entrada_docs` (`"loja/documento"`, o atalho do auditor pro ERP);
+`metodo` em `pcp_estoque_transito_movimentos`. Entram por
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dentro de `ensureTables()`, então a tabela
+existente não precisa ser dropada.
+
+### Efeito nos números
+
+| | FIFO puro (12/10) | Híbrido (13/10) |
+|---|---|---|
+| Peças de saída | 99.451 | **150.328** |
+| Peças abertas | 3.187¹ | **2.431** |
+
+¹ 3.187 é o FIFO puro já com o dado reprocessado — a comparação justa com 2.431.
+
+A queda de 756 peças é correção real: o FIFO estava deixando aberto o que o vínculo
+mostra baixado. **No período com vínculo, 99,5% das peças aparecem baixadas** — restam só
+**234 peças** em 10 documentos e 4 lojas. As outras 2.197 abertas são todas do período
+sem vínculo (2.082 delas com 90+ dias).
+
+Estado novo e interessante: **"vínculo, sem baixa"** (`tem_vinculo=true`,
+`quantidade_recebida=0`) — o ERP aponta o documento de entrada, mas o produto não está
+dentro dele. É a pendência mais acionável que o relatório produz, porque já vem com a nota
+a abrir.
+
+### Cuidado ao agregar: filtrado × global
+
+`confiabilidade.primeiraSaidaComVinculo` sai da query **sem filtro** (a mesma de
+`cobertura`), não do recorte. Já saiu errado uma vez: calculado sobre o recorte padrão
+(só pendentes) dava 05/10 em vez de 26/06, e a tela afirma com essa data *desde quando o
+vínculo existe* — algo que não pode mudar conforme o filtro do usuário. Regra geral deste
+service: o que descreve **a foto** vai na query sem filtro; o que descreve **o recorte**
+vai na query com `filtroSql`.
+
+### Escopo que ficou de fora de propósito
+
+A Fábrica também emite transferência com `operation_code` 160/652 (para DELIVERY), 825
+(matéria-prima/almoxarifado), 668 (retorno de conserto). O relatório continua só em
+**1510/556** — ampliar muda o que o relatório significa e é decisão de negócio, não
+técnica. Os dados para decidir estão aí se o usuário pedir.

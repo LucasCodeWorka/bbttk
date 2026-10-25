@@ -22,6 +22,22 @@ const OPERACAO_JOIN = Prisma.sql`LEFT JOIN classificacao_operacoes co ON co.oper
 const IS_VENDA = Prisma.sql`(co.operations_type = 'S' AND co.operation_mode = '4')`;
 const IS_DEVOLUCAO = Prisma.sql`(co.operations_type = 'E' AND co.operation_mode = '3')`;
 
+// A filial 02 abriga dois negocios distintos, separados pela DESCRICAO DA OPERACAO e
+// nao por branch_code - no TOTVS os dois sao a filial 2. O 2.3 e um codigo sintetico:
+// nao existe no banco, so na aplicacao, e e o mesmo que getVendasFabricaDividida ja
+// devolve pra desenhar as duas linhas da tabela do dashboard.
+//
+// E_ATACADO/E_DPA existem pra que filtro e tabela NUNCA possam divergir: as duas linhas
+// da tabela saem do mesmo par de predicados que o filtro usa. Medido em set/2026, o
+// corte e bem desigual - DPA R$ 4.274,28 contra ATACADO R$ 212.577,68 -, e era por isso
+// que filtrar "FABRICA" na pratica mostrava so o atacado, com o DPA sumindo no
+// arredondamento.
+export const FABRICA_BRANCH_CODE = 2;
+export const ATACADO_BRANCH_CODE = 2.3;
+const E_ATACADO = Prisma.sql`co.description ILIKE '%ATACADO%'`;
+// Espelha o ELSE do CASE: descricao nula nao casa com ILIKE e portanto e DPA.
+const E_DPA = Prisma.sql`(co.description NOT ILIKE '%ATACADO%' OR co.description IS NULL)`;
+
 // HISTÓRICO: customer_code >= 110000000 já foi usado como heurística pra excluir "conta
 // interna do TOTVS" (transferência entre filiais, ajuste de estoque, amostra, perda) que
 // entrava como faturamento de verdade por causa das listas antigas de operation_code fixas
@@ -124,9 +140,32 @@ function round(value: number, decimals: number = 2): number {
 }
 
 // Filtro de filiais reutilizado: aceita uma ou varias (undefined/vazio = todas)
+// Aceita, alem das filiais reais, as duas metades da Fabrica: 2 = DPA e 2.3 = ATACADO.
+// Como toda query que chama esta funcao ja traz o OPERACAO_JOIN, da pra cortar pela
+// descricao da operacao aqui mesmo - e assim os 9 pontos que filtram por filial ganham
+// o comportamento de uma vez, sem cada servico ter que saber do assunto.
 function buildBranchFilter(branchCodes?: number[]) {
   if (!branchCodes || branchCodes.length === 0) return Prisma.empty;
-  return Prisma.sql`AND t.branch_code IN (${Prisma.join(branchCodes)})`;
+
+  const querDpa = branchCodes.includes(FABRICA_BRANCH_CODE);
+  const querAtacado = branchCodes.includes(ATACADO_BRANCH_CODE);
+  const outras = branchCodes.filter(
+    (c) => c !== FABRICA_BRANCH_CODE && c !== ATACADO_BRANCH_CODE
+  );
+
+  if (!querDpa && !querAtacado) {
+    return Prisma.sql`AND t.branch_code IN (${Prisma.join(outras)})`;
+  }
+
+  // As duas metades juntas sao a filial 2 inteira: nao vale pagar o custo de olhar a
+  // descricao da operacao so pra reunir o que nunca foi separado no banco.
+  const fabrica =
+    querDpa && querAtacado
+      ? Prisma.sql`t.branch_code = ${FABRICA_BRANCH_CODE}`
+      : Prisma.sql`(t.branch_code = ${FABRICA_BRANCH_CODE} AND ${querAtacado ? E_ATACADO : E_DPA})`;
+
+  if (outras.length === 0) return Prisma.sql`AND ${fabrica}`;
+  return Prisma.sql`AND (t.branch_code IN (${Prisma.join(outras)}) OR ${fabrica})`;
 }
 
 // Dias "furados" dentro do periodo: o usuario escolhe o intervalo no calendario e
@@ -134,20 +173,39 @@ function buildBranchFilter(branchCodes?: number[]) {
 // Formato 'YYYY-MM-DD'; fora do intervalo e ignorado pelo proprio BETWEEN.
 export type DiasExcluidos = string[] | undefined;
 
+// Data de competencia da venda - use SEMPRE esta, nunca `t.transaction_date` solta.
+//
+// `transaction_date` e a data em que a transacao foi criada no TOTVS. No atacado/fabrica
+// o pedido pode ser lancado num dia e faturado em outro, e o TOTVS reporta a venda na
+// data da NOTA FISCAL (coluna `dt_fatura`, preenchida pelo ETL a partir do endpoint
+// fiscal/v2/invoices/search). Caso que motivou a mudanca: a transacao 914090 da Janaina,
+// criada em 30/09 e faturada em 01/10 - o COMFL007 conta em outubro, nos contavamos em
+// setembro, e a vendedora fechava 145 pc / R$ 2.185,05 contra 199 pc / R$ 4.682,71.
+//
+// Antes disso tentamos `COALESCE(last_change_date, transaction_date)`: consertava a
+// Janaina e QUEBRAVA Larissa e Lauriane, porque venda antiga que sofre correcao depois
+// nao muda de competencia. A data da NF resolve os dois casos - reproduz as quatro
+// vendedoras do COMFL007. Verificado em 16/10/2026.
+//
+// O COALESCE cobre a transacao sem NF (venda de funcionario, operacao que nao emite
+// documento) e o varejo, onde a NF sai sempre no mesmo dia da venda - 12.823 saidas
+// conferidas em out/2025 e mai/2026, zero divergencias.
+const DATA_PERIODO = Prisma.sql`COALESCE(t.dt_fatura, t.transaction_date)`;
+
 function buildDiasExcluidosFilter(diasExcluidos: DiasExcluidos): Prisma.Sql {
   if (!diasExcluidos || diasExcluidos.length === 0) return Prisma.empty;
   // Cast explicito pra `date`: passar `new Date('2026-09-15T00:00:00')` daria meia-noite
   // LOCAL (03:00Z no Brasil) e a comparacao com a coluna `date` escorregava de dia.
   // Com a string crua + ::date a comparacao e dia contra dia, sem fuso no meio.
   const datas = diasExcluidos.map((d) => Prisma.sql`${d}::date`);
-  return Prisma.sql`AND t.transaction_date NOT IN (${Prisma.join(datas)})`;
+  return Prisma.sql`AND ${DATA_PERIODO} NOT IN (${Prisma.join(datas)})`;
 }
 
 // Periodo + furos numa fragmento so. Substitui o `t.transaction_date BETWEEN a AND b`
 // solto que estava repetido em toda query - centralizar evita que uma consulta nova
 // esqueca de aplicar as exclusoes e passe a divergir das outras.
 function buildPeriodoFilter(startDate: Date, endDate: Date, diasExcluidos?: DiasExcluidos): Prisma.Sql {
-  return Prisma.sql`t.transaction_date BETWEEN ${startDate} AND ${endDate} ${buildDiasExcluidosFilter(diasExcluidos)}`;
+  return Prisma.sql`${DATA_PERIODO} BETWEEN ${startDate} AND ${endDate} ${buildDiasExcluidosFilter(diasExcluidos)}`;
 }
 
 // Espelha os dias excluidos um ano pra tras, pra comparacao "ano anterior" ficar com a
@@ -360,7 +418,7 @@ export async function getVendasFabricaDividida(
   }>>`
     SELECT
       CASE
-        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN ${E_ATACADO} THEN '2.3'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
@@ -418,6 +476,49 @@ export async function getVendasFabricaDividida(
   });
 }
 
+// Quais metades da Fabrica o filtro pediu. Sem filtro, as duas.
+export function metadesFabricaPedidas(branchCodes?: number[]) {
+  return {
+    dpa: !branchCodes || branchCodes.includes(FABRICA_BRANCH_CODE),
+    atacado: !branchCodes || branchCodes.includes(ATACADO_BRANCH_CODE),
+  };
+}
+
+// Troca a linha unica da Fabrica pelas duas metades, DPA e ATACADO, respeitando o
+// filtro: se o usuario pediu so uma delas, so ela volta.
+//
+// ATENCAO ao total: nao da pra chamar calcularTotais depois disto. Ele soma `clientes`
+// linha a linha, e o mesmo cliente pode comprar no DPA e no ATACADO - partindo a
+// Fabrica ele seria contado duas vezes e os cards de Clientes, TM/cliente e PA/cliente
+// subiriam sem que nada tivesse mudado na venda. Calcule o total ANTES do split.
+//
+// Faturamento, pecas e transacoes nao sofrem disso: cada transacao pertence a exatamente
+// uma das metades, porque o corte e pela operacao da propria transacao. Conferido em
+// set/2026 - DPA + ATACADO = R$ 216.851,96, identico a linha unica da Fabrica.
+export async function dividirFabricaNasLinhas(
+  linhas: VendasFilial[],
+  startDate: Date,
+  endDate: Date,
+  branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro,
+  diasExcluidos?: DiasExcluidos
+): Promise<VendasFilial[]> {
+  const { dpa, atacado } = metadesFabricaPedidas(branchCodes);
+  if (!dpa && !atacado) return linhas;
+  if (!linhas.some(f => f.branch_code === FABRICA_BRANCH_CODE)) return linhas;
+
+  const metades = await getVendasFabricaDividida(startDate, endDate, produtoFiltro, diasExcluidos);
+  const pedida = (code: number) => (code === ATACADO_BRANCH_CODE ? atacado : dpa);
+
+  // Reordena porque o concat quebraria o ORDER BY faturamento DESC que getVendasPeriodo
+  // entrega: as duas metades iam parar no fim da lista, e o ATACADO - que costuma ser a
+  // MAIOR barra do grafico - aparecia depois da menor loja da rede.
+  return linhas
+    .filter(f => f.branch_code !== FABRICA_BRANCH_CODE)
+    .concat(metades.filter(f => pedida(f.branch_code)))
+    .sort((a, b) => b.faturamento - a.faturamento);
+}
+
 // Vendas diárias (por filial de venda, exclui Fábrica e devoluções)
 export async function getVendasDiarias(
   startDate: Date,
@@ -436,7 +537,9 @@ export async function getVendasDiarias(
     faturamento: Decimal;
   }>>`
     SELECT
-      t.transaction_date as data,
+      -- Agrupa pela MESMA data que filtra o periodo (DATA_PERIODO). Agrupar por
+      -- transaction_date aqui colocaria a venda numa barra fora do intervalo escolhido.
+      ${DATA_PERIODO} as data,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
       COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
       COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -451,8 +554,8 @@ export async function getVendasDiarias(
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
       ${produtoFilter}
-    GROUP BY t.transaction_date
-    ORDER BY t.transaction_date
+    GROUP BY ${DATA_PERIODO}
+    ORDER BY ${DATA_PERIODO}
   `;
 
   return results.map(row => ({
@@ -558,7 +661,7 @@ export async function getVendasDiaSemana(
       FROM generate_series(${startDate}::date, ${endDate}::date, interval '1 day') dia
     ), vendas_dia AS (
       SELECT
-        t.transaction_date::date as dia,
+        ${DATA_PERIODO} as dia,
         COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN (t.branch_code, t.transaction_code) END) as transacoes,
         COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
         COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -573,7 +676,7 @@ export async function getVendasDiaSemana(
         AND ${STORE_BRANCH_FILTER}
         ${branchFilter}
         ${produtoFilter}
-      GROUP BY t.transaction_date::date
+      GROUP BY ${DATA_PERIODO}
     )
     SELECT
       c.dia_semana,
@@ -622,7 +725,7 @@ export async function getVendasMensais(
     faturamento: Decimal;
   }>>`
     SELECT
-      DATE_TRUNC('month', t.transaction_date) as mes,
+      DATE_TRUNC('month', ${DATA_PERIODO}) as mes,
       COUNT(DISTINCT CASE WHEN ${IS_SALE} THEN t.transaction_code END) as transacoes,
       COALESCE(SUM(${PECAS_COM_SINAL}), 0) as pecas,
       COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) as faturamento
@@ -637,7 +740,7 @@ export async function getVendasMensais(
       AND ${STORE_BRANCH_FILTER}
       ${branchFilter}
       ${produtoFilter}
-    GROUP BY DATE_TRUNC('month', t.transaction_date)
+    GROUP BY DATE_TRUNC('month', ${DATA_PERIODO})
     ORDER BY mes
   `;
 
@@ -916,7 +1019,7 @@ export async function getDevolucoesFabricaDividida(
   }>>`
     SELECT
       CASE
-        WHEN co.description ILIKE '%ATACADO%' THEN '2.3'
+        WHEN ${E_ATACADO} THEN '2.3'
         ELSE '2'
       END as linha,
       COUNT(DISTINCT t.transaction_code) as qtde_dev,
@@ -964,7 +1067,10 @@ export async function getClientesNovosPorFilial(
     faturamento_cn: Decimal;
   }>>`
     WITH primeira_compra AS (
-      SELECT t.customer_code, MIN(t.transaction_date) as primeira_data
+      -- Mesmo calendario do resto do dashboard (DATA_PERIODO): "cliente novo no
+      -- periodo" tem que usar a mesma regra que define o periodo, senao a primeira
+      -- compra e comparada numa data e o faturamento dele e somado em outra.
+      SELECT t.customer_code, MIN(${DATA_PERIODO}) as primeira_data
       FROM transacoes t
       ${OPERACAO_JOIN}
       WHERE t.customer_code IS NOT NULL

@@ -15,7 +15,7 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
-import { formatMoney, formatNumber, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
+import { formatMoney, formatNumber, FABRICA_BRANCH_CODE, FABRICA_METADES, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -192,7 +192,17 @@ export default function DashboardPage() {
     })
     .map(([code, name]) => ({ value: code, label: name }));
 
-  const filialOptions = filiaisDisponiveis.map((f) => ({ value: parseInt(f.value), label: f.label }));
+  // A Fabrica entra como DUAS opcoes, DPA e ATACADO, e nao como uma "FABRICA" so: e o
+  // mesmo corte que a tabela de lojas abaixo ja mostra. Enquanto o filtro dizia
+  // "FABRICA" e a tabela dizia DPA/ATACADO, o usuario procurava no filtro um nome que
+  // nao existia ali e concluia que a Fabrica tinha sumido. Alem do nome, nao havia como
+  // isolar uma das metades - e como o DPA e 2% do movimento da filial, filtrar
+  // "FABRICA" era na pratica olhar so o atacado.
+  const filialOptions = filiaisDisponiveis.flatMap((f) =>
+    Number(f.value) === FABRICA_BRANCH_CODE
+      ? FABRICA_METADES
+      : [{ value: Number(f.value), label: f.label }]
+  );
 
   // Dados para o gráfico de barras - todas as filiais, nao so as primeiras 8
   const dadosBarras = vendas?.filiais?.map(f => ({

@@ -110,9 +110,16 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    const filiais = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
+    const filiaisBase = await vendasService.getVendasPeriodo(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos);
 
-    const total = vendasService.calcularTotais(filiais);
+    // O total sai da lista ANTES do split - ver o aviso em dividirFabricaNasLinhas:
+    // partir a Fabrica contaria duas vezes o cliente que comprou nas duas metades.
+    const total = vendasService.calcularTotais(filiaisBase);
+
+    // O grafico de barras mostra DPA e ATACADO separados, igual a tabela de lojas.
+    const filiais = await vendasService.dividirFabricaNasLinhas(
+      filiaisBase, startDate, endDate, branchCodes, produtoFiltro, diasExcluidos
+    );
 
     res.json({
       periodo: { inicio: start, fim: end },
@@ -214,14 +221,17 @@ router.get('/vendas/mensais/periodo/:start/:end/:branchCode?', async (req: Reque
 
 // Resolve as filiais filtradas: aceita ?branches=1,3,4 (multiplas) ou o :branchCode
 // antigo da URL (uma so), com prioridade pro query param. undefined = todas as filiais.
+// parseFloat, nao parseInt: o ATACADO e a filial sintetica 2.3 (ver ATACADO_BRANCH_CODE
+// em vendas.service). Com parseInt ele virava 2 silenciosamente e o filtro trazia a
+// Fabrica inteira em vez da metade pedida.
 function resolveBranchCodes(req: Request): number[] | undefined {
   const branchesQuery = req.query.branches as string | undefined;
   if (branchesQuery) {
-    const codes = branchesQuery.split(',').map(c => parseInt(c.trim())).filter(c => !isNaN(c));
+    const codes = branchesQuery.split(',').map(c => parseFloat(c.trim())).filter(c => !isNaN(c));
     return codes.length > 0 ? codes : undefined;
   }
 
-  const branchCode = req.params.branchCode ? parseInt(req.params.branchCode) : undefined;
+  const branchCode = req.params.branchCode ? parseFloat(req.params.branchCode) : undefined;
   return branchCode ? [branchCode] : undefined;
 }
 
@@ -479,17 +489,29 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     // ATACADO (2.3), separados pela descricao da operacao. Meta e clientes-novos
     // continuam so na linha "2" (sem infraestrutura pra separar por operacao ainda) -
     // ver getVendasFabricaDividida/getDevolucoesFabricaDividida.
-    if (!branchCodes || branchCodes.includes(2)) {
+    //
+    // As duas funcoes acima sempre calculam as DUAS metades (nao recebem branchCodes),
+    // entao quando o filtro pede so uma delas e preciso descartar a outra aqui - senao
+    // filtrar ATACADO continuaria mostrando o DPA ao lado.
+    const { dpa: querDpa, atacado: querAtacado } = vendasService.metadesFabricaPedidas(branchCodes);
+    if (querDpa || querAtacado) {
       const [fabricaDivididaAtual, fabricaDivididaAnterior, devolucaoFabricaDividida] = await Promise.all([
         vendasService.getVendasFabricaDividida(startAtual, endAtual, produtoFiltro, diasExcluidos),
         vendasService.getVendasFabricaDividida(startAnterior, endAnterior, produtoFiltro, diasExcluidosAA),
         vendasService.getDevolucoesFabricaDividida(startAtual, endAtual, produtoFiltro, diasExcluidos),
       ]);
-      filiaisAtual = filiaisAtual.filter(f => f.branch_code !== 2).concat(fabricaDivididaAtual);
-      filiaisAnterior = filiaisAnterior.filter(f => f.branch_code !== 2).concat(fabricaDivididaAnterior);
-      devolucoesMap.delete(2);
+      const pedida = (code: number) =>
+        code === vendasService.ATACADO_BRANCH_CODE ? querAtacado : querDpa;
+
+      filiaisAtual = filiaisAtual
+        .filter(f => f.branch_code !== vendasService.FABRICA_BRANCH_CODE)
+        .concat(fabricaDivididaAtual.filter(f => pedida(f.branch_code)));
+      filiaisAnterior = filiaisAnterior
+        .filter(f => f.branch_code !== vendasService.FABRICA_BRANCH_CODE)
+        .concat(fabricaDivididaAnterior.filter(f => pedida(f.branch_code)));
+      devolucoesMap.delete(vendasService.FABRICA_BRANCH_CODE);
       for (const [codigo, valor] of devolucaoFabricaDividida) {
-        devolucoesMap.set(codigo, valor);
+        if (pedida(codigo)) devolucoesMap.set(codigo, valor);
       }
     }
 

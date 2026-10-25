@@ -250,6 +250,12 @@ model transacoes {
   branch_name            String?   @db.VarChar(100)
   transaction_code       Int
   transaction_date       DateTime  @db.Date
+  // Data da nota fiscal ("Data fatura" no TOTVS), gravada pelo ETL em
+  // sync_transaction_invoices.py. E a data de competencia da venda: ao contrario da
+  // transaction_date, nao se move quando a transacao e alterada depois. Precisa estar
+  // declarada aqui mesmo sendo usada so em $queryRaw - um `prisma db push` com o schema
+  // desatualizado DERRUBARIA a coluna.
+  dt_fatura              DateTime? @db.Date
   customer_code          BigInt?
   last_change_date       DateTime? @db.Timestamp(6)
   operation_code         Int?
@@ -266,6 +272,7 @@ model transacoes {
   @@unique([branch_code, transaction_code])
   @@index([branch_code], map: "idx_transacoes_branch")
   @@index([transaction_date], map: "idx_transacoes_date")
+  @@index([dt_fatura], map: "idx_transacoes_dt_fatura")
   @@index([operation_code], map: "idx_transacoes_operation")
   @@index([status], map: "idx_transacoes_status")
 }
@@ -772,9 +779,17 @@ model PcpRedistribuicaoJob {
 // ciclo inteiro (recebido/parcial/aberto) e nao so o saldo pendente, porque auditoria
 // precisa enxergar o que foi baixado tambem.
 //
-// As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS; os models
-// abaixo existem pra declarar isso no schema e impedir que um `prisma db push` futuro
-// proponha dropa-las (ver secao de drift de banco no AGENTS.md). Os services leem por
+// O casamento saida x entrada e SEMPRE por vinculo do TOTVS (`PcpTransferenciaVinculo`).
+// O FIFO aproximado foi removido em 14/10/2026, depois que o backfill pelo lado da
+// entrada levou a cobertura a 100% dos documentos da janela: manter aproximacao ao lado
+// do fato so produzia baixa inventada e atribuia pendencia a documento arbitrario.
+// Saida sem vinculo nenhum sai 100% aberta - "pendente" passou a significar exatamente
+// "saida sem entrada correspondente registrada no ERP".
+//
+// As tabelas sao criadas pelo proprio script via CREATE TABLE IF NOT EXISTS (colunas
+// novas entram por ALTER TABLE ... ADD COLUMN IF NOT EXISTS); os models abaixo existem
+// pra declarar isso no schema e impedir que um `prisma db push` futuro proponha
+// dropa-las (ver secao de drift de banco no AGENTS.md). Os services leem por
 // $queryRaw, nao pelo client gerado.
 model PcpEstoqueTransito {
   id                        BigInt    @id @default(autoincrement())
@@ -782,6 +797,13 @@ model PcpEstoqueTransito {
   janelaInicio              DateTime  @map("janela_inicio") @db.Date
   janelaFim                 DateTime  @map("janela_fim") @db.Date
   statusTransito            String    @map("status_transito") @db.VarChar(20)
+  // Como a baixa foi determinada: 'vinculo' (o TOTVS aponta o documento de entrada em
+  // transacoes.origin_destination), 'fifo' (aproximacao, so onde nao ha vinculo - ate
+  // 25/06/2026) ou 'misto'. NULL quando nada foi baixado. `entradaDocs` guarda o(s)
+  // documento(s) apontado(s) pelo vinculo no formato "branch/transaction".
+  metodoBaixa               String?   @map("metodo_baixa") @db.VarChar(10)
+  temVinculo                Boolean   @default(false) @map("tem_vinculo")
+  entradaDocs               String?   @map("entrada_docs") @db.VarChar(255)
   destinoBranchCode         Int       @map("destino_branch_code")
   destinoBranchName         String?   @map("destino_branch_name") @db.VarChar(100)
   saidaBranchCode           Int       @map("saida_branch_code")
@@ -811,6 +833,7 @@ model PcpEstoqueTransito {
   updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamp(6)
 
   @@index([statusTransito], map: "idx_pcp_estoque_transito_status")
+  @@index([metodoBaixa], map: "idx_pcp_estoque_transito_metodo")
   @@index([destinoBranchCode], map: "idx_pcp_estoque_transito_destino")
   @@index([saidaTransactionDate], map: "idx_pcp_estoque_transito_saida_data")
   @@index([productCode], map: "idx_pcp_estoque_transito_product")
@@ -818,10 +841,42 @@ model PcpEstoqueTransito {
   @@map("pcp_estoque_transito")
 }
 
-// Rastro de quais entradas (lado da loja) abateram qual item de saida. Serve pra
-// justificar a baixa de uma linha: como nao existe vinculo documento-a-documento no
-// TOTVS, a amarracao e FIFO por loja destino + product_code, e essa tabela e a prova
-// de qual casamento o calculo escolheu.
+// Vinculo documento-a-documento de transferencia, lido da API do TOTVS
+// (`expand=originDestination`) por `backfill-vinculo-transferencia.ts`.
+//
+// E populado pelo lado da ENTRADA porque o campo e assimetrico: numa saida o
+// `destination` so aparece quando a loja recebe - dias depois, e sem o TOTVS mexer no
+// `lastChangeDate` do documento (medido: 0 de 10), entao nenhum sync incremental
+// reconsulta aquela saida. Numa entrada o `origin` ja nasce preenchido (medido: 12 de
+// 12) e o documento e novo, logo qualquer sync captura. Nao se perde nada: uma entrada
+// aponta pra exatamente 1 saida (2.139 de 2.139 medidos), enquanto uma saida pode ter
+// ate 5 entradas - montando pelos dois lados da mesma relacao, o grafo fecha.
+//
+// Tabela da aplicacao de proposito, nao coluna em `transacoes`: aquela e sincronizada
+// pelo ETL (escrever nela e contra a regra do projeto e some no proximo sync), e sua
+// coluna `origin_destination` ja guarda o `destination` em formato compacto - gravar o
+// `origin` no mesmo lugar deixaria `[[2,880226]]` ambiguo entre "mandei pra" e "vim de".
+model PcpTransferenciaVinculo {
+  saidaBranchCode        Int       @map("saida_branch_code")
+  saidaTransactionCode   Int       @map("saida_transaction_code")
+  saidaTransactionDate   DateTime? @map("saida_transaction_date") @db.Date
+  entradaBranchCode      Int       @map("entrada_branch_code")
+  entradaTransactionCode Int       @map("entrada_transaction_code")
+  entradaTransactionDate DateTime? @map("entrada_transaction_date") @db.Date
+  /// 'entrada' (lido do `origin`) ou 'saida' (lido do `destination`)
+  fonte                  String    @db.VarChar(10)
+  consultadoEm           DateTime  @default(now()) @map("consultado_em") @db.Timestamp(6)
+
+  @@id([saidaBranchCode, saidaTransactionCode, entradaBranchCode, entradaTransactionCode])
+  @@index([saidaBranchCode, saidaTransactionCode], map: "idx_pcp_transf_vinculo_saida")
+  @@index([entradaBranchCode, entradaTransactionCode], map: "idx_pcp_transf_vinculo_entrada")
+  @@map("pcp_transferencia_vinculo")
+}
+
+// Rastro de quais entradas (lado da loja) abateram qual item de saida, e por qual
+// metodo (`metodo`: 'vinculo' ou 'fifo'). E a prova do casamento escolhido - essencial
+// no FIFO, onde a amarracao e aproximada por loja destino + product_code; no vinculo,
+// serve pra mostrar quanto de cada documento de entrada entrou em cada item.
 model PcpEstoqueTransitoMovimento {
   id                     BigInt   @id @default(autoincrement())
   snapshotAt             DateTime @default(now()) @map("snapshot_at") @db.Timestamp(6)
@@ -834,6 +889,7 @@ model PcpEstoqueTransitoMovimento {
   entradaTransactionDate DateTime @map("entrada_transaction_date") @db.Date
   entradaOperationCode   Int      @map("entrada_operation_code")
   quantidadeBaixada      Decimal  @map("quantidade_baixada") @db.Decimal(15, 4)
+  metodo                 String?  @db.VarChar(10)
 
   @@index([saidaBranchCode, saidaTransactionCode, saidaItemIndex], map: "idx_pcp_estoque_transito_mov_saida")
   @@map("pcp_estoque_transito_movimentos")

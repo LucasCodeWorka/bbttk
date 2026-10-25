@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import {
+  DATA_VENDA,
   OPERACAO_JOIN,
   SALE_OPERATION_FILTER,
   QUANTIDADE_COM_SINAL,
@@ -150,8 +151,8 @@ async function getVendasPorPeriodo(
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     JOIN produtos_filtrados pf ON pf.product_code = ti.product_code
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+    WHERE ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${branchesClause}
@@ -447,6 +448,11 @@ export interface AcompanhamentoDiarioLinha {
   coberturaMesesAtual: number | null;
   coberturaMesesAnoAnterior: number | null;
   estoqueFisico: number;
+  /** Sairam da Fabrica e ainda nao entraram na loja: nao estao no estoque de ninguem. */
+  pecasEmTransito: number;
+  estoqueMaisTransito: number;
+  /** Cobertura contando o que esta no caminho - sempre >= `coberturaMesesAtual`. */
+  coberturaMesesEstoqueTransito: number | null;
   pecasEmProducao: number;
 }
 
@@ -462,6 +468,8 @@ export interface AcompanhamentoDiarioResponse {
     vendaValorAnoAnteriorTotal: number;
     evolucaoValorPercent: number | null;
     estoqueFisicoTotal: number;
+    pecasEmTransitoTotal: number;
+    estoqueMaisTransitoTotal: number;
     pecasEmProducaoTotal: number;
     // Meta do periodo somada (mesma de `totais.metaPeriodo`) e o equivalente diario
     // dela, pro card de meta. Ambos null quando nenhuma classificacao tem meta.
@@ -552,8 +560,8 @@ async function getVendaPorClassificacaoDiario(
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
     ${joinProdutoAnaliticoUnico('ti.product_code')}
     ${OPERACAO_JOIN}
-    WHERE t.transaction_date >= ${dataInicio}::date
-      AND t.transaction_date <= ${dataFim}::date
+    WHERE ${DATA_VENDA} >= ${dataInicio}::date
+      AND ${DATA_VENDA} <= ${dataFim}::date
       AND t.status = 4
       AND ${SALE_OPERATION_FILTER}
       ${filtroLocal}
@@ -609,6 +617,40 @@ async function getEmProducaoPorClassificacaoDiario(tipo: TipoClassificacaoDiario
     FROM ops_em_producao o
     ${joinProdutoAnaliticoUnico('o.product_code', 'INNER')}
     WHERE TRUE ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+      AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
+    GROUP BY TRIM(${Prisma.raw(campo)})
+  `;
+}
+
+// Pecas que sairam da Fabrica por transferencia e ainda nao tiveram entrada registrada
+// na loja de destino. Nao constam no estoque de filial nenhuma - estao no caminho - entao
+// precisam ser contadas a parte pra cobertura nao ficar subestimada.
+//
+// Le a foto materializada por `rebuild-estoque-transito` (apps/api), onde a baixa e feita
+// pelo vinculo documento-a-documento do TOTVS. A classificacao vem de um JOIN FRESCO em
+// `produto_analitico`, e nao das colunas copiadas na foto: se a categoria de um produto
+// mudar depois da materializacao, estoque e transito precisam cair no mesmo balde, senao
+// a soma das duas colunas descreveria linhas diferentes.
+//
+// Destino e sempre loja fisica (o rebuild descarta destino = Fabrica), entao DPA e ATACADO
+// nunca tem transito - no canal "atacado" a coluna fica zerada por construcao.
+async function getTransitoPorClassificacaoDiario(
+  tipo: TipoClassificacaoDiario,
+  branches: number[]
+): Promise<EstoqueClassificacaoRow[]> {
+  const campo = CAMPO_CLASSIFICACAO_DIARIO[tipo];
+  const lojas = branches.filter((code) => code > 0);
+  if (lojas.length === 0) return [];
+
+  return prisma.$queryRaw<EstoqueClassificacaoRow[]>`
+    SELECT TRIM(${Prisma.raw(campo)}) AS classificacao, SUM(t.quantidade_em_transito) AS quantidade
+    FROM pcp_estoque_transito t
+    ${joinProdutoAnaliticoUnico('t.product_code', 'INNER')}
+    LEFT JOIN produtos p ON p.product_code = t.product_code
+    WHERE t.quantidade_em_transito > 0
+      AND t.destino_branch_code IN (${Prisma.join(lojas)})
+      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+      ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       AND ${Prisma.raw(campo)} IS NOT NULL AND TRIM(${Prisma.raw(campo)}) NOT IN ('', '.')
     GROUP BY TRIM(${Prisma.raw(campo)})
   `;
@@ -749,11 +791,12 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   const periodosAtual = getPeriodosCalendario(dataInicio, dataFim);
   const periodosAnoAnterior = getPeriodosCalendario(dataInicioAA, dataFimAA);
 
-  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, emProducaoRows, metas] = await Promise.all([
+  const [vendaAtualRows, vendaAARows, estoqueRows, estoqueAARows, transitoRows, emProducaoRows, metas] = await Promise.all([
     getVendaPorClassificacaoDiario(dataInicio, dataFim, filtro.tipoClassificacao, branches),
     getVendaPorClassificacaoDiario(dataInicioAA, dataFimAA, filtro.tipoClassificacao, branchesAnoAnterior),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branches, null),
     getEstoqueFisicoPorClassificacaoDiario(filtro.tipoClassificacao, branchesAnoAnterior, dataFimAA),
+    getTransitoPorClassificacaoDiario(filtro.tipoClassificacao, branches),
     getEmProducaoPorClassificacaoDiario(filtro.tipoClassificacao),
     getMetasPeriodo(filtro.tipoClassificacao, periodosAtual),
   ]);
@@ -762,6 +805,7 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   const vendaAAMap = new Map(vendaAARows.map((r) => [r.classificacao, { valor: decimalToNumber(r.valor), pecas: decimalToNumber(r.pecas) }]));
   const estoqueMap = new Map(estoqueRows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
   const estoqueAAMap = new Map(estoqueAARows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
+  const transitoMap = new Map(transitoRows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
   const emProducaoMap = new Map(emProducaoRows.map((r) => [r.classificacao, decimalToNumber(r.quantidade)]));
 
   const todasClassificacoes = new Set<string>([
@@ -769,6 +813,7 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     ...vendaAAMap.keys(),
     ...estoqueMap.keys(),
     ...estoqueAAMap.keys(),
+    ...transitoMap.keys(),
     ...emProducaoMap.keys(),
   ]);
 
@@ -780,9 +825,14 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
     const vAA = vendaAAMap.get(classificacao) || { valor: 0, pecas: 0 };
     const estoqueFisico = round(estoqueMap.get(classificacao) || 0, 0);
     const estoqueFisicoAA = round(estoqueAAMap.get(classificacao) || 0, 0);
+    const pecasEmTransito = round(transitoMap.get(classificacao) || 0, 0);
     const pecasEmProducao = round(emProducaoMap.get(classificacao) || 0, 0);
+    // Soma dos dois valores JA arredondados, pelo mesmo motivo dos totais abaixo: a
+    // coluna somada na mao tem que fechar com a que a tela mostra.
+    const estoqueMaisTransito = estoqueFisico + pecasEmTransito;
 
     const coberturaAtual = coberturaMeses(estoqueFisico, vAtual.pecas, periodosAtual);
+    const coberturaEstoqueTransito = coberturaMeses(estoqueMaisTransito, vAtual.pecas, periodosAtual);
     const coberturaAA = coberturaMeses(estoqueFisicoAA, vAA.pecas, periodosAnoAnterior);
     const metaPeriodo = calcularMetaPeriodo(classificacao, periodosAtual, metas);
 
@@ -800,6 +850,9 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       coberturaMesesAtual: coberturaAtual,
       coberturaMesesAnoAnterior: coberturaAA,
       estoqueFisico,
+      pecasEmTransito,
+      estoqueMaisTransito,
+      coberturaMesesEstoqueTransito: coberturaEstoqueTransito,
       pecasEmProducao,
     });
   }
@@ -819,6 +872,8 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
   const vendaPecasTotalAtual = somarLinhas('vendaPecasAtual');
   const vendaPecasTotalAnoAnterior = somarLinhas('vendaPecasAnoAnterior');
   const estoqueFisicoTotal = somarLinhas('estoqueFisico');
+  const pecasEmTransitoTotal = somarLinhas('pecasEmTransito');
+  const estoqueMaisTransitoTotal = somarLinhas('estoqueMaisTransito');
   const pecasEmProducaoTotal = somarLinhas('pecasEmProducao');
   // Cobertura A.A. continua precisando do estoque historico agregado, que nao vai pra
   // nenhuma coluna da tela (so a cobertura derivada dele aparece).
@@ -859,6 +914,8 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       vendaValorAnoAnteriorTotal: round(vendaValorAnoAnteriorTotal, 2),
       evolucaoValorPercent: vendaValorAnoAnteriorTotal > 0 ? round(((vendaValorTotal - vendaValorAnoAnteriorTotal) / vendaValorAnoAnteriorTotal) * 100, 1) : null,
       estoqueFisicoTotal: estoqueFisicoTotal,
+      pecasEmTransitoTotal: pecasEmTransitoTotal,
+      estoqueMaisTransitoTotal: estoqueMaisTransitoTotal,
       pecasEmProducaoTotal: pecasEmProducaoTotal,
       metaPeriodoTotal,
       metaDiaria,
@@ -879,8 +936,11 @@ export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro
       // (estoque total / venda media mensal total). Media simples das linhas daria
       // outro numero, bem maior - foi o que o cliente fez no Excel (7,68 vs 5,6).
       coberturaMesesAtual: coberturaMeses(estoqueFisicoTotal, vendaPecasTotalAtual, periodosAtual),
+      coberturaMesesEstoqueTransito: coberturaMeses(estoqueMaisTransitoTotal, vendaPecasTotalAtual, periodosAtual),
       coberturaMesesAnoAnterior: coberturaMeses(estoqueFisicoAnoAnteriorTotal, vendaPecasTotalAnoAnterior, periodosAnoAnterior),
       estoqueFisico: estoqueFisicoTotal,
+      pecasEmTransito: pecasEmTransitoTotal,
+      estoqueMaisTransito: estoqueMaisTransitoTotal,
       pecasEmProducao: pecasEmProducaoTotal,
     },
   };
