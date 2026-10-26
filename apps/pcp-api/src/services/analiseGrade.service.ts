@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, FILIAIS } from '../config/constants.js';
+import { filtroLocalEstoqueSql, localEstoqueSql } from './estoqueLocal.service.js';
+import { ATACADO_BRANCH_CODE, DPA_BRANCH_CODE, FILIAIS } from '../config/constants.js';
 import { DATA_VENDA, FABRICA_BRANCH_CODE, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN, COR_AGRUPADA_SELECT } from './relatorioBase.service.js';
 
 const CURVA_ABC_CONFIG_KEY = 'curva_abc';
@@ -100,13 +101,7 @@ function filtroProductSkuAG(skus: string[] | null): Prisma.Sql {
 }
 
 function buildEstoqueLocalFilter(branches?: number[]): Prisma.Sql {
-  if (!branches?.length) return Prisma.empty;
-  const normais = branches.filter((code) => code > 0);
-  const condicoes: Prisma.Sql[] = [];
-  if (normais.length) condicoes.push(Prisma.sql`branch_code IN (${Prisma.join(normais)})`);
-  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
-  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE})`);
-  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+  return filtroLocalEstoqueSql(branches);
 }
 
 function buildVendaLocalFilter(branches?: number[]): Prisma.Sql {
@@ -129,7 +124,6 @@ async function getGradeRawRows(filtro: AnaliseGradeFiltro, productSkus: string[]
         product_sku, branch_code, stock
       FROM prd_saldo
       WHERE 1=1
-        AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
         ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
@@ -180,17 +174,12 @@ async function getSaldoPorFilial(filtro: AnaliseGradeFiltro, productSkus: string
         product_sku, branch_code, stock_code, stock
       FROM prd_saldo
       WHERE 1=1
-        AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
         ${filtroBranch} ${filtroProductSkuAG(productSkus)}
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     ),
     saldo_sku_filial AS (
       SELECT product_sku,
-        CASE
-          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-          WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-          ELSE branch_code
-        END::int AS branch_code,
+        ${localEstoqueSql()} AS branch_code,
         SUM(COALESCE(stock, 0)) AS estoque
       FROM ultimo_saldo
       -- Agrupa por POSICAO: repetir o CASE cria parametros posicionais novos e o

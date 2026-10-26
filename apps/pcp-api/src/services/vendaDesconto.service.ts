@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES } from '../config/constants.js';
+import { condicaoLocalEstoqueSql } from './estoqueLocal.service.js';
+import { ATACADO_BRANCH_CODE, DPA_BRANCH_CODE } from '../config/constants.js';
 import { DATA_VENDA, FABRICA_BRANCH_CODE, OPERACAO_JOIN, IS_VENDA, IS_DEVOLUCAO, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, CUSTO_PRODUCAO_BRANCH_CODE, CUSTO_PRODUCAO_CODE } from './relatorioBase.service.js';
 
 // Relatório 5: Venda e Desconto por Classificação
@@ -104,22 +105,14 @@ export interface ResumoPromocaoResponse {
 // ========== Funções Auxiliares ==========
 
 function buildBranchFilter(branches?: number[], alias = 't'): Prisma.Sql {
+  if (alias === 'ps') return condicaoLocalEstoqueSql(branches, 'ps');
   if (!branches || branches.length === 0) {
-    return alias === 'ps'
-      ? Prisma.sql`((ps.branch_code != ${FABRICA_BRANCH_CODE} AND ps.stock_code = 1) OR (ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})))`
-      : Prisma.sql`TRUE`;
+    return Prisma.sql`TRUE`;
   }
-  const coluna = alias === 'ps' ? Prisma.sql`ps.branch_code` : Prisma.sql`t.branch_code`;
-  const stockCode = alias === 'ps' ? Prisma.sql`ps.stock_code` : null;
+  const coluna = Prisma.sql`t.branch_code`;
   const normais = branches.filter((code) => code > 0);
   const condicoes: Prisma.Sql[] = [];
-  if (normais.length) condicoes.push(
-    alias === 'ps'
-      ? Prisma.sql`(${coluna} IN (${Prisma.join(normais)}) AND ${stockCode!} = 1)`
-      : Prisma.sql`${coluna} IN (${Prisma.join(normais)})`
-  );
-  if (alias === 'ps' && branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND ${stockCode!} IN (${Prisma.join(DPA_STOCK_CODES)}))`);
-  if (alias === 'ps' && branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND ${stockCode!} = ${ATACADO_STOCK_CODE})`);
+  if (normais.length) condicoes.push(Prisma.sql`${coluna} IN (${Prisma.join(normais)})`);
   if (alias !== 'ps' && branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%')`);
   if (alias !== 'ps' && branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(${coluna} = ${FABRICA_BRANCH_CODE} AND co.description ILIKE '%ATACADO%')`);
   return condicoes.length ? Prisma.sql`(${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`FALSE`;
@@ -450,14 +443,8 @@ export async function getResumoPromocao(filtro: {
     ? Prisma.sql`TRIM(a.class_status) IN (${Prisma.join(statusPromo)})`
     : Prisma.sql`FALSE`;
 
-  // No resumo padrão, a comparação é das lojas físicas. DPA e Atacado só
-  // entram quando forem escolhidos explicitamente no filtro de filiais.
-  const branchFilter = branches?.length
-    ? buildBranchFilter(branches, 't')
-    : Prisma.sql`t.branch_code != ${FABRICA_BRANCH_CODE}`;
-  const branchFilterPs = branches?.length
-    ? buildBranchFilter(branches, 'ps')
-    : Prisma.sql`ps.branch_code != ${FABRICA_BRANCH_CODE} AND ps.stock_code = 1`;
+  const branchFilter = buildBranchFilter(branches, 't');
+  const branchFilterPs = buildBranchFilter(branches, 'ps');
 
   // Query para resumo por loja
   const rows = await prisma.$queryRaw<Array<{
@@ -660,7 +647,7 @@ export async function getFiltrosVendaDesconto(): Promise<VendaDescontoFiltrosDis
           'i'
         )) AS branch_name
       FROM branches
-      WHERE branch_code != 2
+      WHERE branch_code > 0
       ORDER BY branch_code
     `,
   ]);

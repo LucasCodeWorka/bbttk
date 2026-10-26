@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
+import { filtroLocalEstoqueSql, getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
 import {
   DATA_VENDA,
   OPERACAO_JOIN,
@@ -11,7 +12,7 @@ import {
   FABRICA_BRANCH_CODE,
   joinProdutoAnaliticoUnico,
 } from './relatorioBase.service.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, LOJAS_VAREJO_FECHADAS } from '../config/constants.js';
+import { ATACADO_BRANCH_CODE, DPA_BRANCH_CODE, LOJAS_VAREJO_FECHADAS } from '../config/constants.js';
 
 // Lojas de varejo (excluindo Fábrica que é produção)
 const LOJAS_VAREJO = [1, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 17];
@@ -99,7 +100,7 @@ interface BranchRow {
 }
 
 function buildVendaBranchClause(branches?: number[] | null): Prisma.Sql {
-  if (!branches?.length) return Prisma.sql`AND (t.branch_code IN (${Prisma.join(LOJAS_VAREJO)}) OR t.branch_code = ${FABRICA_BRANCH_CODE})`;
+  if (!branches?.length) return Prisma.empty;
   const normais = branches.filter((code) => code > 0);
   const condicoes: Prisma.Sql[] = [];
   if (normais.length) condicoes.push(Prisma.sql`t.branch_code IN (${Prisma.join(normais)})`);
@@ -109,13 +110,7 @@ function buildVendaBranchClause(branches?: number[] | null): Prisma.Sql {
 }
 
 function buildEstoqueBranchClause(branches?: number[] | null): Prisma.Sql {
-  if (!branches?.length) return Prisma.sql`AND (us.branch_code IN (${Prisma.join(LOJAS_VAREJO)}) OR (us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})))`;
-  const normais = branches.filter((code) => code > 0);
-  const condicoes: Prisma.Sql[] = [];
-  if (normais.length) condicoes.push(Prisma.sql`us.branch_code IN (${Prisma.join(normais)})`);
-  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
-  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE})`);
-  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+  return filtroLocalEstoqueSql(branches, 'us');
 }
 
 // Vendas por filial em um período (apenas lojas de varejo)
@@ -181,11 +176,7 @@ async function getEstoquePorFilial(
       ORDER BY ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
     )
     SELECT
-      CASE
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-        WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-        ELSE us.branch_code
-      END::int AS branch_code,
+      ${localEstoqueSql('us')} AS branch_code,
       COALESCE(SUM(COALESCE(us.stock, 0)), 0) AS quantidade
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -208,7 +199,7 @@ async function getBranches(): Promise<BranchRow[]> {
   const lojas = await prisma.$queryRaw<BranchRow[]>`
     SELECT branch_code, description, abrev
     FROM branches
-    WHERE branch_code IN (${Prisma.join(LOJAS_VAREJO)})
+    WHERE branch_code > 0 AND branch_code <> ${FABRICA_BRANCH_CODE}
     ORDER BY branch_code
   `;
   return [
@@ -503,14 +494,15 @@ function expressaoClassificacaoDiario(tipo: TipoClassificacaoDiario): Prisma.Sql
   `;
 }
 
-// Canal define locais logicos: DPA representa os saldos fisico/segunda qualidade
-// da filial 02 e ATACADO representa somente o saldo atacadista dela.
-function getBranchesCanal(canal: Canal, branchesFiltro?: number[]): number[] {
+// Canal define locais logicos. Nas lojas todos os saldos pertencem a empresa;
+// na Fabrica, DPA recebe todos os saldos diferentes de 8 e ATACADO recebe o 8.
+async function getBranchesCanal(canal: Canal, branchesFiltro?: number[]): Promise<number[]> {
+  const todas = (await getColunasEstoque()).map((local) => local.branchCode);
   const universo = canal === 'atacado'
     ? [ATACADO_BRANCH_CODE]
     : canal === 'todos'
-      ? [...LOJAS_VAREJO, DPA_BRANCH_CODE, ATACADO_BRANCH_CODE]
-      : [...LOJAS_VAREJO, DPA_BRANCH_CODE];
+      ? todas
+      : todas.filter((codigo) => codigo !== ATACADO_BRANCH_CODE);
   if (!branchesFiltro || branchesFiltro.length === 0) return universo;
 
   // Uma selecao explicita de filial nunca pode ser trocada silenciosamente por
@@ -529,12 +521,7 @@ function buildAcompanhamentoVendaFilter(branches: number[]): Prisma.Sql {
 }
 
 function buildAcompanhamentoEstoqueFilter(branches: number[]): Prisma.Sql {
-  const normais = branches.filter((code) => code > 0);
-  const condicoes: Prisma.Sql[] = [];
-  if (normais.length) condicoes.push(Prisma.sql`ps.branch_code IN (${Prisma.join(normais)}) AND ps.stock_code = 1`);
-  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
-  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(ps.branch_code = ${FABRICA_BRANCH_CODE} AND ps.stock_code = ${ATACADO_STOCK_CODE})`);
-  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+  return branches.length ? filtroLocalEstoqueSql(branches, 'ps') : Prisma.sql`AND FALSE`;
 }
 
 interface ClassificacaoAggRow {
@@ -574,9 +561,8 @@ interface EstoqueClassificacaoRow {
   quantidade: Decimal;
 }
 
-// Estoque por categoria/linha/genero, no snapshot mais recente ate uma data de corte
-// (null = agora). Para a filial 02, DPA usa os saldos fisico + segunda qualidade e
-// ATACADO usa somente o saldo atacadista.
+// Estoque liquido de todos os saldos por categoria/linha/genero, ate a data de
+// corte (null = agora), respeitando somente o recorte explicito de empresas/canal.
 async function getEstoqueFisicoPorClassificacaoDiario(
   tipo: TipoClassificacaoDiario,
   branches: number[],
@@ -800,7 +786,7 @@ async function getMetaLojaPeriodo(lojas: number[], periodos: PeriodoCalendario[]
 // seguem inteiros, que e a unidade real deles.
 export async function getAcompanhamentoDiario(filtro: AcompanhamentoDiarioFiltro): Promise<AcompanhamentoDiarioResponse> {
   const canal = filtro.canal || 'varejo';
-  const branches = getBranchesCanal(canal, filtro.branches);
+  const branches = await getBranchesCanal(canal, filtro.branches);
 
   // Ano anterior tambem inclui lojas de varejo ja fechadas (ex: Terrazo Shopping) -
   // mas SO quando a rede toda esta sendo comparada, sem filtro de loja especifica

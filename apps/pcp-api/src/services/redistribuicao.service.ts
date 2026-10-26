@@ -1,6 +1,7 @@
 import { Prisma, PcpRedistribuicaoJob } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
+import { saldosAtuaisSql } from './estoqueLocal.service.js';
 import { FILIAIS } from '../config/constants.js';
 import {
   DATA_VENDA,
@@ -119,6 +120,7 @@ function decimalToNumber(value: Decimal | number | null | undefined): number {
 }
 
 function getBranchName(branchCode: number): string {
+  if (branchCode === 2) return 'FABRICA';
   return FILIAIS[branchCode] || `Loja ${branchCode}`;
 }
 
@@ -179,14 +181,12 @@ export async function getDadosBase(): Promise<DadosBaseResponse> {
         ps.product_sku,
         COALESCE(SUM(ps.stock), 0) as estoque,
         COALESCE(e.cobertura_meses, 0) as cobertura_meses
-      FROM prd_saldo ps
+      FROM (${saldosAtuaisSql()}) ps
       LEFT JOIN pcp_estoque_sem_giro_analitico e
         ON e.product_sku = ps.product_sku AND e.branch_code = ps.branch_code
-      WHERE ps.is_full_snapshot = true
-        AND ps.stock_code = 1
-        AND ps.branch_code != 2
+      WHERE 1=1
       GROUP BY ps.branch_code, ps.product_sku, e.cobertura_meses
-      HAVING COALESCE(SUM(ps.stock), 0) > 0
+      HAVING COALESCE(SUM(ps.stock), 0) <> 0
     )
     SELECT
       branch_code,
@@ -200,12 +200,10 @@ export async function getDadosBase(): Promise<DadosBaseResponse> {
 
   // Total de SKUs com estoque
   const totalSkus = await prisma.$queryRaw<[{ count: bigint }]>`
-    SELECT COUNT(DISTINCT product_sku) as count
-    FROM prd_saldo
-    WHERE is_full_snapshot = true
-      AND stock_code = 1
-      AND branch_code != 2
-      AND stock > 0
+    SELECT COUNT(DISTINCT product_sku) as count FROM (
+      SELECT product_sku, branch_code FROM (${saldosAtuaisSql()}) ps
+      GROUP BY product_sku, branch_code HAVING SUM(COALESCE(stock, 0)) > 0
+    ) estoque
   `;
 
   return {
@@ -680,14 +678,11 @@ async function getSkusElegiveisEnvio(
       pe.data as primeira_entrada
     FROM produtos p
     JOIN produto_analitico a ON a.product_sku = p.product_sku
-    JOIN prd_saldo ps ON ps.product_sku = p.product_sku
-      AND ps.is_full_snapshot = true
-      AND ps.stock_code = 1
+    JOIN (${saldosAtuaisSql()}) ps ON ps.product_sku = p.product_sku
     LEFT JOIN vendas_3m v ON v.product_code = p.product_code AND v.branch_code = ps.branch_code
     LEFT JOIN curva_abc c ON c.product_code = p.product_code
     LEFT JOIN primeira_entrada pe ON pe.product_code = p.product_code AND pe.branch_code = ps.branch_code
-    WHERE ps.branch_code != 2
-      AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+    WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
       ${whereCategoria}
       ${whereLinha}
@@ -792,10 +787,7 @@ async function getDestinosElegiveis(
         ps.branch_code,
         COALESCE(SUM(ps.stock), 0) as estoque
       FROM produtos p
-      LEFT JOIN prd_saldo ps ON ps.product_sku = p.product_sku
-        AND ps.is_full_snapshot = true
-        AND ps.stock_code = 1
-      WHERE ps.branch_code != 2
+      LEFT JOIN (${saldosAtuaisSql()}) ps ON ps.product_sku = p.product_sku
       GROUP BY p.product_code, ps.branch_code
     )
     SELECT

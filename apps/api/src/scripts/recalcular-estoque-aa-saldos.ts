@@ -61,8 +61,8 @@ async function main() {
           d.data_posicao,
           s.product_code,
           CASE
-            WHEN s.branch_code = 2 AND s.stock_code IN (1, 5) THEN -1
             WHEN s.branch_code = 2 AND s.stock_code = 8 THEN -2
+            WHEN s.branch_code = 2 THEN -1
             ELSE s.branch_code
           END::int AS branch_code,
           s.stock
@@ -71,10 +71,6 @@ async function main() {
           ON s.saldo_date < (d.data_posicao - INTERVAL '1 year') + INTERVAL '1 day'
         JOIN produto_unico a ON a.product_code = s.product_code
         WHERE s.rejection_reason IS NULL
-          AND (
-            s.stock_code = 1
-            OR (s.branch_code = 2 AND s.stock_code IN (1, 5, 8))
-          )
           AND (a.is_finished_product = true OR a.is_finished_product IS NULL)
           AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
           AND (

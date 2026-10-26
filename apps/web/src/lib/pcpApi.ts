@@ -1498,8 +1498,11 @@ export interface SugestaoProducaoRow {
   sku: string;
   productCode: number | null;
   referenceCode: string;
+  referenceName?: string;
   descricao: string;
   cor: string;
+  corCodigo?: string | null;
+  corAgrupada?: string | null;
   tamanho: string;
   categoria: string | null;
   linha: string | null;
@@ -1550,6 +1553,12 @@ export interface SugestaoProducaoOpDetalhe {
 }
 
 export const sugestaoProducaoApi = {
+  getOpsDetalheGrupo: (token: string, productCodes: number[]) =>
+    fetchPcpApi<SugestaoProducaoOpDetalhe[]>('/api/pcp/sugestao-producao/ops', {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ productCodes }),
+    }),
   getSugestaoProducao: (token: string, filtro: SugestaoProducaoFiltro = {}) => {
     const params = new URLSearchParams();
     if (filtro.search) params.set('search', filtro.search);

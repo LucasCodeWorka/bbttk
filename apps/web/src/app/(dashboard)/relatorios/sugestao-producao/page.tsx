@@ -14,20 +14,21 @@ import {
   SugestaoProducaoFiltrosResponse,
   SugestaoProducaoOpDetalhe,
   SugestaoProducaoResponse,
-  SugestaoProducaoRow,
   sugestaoProducaoApi,
 } from '@/lib/pcpApi';
 import { cn, formatDate, formatNumber } from '@/lib/utils';
 import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
+import {
+  folhasSugestaoProducao, linhasVisiveisSugestaoProducao, montarMatrizSugestaoProducao,
+  somarMetricasSugestao, type ModoCorSugestao, type SugestaoMatrizNo, type SugestaoMatrizSortKey,
+} from '@/lib/sugestaoProducaoMatriz';
 
-type SortKey = keyof SugestaoProducaoRow;
+type SortKey = SugestaoMatrizSortKey;
+const REFERENCIAS_POR_PAGINA = 50;
 
 const COLUNAS: Array<{ key: SortKey; label: string; align?: 'left' | 'right' | 'center'; type?: 'text' | 'number'; width: number }> = [
-  { key: 'sku', label: 'SKU', width: 14, type: 'text' },
-  { key: 'referenceCode', label: 'REFERENCIA', width: 14, type: 'text' },
+  { key: 'referenceCode', label: 'REFERÊNCIA / COR / TAMANHO', width: 34, type: 'text' },
   { key: 'descricao', label: 'DESCRICAO', width: 28, type: 'text' },
-  { key: 'cor', label: 'COR', width: 14, type: 'text' },
-  { key: 'tamanho', label: 'TAM.', width: 10, type: 'text' },
   { key: 'categoria', label: 'CATEGORIA', width: 14, type: 'text' },
   { key: 'linha', label: 'LINHA', width: 14, type: 'text' },
   { key: 'estoqueAtual', label: 'EST. ATUAL', align: 'right', width: 13, type: 'number' },
@@ -64,7 +65,7 @@ function ThSort({
       isHeader
       align={coluna.align}
       onClick={() => onSort(coluna.key)}
-      className="cursor-pointer select-none whitespace-nowrap bg-gray-50 hover:bg-gray-100 !px-1.5 !py-1.5"
+      className={cn('cursor-pointer select-none whitespace-nowrap bg-gray-50 hover:bg-gray-100 !px-1.5 !py-1.5', coluna.key === 'referenceCode' && 'sticky left-0 z-30 min-w-[280px]')}
     >
       <span className={cn('flex items-center gap-1.5', coluna.align === 'right' && 'justify-end', coluna.align === 'center' && 'justify-center')}>
         <span>{coluna.label}</span>
@@ -74,10 +75,11 @@ function ThSort({
   );
 }
 
-function formatCell(row: SugestaoProducaoRow, key: SortKey): string {
+function formatCell(row: SugestaoMatrizNo, key: SortKey): string {
   const value = row[key];
+  if (key === 'corteMinimo' && value === null && row.cortesMinimos.length > 1) return 'Variável';
   if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'number') return formatNumber(value);
+  if (typeof value === 'number') return formatNumber(value, key === 'vendaMediaMensal' ? 2 : 0);
   return String(value);
 }
 
@@ -92,10 +94,15 @@ export default function SugestaoProducaoPage() {
   const [filtrosDisponiveis, setFiltrosDisponiveis] = useState<SugestaoProducaoFiltrosResponse | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('sugestaoProducao');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [modoCor, setModoCor] = useState<ModoCorSugestao>('padrao');
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const [pagina, setPagina] = useState(1);
+  const requisicaoAtual = useRef(0);
+  const requisicaoOpsAtual = useRef(0);
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
-  const [opsModalRow, setOpsModalRow] = useState<SugestaoProducaoRow | null>(null);
+  const [opsModalRow, setOpsModalRow] = useState<SugestaoMatrizNo | null>(null);
   const [opsModalData, setOpsModalData] = useState<SugestaoProducaoOpDetalhe[] | null>(null);
   const [opsModalLoading, setOpsModalLoading] = useState(false);
 
@@ -112,6 +119,7 @@ export default function SugestaoProducaoPage() {
 
   const carregarDados = useCallback(async () => {
     if (!token) return;
+    const requisicao = ++requisicaoAtual.current;
     setIsLoading(true);
     try {
       const response = await sugestaoProducaoApi.getSugestaoProducao(token, {
@@ -122,32 +130,39 @@ export default function SugestaoProducaoPage() {
         search: search.trim() || undefined,
         apenasComSugestao,
       });
+      if (requisicao !== requisicaoAtual.current) return;
       setData(response);
+      setPagina(1);
     } catch (error) {
+      if (requisicao !== requisicaoAtual.current) return;
+      setData(null);
       showToast(error instanceof Error ? error.message : 'Erro ao carregar Sugestao de Producao', 'error');
       console.error(error);
     } finally {
-      setIsLoading(false);
+      if (requisicao === requisicaoAtual.current) setIsLoading(false);
     }
   }, [token, produtoFiltro, search, apenasComSugestao, showToast]);
 
   useEffect(() => {
     carregarDados();
+    return () => { requisicaoAtual.current += 1; };
   }, [carregarDados]);
 
-  async function abrirOpsModal(row: SugestaoProducaoRow) {
-    if (!row.productCode || row.emProducao <= 0 || !token) return;
+  async function abrirOpsModal(row: SugestaoMatrizNo) {
+    if (!row.productCodes.length || row.emProducao <= 0 || !token) return;
+    const requisicao = ++requisicaoOpsAtual.current;
     setOpsModalRow(row);
     setOpsModalData(null);
     setOpsModalLoading(true);
     try {
-      const ops = await sugestaoProducaoApi.getOpsDetalhe(token, row.productCode);
-      setOpsModalData(ops);
+      const ops = await sugestaoProducaoApi.getOpsDetalheGrupo(token, row.productCodes);
+      if (requisicao === requisicaoOpsAtual.current) setOpsModalData(ops);
     } catch (error) {
+      if (requisicao !== requisicaoOpsAtual.current) return;
       showToast(error instanceof Error ? error.message : 'Erro ao carregar OPs', 'error');
       console.error(error);
     } finally {
-      setOpsModalLoading(false);
+      if (requisicao === requisicaoOpsAtual.current) setOpsModalLoading(false);
     }
   }
 
@@ -163,17 +178,33 @@ export default function SugestaoProducaoPage() {
     }
   }
 
-  const rowsOrdenadas = useMemo(() => {
-    const rows = data?.rows || [];
-    return [...rows].sort((a, b) => {
-      const va = a[sortKey];
-      const vb = b[sortKey];
-      if (va === null || va === undefined) return 1;
-      if (vb === null || vb === undefined) return -1;
-      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR', { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
+  const matriz = useMemo(() => montarMatrizSugestaoProducao(data?.rows || [], modoCor, sortKey, sortDir), [data, modoCor, sortKey, sortDir]);
+  const totalPaginas = Math.max(1, Math.ceil(matriz.length / REFERENCIAS_POR_PAGINA));
+  const paginaAtual = Math.min(pagina, totalPaginas);
+  const referenciasPagina = useMemo(() => matriz.slice((paginaAtual - 1) * REFERENCIAS_POR_PAGINA, paginaAtual * REFERENCIAS_POR_PAGINA), [matriz, paginaAtual]);
+  const linhasVisiveis = useMemo(() => linhasVisiveisSugestaoProducao(referenciasPagina, expandidos), [referenciasPagina, expandidos]);
+
+  function alternarNo(key: string) {
+    setExpandidos((atual) => {
+      const proximos = new Set(atual);
+      if (proximos.has(key)) proximos.delete(key);
+      else proximos.add(key);
+      return proximos;
     });
-  }, [data, sortKey, sortDir]);
+  }
+
+  function expandirPagina(expandir: boolean) {
+    setExpandidos((atual) => {
+      const proximos = new Set(atual);
+      for (const ref of referenciasPagina) {
+        for (const no of [ref, ...ref.children]) {
+          if (expandir) proximos.add(no.key);
+          else proximos.delete(no.key);
+        }
+      }
+      return proximos;
+    });
+  }
 
   useEffect(() => {
     const tabela = tabelaScrollRef.current;
@@ -205,7 +236,7 @@ export default function SugestaoProducaoPage() {
       resizeObserver?.disconnect();
       window.removeEventListener('resize', atualizarLargura);
     };
-  }, [rowsOrdenadas.length, isLoading]);
+  }, [linhasVisiveis.length, isLoading, modoCor]);
 
   function sincronizarScrollPeloTopo() {
     const topo = topScrollRef.current;
@@ -214,36 +245,31 @@ export default function SugestaoProducaoPage() {
     tabela.scrollLeft = topo.scrollLeft;
   }
 
-  const totais = useMemo(
-    () =>
-      rowsOrdenadas.reduce(
-        (acc, row) => {
-          acc.estoqueAtual += row.estoqueAtual;
-          acc.emProducao += row.emProducao;
-          acc.estoqueFuturo += row.estoqueFuturo;
-          acc.sugestaoProducao += row.sugestaoProducao;
-          return acc;
-        },
-        { estoqueAtual: 0, emProducao: 0, estoqueFuturo: 0, sugestaoProducao: 0 }
-      ),
-    [rowsOrdenadas]
-  );
+  const totais = useMemo(() => somarMetricasSugestao(data?.rows || []), [data]);
 
   function exportarExcel() {
-    if (!data || rowsOrdenadas.length === 0) return;
-    const columns: ExcelColumn[] = COLUNAS.map((coluna) => ({ key: coluna.key, header: coluna.label, width: coluna.width, type: coluna.type }));
+    if (!data || !matriz.length) return;
+    const descricoes = new Map(matriz.map((referencia) => [referencia.referenceCode, referencia.descricao]));
+    const columns: ExcelColumn[] = [
+      { key: 'referenceCode', header: 'REFERÊNCIA', width: 20, type: 'text' },
+      { key: 'cor', header: modoCor === 'agrupada' ? 'COR AGRUPADA' : 'COR PADRÃO', width: 22, type: 'text' },
+      { key: 'tamanho', header: 'TAMANHO', width: 10, type: 'text' },
+      { key: 'skusOriginais', header: 'SKUS ORIGINAIS', width: 36, type: 'text' },
+      { key: 'coresOriginais', header: 'CORES ORIGINAIS', width: 28, type: 'text' },
+      ...COLUNAS.filter((coluna) => coluna.key !== 'referenceCode').map((coluna) => ({ key: coluna.key, header: coluna.label, width: coluna.width, type: coluna.type })),
+      { key: 'cortesMinimos', header: 'CORTES MÍNIMOS POR SKU', width: 22, type: 'text' },
+    ];
     exportToExcel({
-      filename: `Sugestao_Producao_${new Date().toISOString().slice(0, 10)}`,
+      filename: `Sugestao_Producao_${modoCor}_${new Date().toISOString().slice(0, 10)}`,
       sheetName: 'Sugestao Producao',
       title: 'Relatorio Sugestao de Producao',
       columns,
-      data: rowsOrdenadas as unknown as Record<string, unknown>[],
+      data: folhasSugestaoProducao(matriz).map((no) => ({
+        ...no, descricao: descricoes.get(no.referenceCode), corteMinimo: no.corteMinimo ?? '', skusOriginais: no.skus.join(', '),
+        coresOriginais: no.coresOriginais.join(', '), cortesMinimos: no.cortesMinimos.join(' / '),
+      })),
       totals: {
-        sku: `TOTAL (${rowsOrdenadas.length} SKUs)`,
-        estoqueAtual: totais.estoqueAtual,
-        emProducao: totais.emProducao,
-        estoqueFuturo: totais.estoqueFuturo,
-        sugestaoProducao: totais.sugestaoProducao,
+        ...totais, corteMinimo: '', referenceCode: `TOTAL (${matriz.length} REFERÊNCIAS)`,
       },
     });
   }
@@ -258,7 +284,7 @@ export default function SugestaoProducaoPage() {
             Estoque + producao em aberto (rede toda) contra a venda media, com sugestao de corte arredondada pelo corte minimo de cada SKU
           </p>
         </div>
-        <Button onClick={exportarExcel} disabled={!data || rowsOrdenadas.length === 0 || isLoading} variant="secondary">
+        <Button onClick={exportarExcel} disabled={!data || !matriz.length || isLoading} variant="secondary">
           Exportar Excel
         </Button>
       </div>
@@ -288,6 +314,18 @@ export default function SugestaoProducaoPage() {
               />
             ))}
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
+          <span className="text-xs font-semibold uppercase text-gray-500">Exibir cores</span>
+          <div className="inline-flex overflow-hidden rounded-md border border-gray-300">
+            {(['padrao', 'agrupada'] as const).map((modo) => (
+              <button key={modo} type="button" aria-pressed={modoCor === modo} onClick={() => setModoCor(modo)}
+                className={cn('px-4 py-2 text-xs font-semibold transition-colors', modoCor === modo ? 'bg-[var(--bbtk-red)] text-white' : 'bg-white text-gray-600 hover:bg-gray-50')}>
+                {modo === 'padrao' ? 'COR PADRÃO' : 'COR AGRUPADA'}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-gray-500">Cores sem agrupamento cadastrado mantêm a cor padrão.</span>
+        </div>
       </Card>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -307,16 +345,32 @@ export default function SugestaoProducaoPage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Detalhamento por SKU</CardTitle>
+        <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle>Matriz de Sugestão de Produção</CardTitle>
+            <p className="mt-1 text-xs text-gray-500">Referência → Cor → Tamanho · Clique em + para detalhar</p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => expandirPagina(true)} disabled={isLoading || !matriz.length}>Expandir página</Button>
+            <Button size="sm" variant="secondary" onClick={() => expandirPagina(false)} disabled={isLoading || !matriz.length}>Recolher página</Button>
+          </div>
         </CardHeader>
+
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+          <span>{matriz.length ? (paginaAtual - 1) * REFERENCIAS_POR_PAGINA + 1 : 0}–{Math.min(paginaAtual * REFERENCIAS_POR_PAGINA, matriz.length)} de {formatNumber(matriz.length)} referências · {formatNumber(data?.rows.length || 0)} SKUs no resultado</span>
+          {totalPaginas > 1 && <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setPagina(paginaAtual - 1)} disabled={isLoading || paginaAtual === 1}>Anterior</Button>
+            <span>Página {paginaAtual} de {totalPaginas}</span>
+            <Button size="sm" variant="secondary" onClick={() => setPagina(paginaAtual + 1)} disabled={isLoading || paginaAtual === totalPaginas}>Próxima</Button>
+          </div>}
+        </div>
 
         <div ref={topScrollRef} onScroll={sincronizarScrollPeloTopo} className="mb-2 overflow-x-auto overflow-y-hidden">
           <div style={{ width: scrollWidth || '100%', height: 1 }} />
         </div>
 
         <Table ref={tabelaScrollRef} className="scrollbar-x-hidden max-h-[760px] overflow-auto" tableClassName="text-[10px] lg:text-xs min-w-[1500px]">
-          <TableHead className="sticky top-0 z-10">
+          <TableHead className="sticky top-0 z-30">
             <TableRow>
               {COLUNAS.map((coluna) => (
                 <ThSort key={coluna.key} coluna={coluna} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -328,64 +382,78 @@ export default function SugestaoProducaoPage() {
               <TableRow>
                 <TableCell colSpan={COLUNAS.length} align="center" className="py-10 text-gray-500">Carregando...</TableCell>
               </TableRow>
-            ) : rowsOrdenadas.length === 0 ? (
+            ) : matriz.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={COLUNAS.length} align="center" className="py-10 text-gray-500">Nenhum SKU encontrado</TableCell>
               </TableRow>
             ) : (
               <>
-                {rowsOrdenadas.map((row) => (
-                  <TableRow key={row.sku} className={row.sugestaoProducao > 0 ? 'bg-red-50/40' : ''}>
+                {linhasVisiveis.map((row) => (
+                  <TableRow key={row.key} className={cn(row.nivel === 'referencia' ? 'bg-slate-100 font-semibold' : row.nivel === 'cor' ? 'bg-slate-50 font-medium' : 'bg-white')}>
                     {COLUNAS.map((coluna) => (
-                      <TableCell key={coluna.key} align={coluna.align} className="whitespace-nowrap !px-1.5 !py-1.5">
-                        {coluna.key === 'descricao' ? (
+                      <TableCell key={coluna.key} align={coluna.align}
+                        className={cn('whitespace-nowrap !px-1.5 !py-1.5', coluna.key === 'referenceCode' && 'sticky left-0 z-10 min-w-[280px] max-w-[320px] bg-inherit !px-3')}>
+                        {coluna.key === 'referenceCode' ? (
+                          <div className={cn(row.nivel === 'cor' && 'pl-5', row.nivel === 'tamanho' && 'pl-10')}>
+                            {row.children.length > 0 ? <button type="button" onClick={() => alternarNo(row.key)} aria-expanded={expandidos.has(row.key)}
+                              aria-label={`${expandidos.has(row.key) ? 'Recolher' : 'Expandir'} ${row.nivel === 'referencia' ? 'referência' : 'cor'} ${row.label}`}
+                              className="flex w-full items-center gap-2 text-left" title={row.coresOriginais.join(', ')}>
+                              <span aria-hidden="true" className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-400 bg-white text-xs font-normal text-gray-600">{expandidos.has(row.key) ? '−' : '+'}</span>
+                              <span className="max-w-[240px] truncate">{row.label}</span>
+                            </button> : <div className="flex items-center gap-2">
+                              <span aria-hidden="true" className="w-4 text-center text-gray-400">·</span>
+                              <span>Tamanho {row.label}</span>
+                            </div>}
+                            <div className="ml-6 mt-0.5 max-w-[230px] truncate text-[10px] font-normal text-gray-500" title={row.skus.join(', ')}>
+                              {row.nivel === 'tamanho' && row.skus.length === 1 ? `SKU ${row.skus[0]}` : `${row.skus.length} SKUs${row.nivel === 'cor' && row.coresOriginais.length > 1 ? ` · ${row.coresOriginais.length} cores` : ''}`}
+                            </div>
+                          </div>
+                        ) : coluna.key === 'descricao' ? (
                           <span className="block max-w-[200px] truncate" title={row.descricao}>{row.descricao}</span>
                         ) : coluna.key === 'sugestaoProducao' && row.sugestaoProducao > 0 ? (
                           <span className="font-semibold text-[var(--bbtk-red)]">{formatNumber(row.sugestaoProducao)}</span>
-                        ) : coluna.key === 'emProducao' && row.emProducao > 0 ? (
+                        ) : coluna.key === 'emProducao' && row.emProducao > 0 && row.productCodes.length > 0 ? (
                           <button
                             type="button"
                             onClick={() => abrirOpsModal(row)}
                             className="font-medium text-[var(--bbtk-purple)] underline decoration-dotted underline-offset-2 hover:text-[var(--bbtk-red)]"
-                            title="Ver OPs em producao"
+                            title="Ver OPs em produção desta seleção"
                           >
                             {formatNumber(row.emProducao)}
                           </button>
                         ) : (
-                          formatCell(row, coluna.key)
+                          <span title={coluna.key === 'corteMinimo' ? `Corte mínimo por SKU: ${row.cortesMinimos.join(' / ')}` : undefined}
+                            className={typeof row[coluna.key] === 'number' && Number(row[coluna.key]) < 0 ? 'text-red-700' : undefined}>{formatCell(row, coluna.key)}</span>
                         )}
                       </TableCell>
                     ))}
                   </TableRow>
                 ))}
                 <TableRow isHighlighted className="sticky bottom-0 z-20 bg-yellow-50 shadow-[0_-1px_0_rgba(148,163,184,0.35)]">
-                  <TableCell colSpan={7} className="font-bold">TOTAL ({rowsOrdenadas.length} SKUs)</TableCell>
-                  <TableCell align="right" className="font-bold">{formatNumber(totais.estoqueAtual)}</TableCell>
-                  <TableCell align="right" className="font-bold">{formatNumber(totais.emProducao)}</TableCell>
-                  <TableCell align="right" className="font-bold">{formatNumber(totais.estoqueFuturo)}</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">-</TableCell>
-                  <TableCell align="right" className="font-bold">{formatNumber(totais.sugestaoProducao)}</TableCell>
+                  {COLUNAS.map((coluna) => {
+                    const value = coluna.key in totais ? totais[coluna.key as keyof typeof totais] : null;
+                    return <TableCell key={coluna.key} align={coluna.align} className={cn('whitespace-nowrap !px-1.5 font-bold', coluna.key === 'referenceCode' && 'sticky left-0 z-30 bg-yellow-50 !px-3')}>
+                      {coluna.key === 'referenceCode' ? 'TOTAL DO RESULTADO' : coluna.key === 'descricao' ? `${formatNumber(matriz.length)} referências · todas as páginas` : coluna.key !== 'corteMinimo' && typeof value === 'number' ? formatNumber(value, coluna.key === 'vendaMediaMensal' ? 2 : 0) : '—'}
+                    </TableCell>;
+                  })}
                 </TableRow>
               </>
             )}
           </TableBody>
         </Table>
+        <p className="mt-3 text-xs text-gray-500">Os subtotais somam as sugestões calculadas por SKU. O corte mínimo continua sendo aplicado por SKU; “Variável” indica cortes diferentes no grupo.</p>
       </Card>
 
       <Modal
         isOpen={!!opsModalRow}
-        onClose={() => setOpsModalRow(null)}
-        title={opsModalRow ? `OPs em producao - ${opsModalRow.sku}` : 'OPs em producao'}
+        onClose={() => { requisicaoOpsAtual.current += 1; setOpsModalRow(null); setOpsModalLoading(false); }}
+        title={opsModalRow ? `OPs em produção — ${[opsModalRow.referenceCode, opsModalRow.cor, opsModalRow.tamanho].filter(Boolean).join(' · ')}` : 'OPs em produção'}
         size="lg"
       >
         {opsModalLoading ? (
           <p className="py-8 text-center text-gray-500 text-sm">Carregando...</p>
         ) : !opsModalData || opsModalData.length === 0 ? (
-          <p className="py-8 text-center text-gray-500 text-sm">Nenhuma OP em aberto encontrada para este SKU</p>
+          <p className="py-8 text-center text-gray-500 text-sm">Nenhuma OP em aberto encontrada para esta seleção</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -403,7 +471,7 @@ export default function SugestaoProducaoPage() {
               </thead>
               <tbody>
                 {opsModalData.map((op) => (
-                  <tr key={`${op.orderCode}-${op.branchCode}`} className="border-t border-gray-100">
+                  <tr key={`${op.orderCode}-${op.branchCode}-${op.status}-${op.dtInicio}-${op.dtPrevisao}`} className="border-t border-gray-100">
                     <td className="px-2 py-1.5 font-medium">{op.orderCode}</td>
                     <td className="px-2 py-1.5">{op.branchName}</td>
                     <td className="px-2 py-1.5">

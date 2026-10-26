@@ -1,12 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
+import { getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
 import {
   ATACADO_BRANCH_CODE,
-  ATACADO_STOCK_CODE,
   DPA_BRANCH_CODE,
-  DPA_STOCK_CODES,
-  RELATORIO_BASE_BRANCH_ORDER,
 } from '../config/constants.js';
 
 // Fragmentos de classificacao de venda duplicados de
@@ -423,8 +421,8 @@ interface SaldoDiagnosticoSkuRow {
   captured_at: Date | null;
 }
 
-// Estoque atual por SKU x local. A filial 02 e desmembrada em DPA (fisico + segunda
-// qualidade) e ATACADO antes da agregacao, para nunca misturar os dois locais.
+// Estoque atual por SKU x local, somando todos os saldos de todas as empresas.
+// Somente a Fabrica e desmembrada em DPA (demais saldos) e ATACADO (saldo 8).
 function dataBaseSql(dataPosicao?: string): Prisma.Sql {
   return dataPosicao ? Prisma.sql`${dataPosicao}::date` : Prisma.sql`CURRENT_DATE`;
 }
@@ -462,19 +460,11 @@ async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string
         FROM stg_saldo_virtual_csv s
         JOIN produto_unico pu ON pu.product_code = s.product_code
         WHERE s.rejection_reason IS NULL
-          AND (
-            s.stock_code = 1
-            OR (s.branch_code = ${FABRICA_BRANCH_CODE} AND s.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
-          )
           AND s.saldo_date < ${dataCorte} + INTERVAL '1 day'
         ORDER BY s.product_code, s.branch_code, s.stock_code, s.saldo_date DESC
       )
       SELECT us.product_sku, us.product_code,
-             CASE
-               WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-               WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-               ELSE us.branch_code
-             END::int AS branch_code,
+             ${localEstoqueSql('us')} AS branch_code,
              COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
       FROM ultimo_saldo us
       JOIN produto_unico a ON a.product_code = us.product_code
@@ -490,20 +480,13 @@ async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
-      WHERE (
-          stock_code = 1
-          OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
-        )
+      WHERE 1=1
         ${filtroProductSku(productSkus)}
         AND captured_at < ${dataCorte} + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT us.product_sku, us.product_code,
-           CASE
-             WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-             WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-             ELSE us.branch_code
-           END::int AS branch_code,
+           ${localEstoqueSql('us')} AS branch_code,
            COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
     FROM ultimo_saldo us
     JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -554,10 +537,7 @@ export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFilt
       SELECT DISTINCT ON (product_sku, branch_code, stock_code)
         product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
-      WHERE (
-          stock_code = 1
-          OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
-        )
+      WHERE 1=1
         ${filtroProductSku(productSkusFiltro)}
         AND captured_at < ${dataCorte} + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
@@ -565,11 +545,7 @@ export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFilt
     base AS (
       SELECT
         us.product_sku,
-        CASE
-          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code IN (${Prisma.join(DPA_STOCK_CODES)}) THEN ${DPA_BRANCH_CODE}
-          WHEN us.branch_code = ${FABRICA_BRANCH_CODE} AND us.stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-          ELSE us.branch_code
-        END::int AS branch_code,
+        ${localEstoqueSql('us')} AS branch_code,
         COALESCE(us.stock, 0)::numeric AS stock
       FROM ultimo_saldo us
       JOIN produto_analitico a ON a.product_sku = us.product_sku
@@ -622,7 +598,6 @@ export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFilt
         product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
       WHERE branch_code = ${FABRICA_BRANCH_CODE}
-        AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})
         ${filtroProductSku(productSkusFiltro)}
         AND captured_at < ${dataCorte} + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
@@ -655,7 +630,6 @@ export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFilt
         product_sku, product_code, branch_code, stock_code, stock, captured_at
       FROM prd_saldo
       WHERE branch_code = ${FABRICA_BRANCH_CODE}
-        AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])})
         AND product_sku IN (${Prisma.join(skusPrint)})
         AND captured_at < ${dataCorte} + INTERVAL '1 day'
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
@@ -1293,9 +1267,7 @@ async function getRelatorioBaseAnalitico(
   `;
 
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
-  const colunasAtivas = branchFiltro
-    ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
-    : RELATORIO_BASE_BRANCH_ORDER;
+  const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
 
   function coberturaDe(estoque: number, mediaMensal: number): number | null {
     if (mediaMensal <= 0) return null;
@@ -2130,9 +2102,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
 
-  const colunasAtivas = branchFiltro
-    ? RELATORIO_BASE_BRANCH_ORDER.filter((c) => branchFiltro.has(c.branchCode))
-    : RELATORIO_BASE_BRANCH_ORDER;
+  const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
 
   // Agregacao por referencia, construida no mesmo loop dos SKUs pra nao duplicar os
   // lookups - cada referencia acumula est/giro por filial (pra recalcular cobertura
@@ -2798,7 +2768,7 @@ export async function getFiltrosRelatorioBase() {
 
   return {
     classificacoes,
-    colunas: RELATORIO_BASE_BRANCH_ORDER,
+    colunas: await getColunasEstoque(),
   };
 }
 

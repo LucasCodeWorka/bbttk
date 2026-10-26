@@ -123,6 +123,16 @@ então cruzar dado agregado por `product_code` (ex: `ops_em_producao`, que só t
 
 ### `prd_saldo.stock_code` — o que cada valor significa (nunca documentado antes, descoberto nessa sessão)
 
+**Regra vigente desde 25/10/2026, por pedido do usuario:** todos os relatorios de
+estoque do PCP somam todos os tipos de saldo de todas as empresas, com sinal.
+Os filtros explicitos de empresa/tipo de saldo continuam valendo. A Fabrica mantem
+os locais sinteticos ATACADO (saldo 8) e DPA (todos os outros saldos); nas outras
+empresas, qualquer saldo pertence a propria empresa. Empresas fechadas tambem
+entram na selecao geral e ficam disponiveis no filtro. O helper compartilhado
+`estoqueLocal.service.ts` centraliza essa regra. A mesma regra vale para os scripts
+analiticos em `projetobb`, inclusive os valores em estoque e o ano anterior.
+As descricoes historicas abaixo que limitavam lojas ao saldo fisico foram superadas.
+
 `stock_code` não é um enum fixo com legenda em lugar nenhum do código — descobri
 consultando `stock_description` direto no banco:
 
@@ -715,6 +725,17 @@ PCP (aba "Sugestão de Produção"): período de venda, cobertura alvo, corte m�
 e por SKU (cadastro individual ou upload CSV `SKU;VALOR`) — tabela nova
 `PcpCorteMinimoSku`, campos novos em `PcpRelatorioConfig`
 (`coberturaAlvoMeses`/`corteMinimoDefault`).
+
+Em 25/10/2026, a tabela passou a matriz expansível **Referência → Cor → Tamanho**,
+com seletor **Cor padrão / Cor agrupada** (usa os agrupamentos cadastrados por
+referência; cores sem grupo mantêm a original). O agrupamento é de apresentação:
+subtotais somam as sugestões já calculadas por SKU, sem recalcular déficit/corte
+no grupo. Cortes distintos aparecem como "Variável". Helper e testes em
+`apps/web/src/lib/sugestaoProducaoMatriz.ts` e `apps/web/tests/`.
+Paginação por referência; total geral e Excel abrangem todo o resultado filtrado.
+O Excel exporta folhas referência/cor/tamanho, preservando SKUs e cores originais.
+O detalhe de OPs aceita grupos via `POST /api/pcp/sugestao-producao/ops`
+(`productCodes`), somando quantidades por OP/filial; o GET individual permanece.
 
 **Limitações conhecidas, avisadas na própria tela**: não separa embalagem/subproduto
 do cálculo (usa o mesmo filtro de estoque líquido do resto do PCP); não filtra "SKU

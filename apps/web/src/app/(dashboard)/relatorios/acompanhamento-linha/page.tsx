@@ -399,7 +399,7 @@ export default function AcompanhamentoLinhaPage() {
           />
           <KPICard title="Venda Ano Anterior" value={formatMoney(data.kpis.vendaValorAnoAnteriorTotal)} color="blue" isLoading={isLoading} />
           <KPICard title="Evolução vs A.A." value={formatPercentDelta(data.kpis.evolucaoValorPercent)} color="purple" isLoading={isLoading} />
-          <KPICard title="Estoque Físico" value={formatNumber(data.kpis.estoqueFisicoTotal)} color="yellow" isLoading={isLoading} />
+          <KPICard title="Estoque Total" value={formatNumber(data.kpis.estoqueFisicoTotal)} color="yellow" isLoading={isLoading} />
           <KPICard
             title="Em Trânsito"
             value={formatNumber(data.kpis.pecasEmTransitoTotal)}
@@ -454,12 +454,12 @@ export default function AcompanhamentoLinhaPage() {
                 <ThSortPcp label="VENDA PÇ A.A." sortKeyName="vendaPecasAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" />
                 <ThSortPcp label="EVOL PÇ" sortKeyName="evolucaoPecasPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" />
                 <ThSortPcp label="PART %" sortKeyName="participacaoPercent" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Participação no total vendido no filtro atual" />
-                <ThSortPcp label="COB MESES" sortKeyName="coberturaMesesAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura atual em meses = estoque físico / venda média mensal" />
+                <ThSortPcp label="COB MESES" sortKeyName="coberturaMesesAtual" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura atual em meses = estoque total / venda média mensal" />
                 <ThSortPcp label="COB C/ TRÂNSITO" sortKeyName="coberturaMesesEstoqueTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses contando também o que está a caminho = (estoque + trânsito) / venda média mensal. Sempre maior ou igual à COB MESES." />
                 <ThSortPcp label="COB MESES A.A." sortKeyName="coberturaMesesAnoAnterior" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Cobertura em meses no mesmo período do ano anterior, com o estoque e a venda de então" />
-                <ThSortPcp label="ESTOQUE" sortKeyName="estoqueFisico" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Estoque físico disponível na loja" />
+                <ThSortPcp label="ESTOQUE" sortKeyName="estoqueFisico" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Saldo líquido de todos os tipos de estoque das empresas selecionadas" />
                 <ThSortPcp label="EM TRÂNSITO" sortKeyName="pecasEmTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças transferidas do DPA que ainda não chegaram ao destino. Não constam no estoque de nenhuma loja, por isso são contadas à parte. Fonte: vínculo documento-a-documento do TOTVS (relatório Estoque em Trânsito)." />
-                <ThSortPcp label="ESTOQUE + TRÂNSITO" sortKeyName="estoqueMaisTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Soma do estoque físico com as peças a caminho" />
+                <ThSortPcp label="ESTOQUE + TRÂNSITO" sortKeyName="estoqueMaisTransito" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Soma do estoque total com as peças a caminho" />
                 <ThSortPcp label="EM PRODUÇÃO" sortKeyName="pecasEmProducao" sortKey={sortKey} sortDir={sortDir} onSort={(k) => handleSort(k as SortKeyDiario)} align="right" title="Peças em Ordem de Produção aberta (rede toda)" />
               </TableRow>
             </TableHead>

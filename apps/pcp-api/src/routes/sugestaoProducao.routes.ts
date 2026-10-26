@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { SugestaoProducaoFiltro, getSugestaoProducao, getFiltrosSugestaoProducao, getOpsDetalhePorProductCode } from '../services/sugestaoProducao.service.js';
+import { SugestaoProducaoFiltro, getSugestaoProducao, getFiltrosSugestaoProducao, getOpsDetalhePorProductCode, getOpsDetalhePorProductCodes } from '../services/sugestaoProducao.service.js';
 
 const router = Router();
 
@@ -38,10 +38,24 @@ router.get('/sugestao-producao', async (req: Request, res: Response) => {
   }
 });
 
+router.post('/sugestao-producao/ops', async (req: Request, res: Response) => {
+  const codigos: unknown = req.body?.productCodes;
+  if (!Array.isArray(codigos) || !codigos.length || codigos.length > 5000
+      || codigos.some((codigo) => typeof codigo !== 'number' || !Number.isSafeInteger(codigo) || codigo <= 0)) {
+    res.status(400).json({ error: 'Informe entre 1 e 5000 codigos de produto validos.' });
+    return;
+  }
+  try {
+    res.json(await getOpsDetalhePorProductCodes(codigos));
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/sugestao-producao/ops/:productCode', async (req: Request, res: Response) => {
   try {
     const productCode = Number(req.params.productCode);
-    if (!Number.isFinite(productCode)) {
+    if (!Number.isSafeInteger(productCode) || productCode <= 0) {
       res.status(400).json({ error: 'productCode invalido' });
       return;
     }

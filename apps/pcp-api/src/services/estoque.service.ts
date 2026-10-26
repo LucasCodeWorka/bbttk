@@ -247,7 +247,7 @@ async function getBaseRows(params: EstoqueSemGiroParams): Promise<AnaliticoRow[]
     LEFT JOIN primeira_entrada pe
       ON pe.product_code = a.product_code
       AND pe.branch_code = a.branch_code
-    WHERE COALESCE(a.quantidade_estoque, 0) > 0
+    WHERE COALESCE(a.quantidade_estoque, 0) <> 0
       AND (
         pe.primeira_entrada_data IS NULL
         OR CURRENT_DATE - pe.primeira_entrada_data::date >= ${maturacaoDias}

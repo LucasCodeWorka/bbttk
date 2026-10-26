@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
+import { filtroLocalEstoqueSql, getColunasEstoque } from './estoqueLocal.service.js';
+import { ATACADO_BRANCH_CODE, DPA_BRANCH_CODE } from '../config/constants.js';
 import {
   DATA_VENDA,
   CUSTO_PRODUCAO_BRANCH_CODE,
@@ -182,14 +183,7 @@ function buildVendaBranchFiltro(branches?: number[]): Prisma.Sql {
 }
 
 function buildEstoqueBranchFiltro(branches?: number[]): Prisma.Sql {
-  if (!branches?.length) return Prisma.empty;
-
-  const normais = branches.filter((branchCode) => branchCode > 0);
-  const condicoes: Prisma.Sql[] = [];
-  if (normais.length) condicoes.push(Prisma.sql`branch_code IN (${Prisma.join(normais)})`);
-  if (branches.includes(DPA_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES)}))`);
-  if (branches.includes(ATACADO_BRANCH_CODE)) condicoes.push(Prisma.sql`(branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE})`);
-  return condicoes.length ? Prisma.sql`AND (${Prisma.join(condicoes, ' OR ')})` : Prisma.sql`AND FALSE`;
+  return filtroLocalEstoqueSql(branches);
 }
 
 async function getConfig() {
@@ -389,7 +383,6 @@ async function getResumoMensal(
       JOIN prd_saldo ps ON ps.captured_at <= p.data_estoque + INTERVAL '1 day'
       JOIN produtos_colecao pc ON pc.product_sku = ps.product_sku
       WHERE 1=1
-        AND (ps.branch_code != ${FABRICA_BRANCH_CODE} OR ps.stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
         ${estoqueBranchFiltro}
       ORDER BY p.mes_inicio, ps.product_sku, ps.branch_code, ps.stock_code, ps.captured_at DESC
     ),
@@ -659,7 +652,6 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
             product_sku, product_code, branch_code, stock, captured_at
           FROM prd_saldo
           WHERE 1=1
-            AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
             AND captured_at <= ${filtro.dataFim}::date + INTERVAL '1 day'
           ${estoqueBranchFiltro}
           ORDER BY product_sku, branch_code, stock_code, captured_at DESC
@@ -678,7 +670,6 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
             product_sku, product_code, branch_code, stock, captured_at
           FROM prd_saldo
           WHERE 1=1
-            AND (branch_code != ${FABRICA_BRANCH_CODE} OR stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE])}))
           ${estoqueBranchFiltro}
           ORDER BY product_sku, branch_code, stock_code, captured_at DESC
         )
@@ -1021,6 +1012,6 @@ export async function getFiltrosPerformanceColecao() {
   return {
     colecoes: colecoes.map((row) => ({ valor: row.valor, qtd_skus: Number(row.qtd) })),
     classificacoes: [...mapa.values()],
-    lojas: RELATORIO_BASE_BRANCH_ORDER,
+    lojas: await getColunasEstoque(),
   };
 }

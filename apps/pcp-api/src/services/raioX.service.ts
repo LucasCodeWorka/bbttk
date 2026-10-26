@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { ATACADO_BRANCH_CODE, ATACADO_STOCK_CODE, DPA_BRANCH_CODE, DPA_STOCK_CODES, RELATORIO_BASE_BRANCH_ORDER } from '../config/constants.js';
+import { getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
+import { ATACADO_BRANCH_CODE, DPA_BRANCH_CODE } from '../config/constants.js';
 import { DATA_VENDA, FABRICA_BRANCH_CODE, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, OPERACAO_JOIN, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, joinProdutoAnaliticoUnico } from './relatorioBase.service.js';
 
 // Tipos de filtros
@@ -95,9 +96,9 @@ function totaisVazios() {
 
 // A filial física 02 nunca é apresentada diretamente: ela é desmembrada em
 // DPA (físico + segunda qualidade) e ATACADO, como nos demais relatórios PCP.
-function locaisDoRelatorio(selecao?: number[]): LocalRaioX[] {
+async function locaisDoRelatorio(selecao?: number[]): Promise<LocalRaioX[]> {
   const selecionados = selecao?.length ? new Set(selecao) : null;
-  return RELATORIO_BASE_BRANCH_ORDER
+  return (await getColunasEstoque())
     .filter(({ branchCode }) => !selecionados || selecionados.has(branchCode) || (branchCode < 0 && selecionados.has(FABRICA_BRANCH_CODE)))
     .map(({ branchCode, label }) => ({
       branchCode,
@@ -147,15 +148,9 @@ async function getEstoquesEmLote(
       ORDER BY product_sku, branch_code, stock_code, captured_at DESC
     )
     SELECT product_sku,
-      CASE
-        WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join(DPA_STOCK_CODES.map(code => Prisma.sql`${code}`))}) THEN ${DPA_BRANCH_CODE}
-        WHEN branch_code = ${FABRICA_BRANCH_CODE} AND stock_code = ${ATACADO_STOCK_CODE} THEN ${ATACADO_BRANCH_CODE}
-        ELSE branch_code
-      END::int AS local_code,
+      ${localEstoqueSql()} AS local_code,
       COALESCE(SUM(COALESCE(stock, 0)), 0) AS stock
     FROM ultimo_saldo
-    WHERE (branch_code <> ${FABRICA_BRANCH_CODE} AND stock_code = 1)
-       OR (branch_code = ${FABRICA_BRANCH_CODE} AND stock_code IN (${Prisma.join([...DPA_STOCK_CODES, ATACADO_STOCK_CODE].map(code => Prisma.sql`${code}`))}))
     GROUP BY product_sku, local_code
   `;
 
@@ -367,7 +362,7 @@ export async function getRaioX(filtro: RaioXFiltro): Promise<RaioXResponse> {
     };
   }
 
-  const locais = locaisDoRelatorio(filtro.lojas);
+  const locais = await locaisDoRelatorio(filtro.lojas);
 
   console.log(`[Raio X] Lojas selecionadas: ${locais.map(local => local.branchName).join(', ')}`);
 

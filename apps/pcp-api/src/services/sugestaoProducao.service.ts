@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { DATA_VENDA, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER } from './relatorioBase.service.js';
+import { DATA_VENDA, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL, PCP_ESTOQUE_LIQUIDO_SKU_FILTER, AGRUPAMENTO_COR_JOIN, COR_AGRUPADA_SELECT } from './relatorioBase.service.js';
 import { FILIAIS } from '../config/constants.js';
 
 // V1 direto ao ponto (pedido do usuario) - relatorio de rede inteira, sem quebra por
@@ -37,8 +37,11 @@ export interface SugestaoProducaoRow {
   sku: string;
   productCode: number | null;
   referenceCode: string;
+  referenceName?: string;
   descricao: string;
   cor: string;
+  corCodigo?: string | null;
+  corAgrupada?: string | null;
   tamanho: string;
   categoria: string | null;
   linha: string | null;
@@ -98,6 +101,8 @@ interface IdentidadeRow {
   reference_code: string | null;
   reference_name: string | null;
   color_name: string | null;
+  color_code: string | null;
+  cor_agrupada: string | null;
   size: string | null;
   descricao: string | null;
   categoria: string | null;
@@ -124,7 +129,8 @@ async function getIdentidadeRows(filtro: SugestaoProducaoFiltro): Promise<Identi
   const filtroSql = buildIdentidadeFiltro(filtro);
   return prisma.$queryRaw<IdentidadeRow[]>`
     SELECT
-      a.product_sku, a.product_code, a.reference_code, a.reference_name, a.color_name, a.size,
+      a.product_sku, a.product_code, a.reference_code, a.reference_name, a.color_name, a.color_code, a.size,
+      ${COR_AGRUPADA_SELECT} AS cor_agrupada,
       COALESCE(NULLIF(TRIM(a.product_name), ''), NULLIF(TRIM(a.reference_name), ''), a.product_sku) as descricao,
       NULLIF(TRIM(a.class_categoria), '') as categoria,
       NULLIF(TRIM(a.class_linha), '') as linha,
@@ -132,6 +138,7 @@ async function getIdentidadeRows(filtro: SugestaoProducaoFiltro): Promise<Identi
       NULLIF(TRIM(a.class_status), '') as status
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
+    ${AGRUPAMENTO_COR_JOIN}
     WHERE a.reference_code IS NOT NULL AND a.size IS NOT NULL
       AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
       ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
@@ -280,8 +287,11 @@ export async function getSugestaoProducao(filtro: SugestaoProducaoFiltro = {}): 
       sku: row.product_sku,
       productCode: row.product_code,
       referenceCode: row.reference_code || row.product_sku,
+      referenceName: row.reference_name || row.reference_code || row.product_sku,
       descricao: row.descricao || row.product_sku,
-      cor: row.color_name || '-',
+      cor: row.color_name || row.color_code || 'SEM COR',
+      corCodigo: row.color_code,
+      corAgrupada: row.cor_agrupada,
       tamanho: row.size || '-',
       categoria: row.categoria,
       linha: row.linha,
@@ -372,6 +382,12 @@ export interface OpDetalhe {
 // novo, so ja e usado pelo relatorio "Em Producao" - emProducao.service.ts). Usado
 // quando o usuario clica no valor "Em Producao" de uma linha, pra ver o numero da OP.
 export async function getOpsDetalhePorProductCode(productCode: number): Promise<OpDetalhe[]> {
+  return getOpsDetalhePorProductCodes([productCode]);
+}
+
+export async function getOpsDetalhePorProductCodes(productCodes: number[]): Promise<OpDetalhe[]> {
+  const codigos = [...new Set(productCodes)].filter((codigo) => Number.isSafeInteger(codigo) && codigo > 0);
+  if (!codigos.length) return [];
   const rows = await prisma.$queryRaw<
     Array<{
       order_code: number;
@@ -384,9 +400,13 @@ export async function getOpsDetalhePorProductCode(productCode: number): Promise<
       quantidade_pendente: Decimal;
     }>
   >`
-    SELECT order_code, branch_code, status, dt_inicio, dt_previsao, quantidade_op, quantidade_finalizada, quantidade_pendente
+    SELECT order_code, branch_code, status, dt_inicio, dt_previsao,
+      SUM(quantidade_op) AS quantidade_op,
+      SUM(quantidade_finalizada) AS quantidade_finalizada,
+      SUM(quantidade_pendente) AS quantidade_pendente
     FROM ops_em_producao
-    WHERE product_code = ${productCode}
+    WHERE product_code IN (${Prisma.join(codigos)})
+    GROUP BY order_code, branch_code, status, dt_inicio, dt_previsao
     ORDER BY dt_previsao NULLS LAST, order_code
   `;
 
