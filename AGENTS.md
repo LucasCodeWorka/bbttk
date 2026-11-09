@@ -251,6 +251,24 @@ e validado (ver seção de pendência abaixo), mas ainda não sabemos se o hist�
 **completo** desde sempre ou se a granularidade de captura foi ficando mais fina com o
 tempo — ver "Pendência aberta" no fim deste arquivo.
 
+## Divergencia de pecas do Relatorio Base (09/11/2026)
+
+O cartao "Pecas Vendidas 30 dias" le `giro_30d` de
+`pcp_relatorio_base_analitico_diario` para datas materializadas. A rotina fonte fica
+no repo irmao `../../projetobb/src/analiticos/pcp_relatorio_base_analitico_diario.py`.
+Ela usava uma lista fixa de exclusoes e tratava qualquer operacao S/E como venda ou
+devolucao, incluindo outras movimentacoes. Foi corrigida localmente para usar
+`classificacao_operacoes`: venda S/4, devolucao E/3 com `-ABS(quantity)`, e canal
+Atacado pela descricao da operacao, igual ao backend. A janela de datas foi mantida:
+posicao 08/11/2026 considera 09/10 a 08/11. Nao reduzir essa janela ao investigar
+o print PRDFL087, que usa o mesmo intervalo.
+
+Posicao 08/11 recalculada no banco: 28.319 -> 20.785 pecas, giro 22,7%. Na primeira
+consulta a origem somava 20.786 (igual ao print); durante a sessao uma nova carga
+alterou o total da Fabrica em uma peca. Teste de regressao no repo irmao:
+`tests/test_pcp_vendas.py`. O agendamento na VPS precisa receber essa versao para
+as proximas cargas; git push sozinho nao comprova a atualizacao do cron.
+
 ## Regras de negócio — Comercial
 
 - **Faturamento é sempre líquido** (venda − devolução). Devolução é identificada pelo

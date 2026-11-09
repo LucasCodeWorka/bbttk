@@ -733,6 +733,16 @@ async function getGiroTotalDias(dias: number, productCodes: number[] | null, bra
         AND t.status = 4
         AND ${SALE_OPERATION_FILTER}
         ${filtroProductCodeTi(productCodes)}
+        -- Sem filtro de classificacao, os totais tambem precisam respeitar o
+        -- universo da tabela. EXISTS evita multiplicar produto com placeholder.
+        AND EXISTS (
+          SELECT 1 FROM produto_analitico a
+          LEFT JOIN produtos p ON p.product_sku = a.product_sku
+          WHERE a.product_code = ti.product_code
+            AND (p.is_finished_product = true OR p.is_finished_product IS NULL)
+            AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
+            ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+        )
     ) venda
     WHERE 1 = 1
       ${filtroBranch}
