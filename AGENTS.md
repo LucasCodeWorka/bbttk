@@ -275,8 +275,10 @@ No Relatorio Base, `valorEstoqueAnoAnterior` e consultado independentemente da
 posicao atual: sem filtros, soma todo o historico de SKUs validos; com filtros de
 classificacao, referencia/busca ou empresa, aplica os mesmos filtros ao historico.
 Nao limitar a consulta por SKUs/locais presentes no snapshot atual nem por paginacao.
-O backend usa `buildEstoqueAnoAnteriorSql` nos caminhos materializado e ao vivo,
-sem adicionar SKUs antigos aos indicadores atuais de estoque, ruptura e giro.
+O backend usa o AA pre-calculado em `pcp_relatorio_base_analitico_diario` quando a
+posicao foi gerada pela rotina nova. `buildEstoqueAnoAnteriorAnaliticoSql` soma o
+valor com os filtros, incluindo linhas exclusivas do historico. Nas posicoes ainda
+nao migradas e consultas ao vivo, `buildEstoqueAnoAnteriorSql` calcula o historico.
 
 A consulta usa a serie completa em `stg_saldo_virtual_csv`, complementada pelas
 capturas de API em `prd_saldo`. Exclui da segunda fonte a origem `CSV Virtual`:
@@ -289,9 +291,26 @@ de mudancas encontrada nos CSVs numerados importados em outubro. A tabela
 Sempre escolher o ultimo saldo ate o fim da data equivalente do ano anterior,
 preservando negativos e todos os tipos de saldo/empresas (inclusive fechadas).
 A valorizacao continua com custo de producao cadastrado (filial 1, cost_code 1),
-nao custo historico. A coluna `estoque_ano_anterior` do snapshot continua existindo,
-mas nao alimenta mais esse card. Nao e necessario mudar o schema ou recalcular
-snapshots para esse comparativo. Testes: `npm run test:estoque -w apps/pcp-api`.
+nao custo historico. A rotina nova preenche `estoque_ano_anterior` com a serie
+completa e adiciona `compoe_posicao_atual` nullable: true preserva o universo atual,
+false identifica linhas adicionais exclusivas do AA, NULL identifica carga antiga.
+O backend exclui somente false dos indicadores atuais; so aceita AA materializado
+quando nao ha NULL na posicao. A coluna e adicionada pelo bootstrap da rotina, sem
+db push. O backend funciona antes da coluna existir, usando a consulta historica.
+
+Ordem de ativacao obrigatoria: publicar/ativar backend novo ANTES de executar a
+rotina nova, pois leitores antigos incluiriam linhas exclusivas do AA nos KPIs
+atuais. Depois atualizar a rotina na VPS e reprocessar as datas desejadas. Nesta
+sessao, a nova materializacao foi validada SOMENTE em tabelas temporarias com
+rollback: 08/11 manteve os demais campos identicos, AA R$ 2.448.420,42 lido em ~128ms.
+Nao confundir preparacao/push com rotina atualizada ou datas reprocessadas.
+Testes: `npm run test:estoque -w apps/pcp-api` e, no repo irmao,
+`python -m unittest discover -s tests -p 'test_pcp_*.py'`.
+
+Na Visao Geral, editar busca, classificacoes, lojas e data apenas prepara os filtros;
+o botao Atualizar aplica todos juntos e volta a pagina 1. Limpar filtros tambem
+aguarda Atualizar. Paginacao, indicadores extras e Excel usam os filtros aplicados,
+nao as edicoes pendentes. O sessionStorage preserva os dois estados separadamente.
 
 ## Regras de negócio — Comercial
 

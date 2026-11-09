@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { Prisma, PrismaClient } = require('@prisma/client');
-const { buildEstoqueAnoAnteriorSql } = require('../dist/services/relatorioBase.service.js');
+const { buildEstoqueAnoAnteriorSql, buildEstoqueAnoAnteriorAnaliticoSql } = require('../dist/services/relatorioBase.service.js');
 const prisma = new PrismaClient({ log: [] });
 
 // CTEs substituem as tabelas reais. ANTIGA so existe no historico; nao ha lista
@@ -82,4 +82,42 @@ for (const [nome, filtro, esperado] of casos) {
     assert.deepEqual(await consultar(filtro), esperado);
   });
 }
+
+const fixtureAnalitico = Prisma.sql`WITH pcp_relatorio_base_analitico_diario(
+  data_posicao, product_sku, reference_code, reference_name, product_name,
+  categoria, linha, genero, status, branch_code, estoque, estoque_ano_anterior,
+  custo_producao, compoe_posicao_atual
+) AS (
+  VALUES
+    ('2026-11-08'::date, 'ATUAL', 'REF-ATUAL', 'Atual', 'Atual', 'BLUSA', 'BASICO', 'FEM', 'ATIVO', 9, 50, 1, 10, true),
+    ('2026-11-08'::date, 'ANTIGA', 'REF-ANTIGA', 'Antiga', 'Antiga', 'BLUSA', 'RENOVAVEL', 'FEM', 'FORA DE LINHA', 16, 0, 5, 20, false),
+    ('2026-11-08'::date, 'ANTIGA', 'REF-ANTIGA', 'Antiga', 'Antiga', 'BLUSA', 'RENOVAVEL', 'FEM', 'FORA DE LINHA', -1, 0, -2, 20, false),
+    ('2026-11-07'::date, 'LEGADO', 'REF-ATUAL', 'Legado', 'Legado', 'BLUSA', 'BASICO', 'FEM', 'ATIVO', 9, 50, 999, 1, NULL::boolean)
+)`;
+
+const casosAnaliticos = [
+  ['AA analitico inclui produtos exclusivos do historico e negativos', {}, '2026-11-08', 70, true],
+  ['AA analitico respeita referencia antiga e ignora paginacao', { search: 'REF-ANTIGA', page: 5, pageSize: 1 }, '2026-11-08', 60, true],
+  ['AA analitico respeita empresa fechada', { branches: [16] }, '2026-11-08', 100, true],
+  ['AA analitico respeita DPA e classificacao', { branches: [-1], linha: ['RENOVAVEL'] }, '2026-11-08', -40, true],
+  ['AA analitico com filtro sem produtos retorna zero completo', { categoria: ['CALCA'] }, '2026-11-08', 0, true],
+  ['snapshot antigo nao e aceito como AA completo', {}, '2026-11-07', 999, false],
+  ['data ausente nao e aceita como AA completo', {}, '2026-11-06', 0, false],
+];
+for (const [nome, filtro, data, valor, completo] of casosAnaliticos) {
+  test(nome, { skip: !process.env.DATABASE_URL }, async () => {
+    const [row] = await prisma.$queryRaw`${fixtureAnalitico}
+      SELECT * FROM (${buildEstoqueAnoAnteriorAnaliticoSql(filtro, data)}) calculo`;
+    assert.equal(Number(row.valor), valor);
+    assert.equal(row.completo, completo);
+  });
+}
+
+test('linhas exclusivas do AA nao compoem os indicadores atuais', { skip: !process.env.DATABASE_URL }, async () => {
+  const [row] = await prisma.$queryRaw`${fixtureAnalitico}
+    SELECT COUNT(*)::int AS skus, SUM(estoque)::int AS estoque
+    FROM pcp_relatorio_base_analitico_diario
+    WHERE data_posicao = '2026-11-08' AND compoe_posicao_atual IS DISTINCT FROM false`;
+  assert.deepEqual(row, { skus: 1, estoque: 50 });
+});
 after(async () => prisma.$disconnect());

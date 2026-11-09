@@ -522,7 +522,32 @@ export function buildEstoqueAnoAnteriorSql(filtro: RelatorioBaseFiltro, dataPosi
   `;
 }
 
-async function getValorEstoqueAnoAnterior(filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao): Promise<number> {
+export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro, dataPosicao: string): Prisma.Sql {
+  return Prisma.sql`
+    SELECT COALESCE(SUM(rb.estoque_ano_anterior * COALESCE(rb.custo_producao, 0)), 0) AS valor,
+      EXISTS (
+        SELECT 1 FROM pcp_relatorio_base_analitico_diario p
+        WHERE p.data_posicao = ${dataPosicao}::date
+      ) AND NOT EXISTS (
+        SELECT 1 FROM pcp_relatorio_base_analitico_diario p
+        WHERE p.data_posicao = ${dataPosicao}::date AND p.compoe_posicao_atual IS NULL
+      ) AS completo
+    FROM pcp_relatorio_base_analitico_diario rb
+    WHERE rb.data_posicao = ${dataPosicao}::date
+      ${buildAnaliticoFiltro(filtro)}
+  `;
+}
+
+async function getValorEstoqueAnoAnterior(
+  filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao, analiticoCompletoDisponivel = false
+): Promise<number> {
+  if (analiticoCompletoDisponivel && dataPosicao) {
+    const rows = await prisma.$queryRaw<Array<{ valor: Decimal; completo: boolean }>>(
+      buildEstoqueAnoAnteriorAnaliticoSql(filtro, dataPosicao)
+    );
+    if (rows[0]?.completo) return decimalToNumber(rows[0].valor);
+  }
+  // Dias ainda nao recalculados e consultas ao vivo preservam o historico completo.
   const rows = await prisma.$queryRaw<Array<{ valor: Decimal }>>(buildEstoqueAnoAnteriorSql(filtro, dataPosicao));
   return decimalToNumber(rows[0]?.valor);
 }
@@ -1256,6 +1281,18 @@ async function getRelatorioBaseAnalitico(
   const dataAnalitica = await resolveDataAnalitica(filtro);
   if (!dataAnalitica) return null;
 
+  // Compatibilidade durante a publicacao: o backend pode subir antes da rotina.
+  const [schema] = await prisma.$queryRaw<Array<{ possui_marcador: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'pcp_relatorio_base_analitico_diario'
+        AND column_name = 'compoe_posicao_atual'
+    ) AS possui_marcador
+  `;
+  const possuiMarcador = schema.possui_marcador;
+  const filtroPosicaoAtual = possuiMarcador
+    ? Prisma.sql`AND rb.compoe_posicao_atual IS DISTINCT FROM false`
+    : Prisma.empty;
   const filtroSql = buildAnaliticoFiltro(filtro);
   const rowsAnaliticas = await prisma.$queryRaw<RelatorioBaseAnaliticoRow[]>`
     SELECT
@@ -1295,6 +1332,7 @@ async function getRelatorioBaseAnalitico(
     LEFT JOIN produto_analitico a ON a.product_sku = rb.product_sku
     ${AGRUPAMENTO_COR_JOIN}
     WHERE rb.data_posicao = ${dataAnalitica}::date
+      ${filtroPosicaoAtual}
       ${filtroSql}
   `;
 
@@ -1855,7 +1893,7 @@ async function getRelatorioBaseAnalitico(
     .sort((a, b) => b.estTt - a.estTt);
   const giroAnualizado =
     kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
-  const valorEstoqueAnoAnterior = await getValorEstoqueAnoAnterior(filtro, dataAnalitica);
+  const valorEstoqueAnoAnterior = await getValorEstoqueAnoAnterior(filtro, dataAnalitica, possuiMarcador);
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 

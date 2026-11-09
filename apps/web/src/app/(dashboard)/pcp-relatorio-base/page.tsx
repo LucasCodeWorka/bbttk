@@ -214,12 +214,20 @@ function getDefaultDataPosicao(): string {
   return formatDateInput(date);
 }
 
+interface VisaoGeralFiltros {
+  produtoFiltro: Record<string, string[] | undefined>;
+  filiaisSelecionadas: number[];
+  search: string;
+  dataPosicao: string;
+}
+
 interface VisaoGeralPageState {
   timestamp: number;
   produtoFiltro?: Record<string, string[] | undefined>;
   filiaisSelecionadas?: number[];
   search?: string;
   dataPosicao?: string;
+  filtroAplicado?: VisaoGeralFiltros;
   pagina?: number;
   verPorLoja?: boolean;
   sortKey?: string | null;
@@ -456,6 +464,16 @@ export default function PcpRelatorioBasePage() {
   );
   const [search, setSearch] = useState(() => initialPageState?.search || '');
   const [dataPosicao, setDataPosicao] = useState(() => initialPageState?.dataPosicao || getDefaultDataPosicao());
+  const filtroSelecionado = useMemo<VisaoGeralFiltros>(() => ({
+    produtoFiltro,
+    filiaisSelecionadas,
+    search: search.trim(),
+    dataPosicao,
+  }), [produtoFiltro, filiaisSelecionadas, search, dataPosicao]);
+  const [filtroAplicado, setFiltroAplicado] = useState<VisaoGeralFiltros>(
+    () => initialPageState?.filtroAplicado || filtroSelecionado
+  );
+  const filtrosPendentes = JSON.stringify(filtroSelecionado) !== JSON.stringify(filtroAplicado);
   const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
   const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
   const [exportando, setExportando] = useState(false);
@@ -490,20 +508,20 @@ export default function PcpRelatorioBasePage() {
   // Refs e estado para scroll sincronizado
   const tabelaScrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
-  const ignorarPrimeiroResetPaginaRef = useRef(true);
+  const forcarAtualizacaoRef = useRef(false);
   const [scrollWidth, setScrollWidth] = useState(0);
 
   const carregarDados = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
 
     const filtro: RelatorioBaseFiltro = {
-      categoria: produtoFiltro.categoria,
-      linha: produtoFiltro.linha,
-      genero: produtoFiltro.genero,
-      status: produtoFiltro.status,
-      branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
-      search: search.trim() || undefined,
-      dataPosicao: dataPosicao || undefined,
+      categoria: filtroAplicado.produtoFiltro.categoria,
+      linha: filtroAplicado.produtoFiltro.linha,
+      genero: filtroAplicado.produtoFiltro.genero,
+      status: filtroAplicado.produtoFiltro.status,
+      branches: filtroAplicado.filiaisSelecionadas.length > 0 ? filtroAplicado.filiaisSelecionadas : undefined,
+      search: filtroAplicado.search || undefined,
+      dataPosicao: filtroAplicado.dataPosicao || undefined,
       page: pagina,
       pageSize: PAGE_SIZE,
       agruparPorCorSalva,
@@ -523,7 +541,7 @@ export default function PcpRelatorioBasePage() {
           if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setData(cachedData);
             setIsLoading(false);
-            return;
+            return true;
           }
         }
       } catch (e) {
@@ -546,23 +564,22 @@ export default function PcpRelatorioBasePage() {
       } catch (e) {
         // Ignorar erros ao salvar cache (ex: quota excedida)
       }
+      return true;
     } catch (error) {
       setErro(error instanceof Error ? error.message : 'Erro ao carregar o Relatorio Base');
       console.error(error);
+      return false;
     } finally {
       setIsLoading(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, agruparPorCorSalva]);
+  }, [token, filtroAplicado, pagina, agruparPorCorSalva]);
 
-  // Qualquer mudanca de filtro invalida a paginacao atual - volta pra pagina 1 em vez
-  // de ficar preso numa pagina que pode nem existir mais no novo resultado filtrado.
-  useEffect(() => {
-    if (ignorarPrimeiroResetPaginaRef.current) {
-      ignorarPrimeiroResetPaginaRef.current = false;
-      return;
-    }
+  function aplicarFiltros() {
+    forcarAtualizacaoRef.current = true;
     setPagina(1);
-  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao]);
+    setReferenciaExpandida(null);
+    setFiltroAplicado({ ...filtroSelecionado });
+  }
 
   useEffect(() => {
     writeVisaoGeralPageState({
@@ -570,6 +587,7 @@ export default function PcpRelatorioBasePage() {
       filiaisSelecionadas,
       search,
       dataPosicao,
+      filtroAplicado,
       pagina,
       verPorLoja,
       sortKey,
@@ -577,17 +595,17 @@ export default function PcpRelatorioBasePage() {
       dimensao,
       visaoLinha,
     });
-  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, pagina, verPorLoja, sortKey, sortDir, dimensao, visaoLinha]);
+  }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, filtroAplicado, pagina, verPorLoja, sortKey, sortDir, dimensao, visaoLinha]);
 
   const carregarExtras = useCallback(async (forcarRecarregar = false) => {
     if (!token) return;
 
     const filtro = {
-      categoria: produtoFiltro.categoria,
-      linha: produtoFiltro.linha,
-      genero: produtoFiltro.genero,
-      status: produtoFiltro.status,
-      branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
+      categoria: filtroAplicado.produtoFiltro.categoria,
+      linha: filtroAplicado.produtoFiltro.linha,
+      genero: filtroAplicado.produtoFiltro.genero,
+      status: filtroAplicado.produtoFiltro.status,
+      branches: filtroAplicado.filiaisSelecionadas.length > 0 ? filtroAplicado.filiaisSelecionadas : undefined,
     };
 
     // Gerar chave de cache baseada nos filtros
@@ -630,7 +648,7 @@ export default function PcpRelatorioBasePage() {
     } finally {
       setIsLoadingExtras(false);
     }
-  }, [token, produtoFiltro, filiaisSelecionadas]);
+  }, [token, filtroAplicado]);
 
   useEffect(() => {
     if (!token) return;
@@ -644,15 +662,23 @@ export default function PcpRelatorioBasePage() {
   }, [token]);
 
   useEffect(() => {
-    carregarDados();
-  }, [carregarDados]);
+    if (!token) return;
+    let cancelado = false;
+    const forcarRecarregar = forcarAtualizacaoRef.current;
+    forcarAtualizacaoRef.current = false;
 
-  useEffect(() => {
-    // Espera o Relatorio Base terminar antes de acionar os indicadores extras. Antes,
-    // os dois endpoints montavam relatorios grandes ao mesmo tempo no PCP API.
-    if (!data || isLoading) return;
-    carregarExtras();
-  }, [data, isLoading, carregarExtras]);
+    async function carregarPainel() {
+      setIsLoadingExtras(true);
+      const carregou = await carregarDados(forcarRecarregar);
+      // Os extras usam os mesmos filtros aplicados e aguardam o relatorio principal.
+      if (cancelado) return;
+      if (carregou) await carregarExtras(forcarRecarregar);
+      else setIsLoadingExtras(false);
+    }
+
+    void carregarPainel();
+    return () => { cancelado = true; };
+  }, [token, carregarDados, carregarExtras]);
 
   // Sincronizar scroll horizontal
   useEffect(() => {
@@ -894,12 +920,14 @@ export default function PcpRelatorioBasePage() {
     setExportando(true);
     try {
       const completo = await relatorioBaseApi.getRelatorioBase(token, {
-        categoria: produtoFiltro.categoria,
-        linha: produtoFiltro.linha,
-        genero: produtoFiltro.genero,
-        status: produtoFiltro.status,
-        branches: filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined,
-        search: search.trim() || undefined,
+        categoria: filtroAplicado.produtoFiltro.categoria,
+        linha: filtroAplicado.produtoFiltro.linha,
+        genero: filtroAplicado.produtoFiltro.genero,
+        status: filtroAplicado.produtoFiltro.status,
+        branches: filtroAplicado.filiaisSelecionadas.length > 0 ? filtroAplicado.filiaisSelecionadas : undefined,
+        search: filtroAplicado.search || undefined,
+        dataPosicao: filtroAplicado.dataPosicao || undefined,
+        agruparPorCorSalva,
         page: 1,
         pageSize: 100000,
       });
@@ -1041,7 +1069,7 @@ export default function PcpRelatorioBasePage() {
             value={dataPosicao}
             onChange={(e) => setDataPosicao(e.target.value)}
           />
-          <Button onClick={() => { carregarDados(true); carregarExtras(true); }} isLoading={isLoading || isLoadingExtras}>
+          <Button onClick={aplicarFiltros} isLoading={isLoading || isLoadingExtras}>
             Atualizar
           </Button>
           <Button
@@ -1097,6 +1125,11 @@ export default function PcpRelatorioBasePage() {
             Exportar Excel
           </Button>
         </div>
+        {filtrosPendentes && (
+          <p className="mt-3 text-sm text-gray-600" role="status">
+            Filtros alterados. Clique em Atualizar para aplicar.
+          </p>
+        )}
       </Card>
 
       {erro && (
