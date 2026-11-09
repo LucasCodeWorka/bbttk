@@ -269,6 +269,30 @@ alterou o total da Fabrica em uma peca. Teste de regressao no repo irmao:
 `tests/test_pcp_vendas.py`. O agendamento na VPS precisa receber essa versao para
 as proximas cargas; git push sozinho nao comprova a atualizacao do cron.
 
+## Comparativo de valor em estoque do ano anterior (09/11/2026)
+
+No Relatorio Base, `valorEstoqueAnoAnterior` e consultado independentemente da
+posicao atual: sem filtros, soma todo o historico de SKUs validos; com filtros de
+classificacao, referencia/busca ou empresa, aplica os mesmos filtros ao historico.
+Nao limitar a consulta por SKUs/locais presentes no snapshot atual nem por paginacao.
+O backend usa `buildEstoqueAnoAnteriorSql` nos caminhos materializado e ao vivo,
+sem adicionar SKUs antigos aos indicadores atuais de estoque, ruptura e giro.
+
+A consulta usa a serie completa em `stg_saldo_virtual_csv`, complementada pelas
+capturas de API em `prd_saldo`. Exclui da segunda fonte a origem `CSV Virtual`:
+a carga antiga de `import_saldo_2.py` leu 5 arquivos com apenas uma posicao por
+produto/empresa/saldo (356.220 linhas, nenhuma chave repetida); os 350.244 registros
+de origem CSV da prd_saldo coincidem com esses arquivos. Eles nao conservam a serie
+de mudancas encontrada nos CSVs numerados importados em outubro. A tabela
+`prd_saldo_2` nao existe atualmente nesse banco.
+
+Sempre escolher o ultimo saldo ate o fim da data equivalente do ano anterior,
+preservando negativos e todos os tipos de saldo/empresas (inclusive fechadas).
+A valorizacao continua com custo de producao cadastrado (filial 1, cost_code 1),
+nao custo historico. A coluna `estoque_ano_anterior` do snapshot continua existindo,
+mas nao alimenta mais esse card. Nao e necessario mudar o schema ou recalcular
+snapshots para esse comparativo. Testes: `npm run test:estoque -w apps/pcp-api`.
+
 ## Regras de negócio — Comercial
 
 - **Faturamento é sempre líquido** (venda − devolução). Devolução é identificada pelo

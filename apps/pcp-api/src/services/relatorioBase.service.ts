@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
-import { getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
+import { filtroLocalEstoqueSql, getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
 import {
   ATACADO_BRANCH_CODE,
   DPA_BRANCH_CODE,
@@ -277,8 +277,8 @@ export interface RelatorioBaseReferenciaRow {
   cores: RelatorioBaseCorRow[];
 }
 
-// KPIs executivos calculados sobre o MESMO universo de SKUs/filtros da tabela
-// detalhada (nunca uma query separada) - pra nunca divergir do que a tabela mostra.
+// KPIs atuais usam o universo da tabela detalhada. O valor do ano anterior usa
+// todo o historico valido, aplicando os filtros sem restringir aos SKUs atuais.
 // "Varejo" = qualquer filial real exceto Fabrica; "Atacado" = canal Atacado da
 // Fabrica (mesmo channel-split ja usado no resto do relatorio).
 export interface RelatorioBaseKpisExtra {
@@ -432,48 +432,8 @@ function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql
   return anosOffset === 0 ? base : Prisma.sql`(${base} + make_interval(years => ${anosOffset}::int))`;
 }
 
-async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string, anosOffset = 0): Promise<EstoqueRow[]> {
-  const dataCorte = dataLimiteSuperiorSql(dataPosicao, anosOffset);
-
-  if (anosOffset !== 0) {
-    return prisma.$queryRaw<EstoqueRow[]>`
-      WITH produto_unico AS (
-        SELECT DISTINCT ON (a.product_code)
-          a.product_code,
-          a.product_sku,
-          a.is_finished_product,
-          a.class_tipo,
-          a.class_categoria
-        FROM produto_analitico a
-        WHERE a.product_code IS NOT NULL
-          ${filtroProductSku(productSkus)}
-        ORDER BY a.product_code, CASE WHEN a.product_sku LIKE 'PRODUCT_CODE:%' THEN 1 ELSE 0 END, a.product_sku
-      ),
-      ultimo_saldo AS (
-        SELECT DISTINCT ON (s.product_code, s.branch_code, s.stock_code)
-          pu.product_sku,
-          s.product_code,
-          s.branch_code,
-          s.stock_code,
-          s.stock,
-          s.saldo_date
-        FROM stg_saldo_virtual_csv s
-        JOIN produto_unico pu ON pu.product_code = s.product_code
-        WHERE s.rejection_reason IS NULL
-          AND s.saldo_date < ${dataCorte} + INTERVAL '1 day'
-        ORDER BY s.product_code, s.branch_code, s.stock_code, s.saldo_date DESC
-      )
-      SELECT us.product_sku, us.product_code,
-             ${localEstoqueSql('us')} AS branch_code,
-             COALESCE(SUM(COALESCE(us.stock,0)), 0) AS quantidade_estoque
-      FROM ultimo_saldo us
-      JOIN produto_unico a ON a.product_code = us.product_code
-      WHERE (a.is_finished_product = true OR a.is_finished_product IS NULL)
-        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
-        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
-      GROUP BY 1, 2, 3
-    `;
-  }
+async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string): Promise<EstoqueRow[]> {
+  const dataCorte = dataLimiteSuperiorSql(dataPosicao);
 
   return prisma.$queryRaw<EstoqueRow[]>`
     WITH ultimo_saldo AS (
@@ -501,6 +461,70 @@ async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string
     -- em uma linha por stock_code, e quem consome usa Map.set() (sobrescreve).
     GROUP BY 1, 2, 3
   `;
+}
+
+// Comparacao agregada independente das linhas/SKUs da posicao atual. Os filtros
+// de classificacao/referencia incidem no catalogo completo de produtos validos.
+// O CSV preserva as variacoes antigas; prd_saldo complementa com capturas da API.
+// A antiga carga "CSV Virtual" da prd_saldo tinha uma unica posicao por chave e
+// nao deve sobrescrever a serie historica completa dos CSVs numerados.
+export function buildEstoqueAnoAnteriorSql(filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao): Prisma.Sql {
+  const dataCorte = dataLimiteSuperiorSql(dataPosicao, -1);
+  return Prisma.sql`
+    WITH produto_unico AS (
+      SELECT DISTINCT ON (pa.product_code) pa.*
+      FROM produto_analitico pa
+      WHERE pa.product_code IS NOT NULL
+      ORDER BY pa.product_code, (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
+    ), produtos_validos AS (
+      SELECT a.product_code
+      FROM produto_unico a
+      LEFT JOIN produtos p ON p.product_sku = a.product_sku
+      WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
+        AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
+        ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
+        ${buildIdentidadeFiltro(filtro)}
+    ), historico AS (
+      SELECT s.product_code, s.branch_code, s.stock_code, s.stock,
+             s.saldo_date::timestamp AS data_saldo, 2 AS prioridade,
+             s.loaded_at AS data_carga, s.row_number::bigint AS sequencia,
+             s.source_file AS arquivo
+      FROM stg_saldo_virtual_csv s
+      JOIN produtos_validos a ON a.product_code = s.product_code
+      WHERE s.rejection_reason IS NULL
+        AND s.saldo_date < ${dataCorte} + INTERVAL '1 day'
+        ${filtroLocalEstoqueSql(filtro.branches, 's')}
+      UNION ALL
+      SELECT s.product_code, s.branch_code, s.stock_code, s.stock,
+             s.captured_at AS data_saldo, 1 AS prioridade,
+             s.captured_at AS data_carga, s.id AS sequencia, '' AS arquivo
+      FROM prd_saldo s
+      JOIN produtos_validos a ON a.product_code = s.product_code
+      WHERE s.captured_at < ${dataCorte} + INTERVAL '1 day'
+        AND s.stock_description IS DISTINCT FROM 'CSV Virtual'
+        ${filtroLocalEstoqueSql(filtro.branches, 's')}
+    ), ultimo_saldo AS (
+      SELECT DISTINCT ON (product_code, branch_code, stock_code)
+        product_code, branch_code, stock_code, stock
+      FROM historico
+      ORDER BY product_code, branch_code, stock_code, data_saldo DESC,
+               prioridade DESC, data_carga DESC, sequencia DESC, arquivo DESC
+    ), custos AS (
+      SELECT product_code, MAX(valor) AS custo
+      FROM produto_custos
+      WHERE branch_code = ${CUSTO_PRODUCAO_BRANCH_CODE} AND cost_code = ${CUSTO_PRODUCAO_CODE}
+      GROUP BY product_code
+    )
+    SELECT COALESCE(SUM(s.stock), 0) AS quantidade,
+           COALESCE(SUM(s.stock * COALESCE(c.custo, 0)), 0) AS valor
+    FROM ultimo_saldo s
+    LEFT JOIN custos c ON c.product_code = s.product_code
+  `;
+}
+
+async function getValorEstoqueAnoAnterior(filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ valor: Decimal }>>(buildEstoqueAnoAnteriorSql(filtro, dataPosicao));
+  return decimalToNumber(rows[0]?.valor);
 }
 
 export async function getDiagnosticoSaldoRelatorioBase(filtro: RelatorioBaseFiltro) {
@@ -1006,7 +1030,6 @@ interface RelatorioBaseAnaliticoRow {
   lancamento: string | null;
   branch_code: number;
   estoque: Decimal | null;
-  estoque_ano_anterior: Decimal | null;
   giro_30d: Decimal | null;
   giro_60d: Decimal | null;
   giro_90d: Decimal | null;
@@ -1254,7 +1277,6 @@ async function getRelatorioBaseAnalitico(
       rb.lancamento,
       rb.branch_code,
       rb.estoque,
-      rb.estoque_ano_anterior,
       rb.giro_30d,
       rb.giro_60d,
       rb.giro_90d,
@@ -1352,9 +1374,7 @@ async function getRelatorioBaseAnalitico(
     pdvAta: number | null;
     emProducao: number;
     estTt: number;
-    estoqueAnoAnterior: number;
     valorEstoque: number;
-    valorEstoqueAnoAnterior: number;
     giro30: number;
     giro60: number;
     giro90: number;
@@ -1375,7 +1395,6 @@ async function getRelatorioBaseAnalitico(
     const valorEstoque = row.valor_estoque_custo_producao !== null
       ? decimalToNumber(row.valor_estoque_custo_producao)
       : estoque * (custo ?? 0);
-    const valorEstoqueAnoAnterior = decimalToNumber(row.estoque_ano_anterior) * (custo ?? 0);
     const ultimaEntrada = dateToIsoDate(row.ultima_entrada);
 
     const agg = skus.get(sku) || {
@@ -1400,9 +1419,7 @@ async function getRelatorioBaseAnalitico(
       pdvAta: row.pdv_atacado !== null ? decimalToNumber(row.pdv_atacado) : null,
       emProducao: decimalToNumber(row.em_producao),
       estTt: 0,
-      estoqueAnoAnterior: 0,
       valorEstoque: 0,
-      valorEstoqueAnoAnterior: 0,
       giro30: 0,
       giro60: 0,
       giro90: 0,
@@ -1413,9 +1430,7 @@ async function getRelatorioBaseAnalitico(
     };
 
     agg.estTt += estoque;
-    agg.estoqueAnoAnterior += decimalToNumber(row.estoque_ano_anterior);
     agg.valorEstoque += valorEstoque;
-    agg.valorEstoqueAnoAnterior += valorEstoqueAnoAnterior;
     agg.giro30 += decimalToNumber(row.giro_30d);
     agg.giro60 += decimalToNumber(row.giro_60d);
     agg.giro90 += decimalToNumber(row.giro_90d);
@@ -1444,7 +1459,6 @@ async function getRelatorioBaseAnalitico(
   const matrizStatusAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>();
   let valorEstoqueTotal = 0;
-  let valorEstoqueAnoAnterior = 0;
   let estVarejoTotal = 0;
   let estAtacadoTotal = 0;
   let vendaVarejoTotal = 0;
@@ -1510,7 +1524,6 @@ async function getRelatorioBaseAnalitico(
     const custo = sku.custo;
 
     valorEstoqueTotal += sku.valorEstoque;
-    valorEstoqueAnoAnterior += sku.valorEstoqueAnoAnterior;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
@@ -1842,6 +1855,7 @@ async function getRelatorioBaseAnalitico(
     .sort((a, b) => b.estTt - a.estTt);
   const giroAnualizado =
     kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
+  const valorEstoqueAnoAnterior = await getValorEstoqueAnoAnterior(filtro, dataAnalitica);
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
@@ -1937,9 +1951,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   // Limita as consultas simultaneas: disparar as 16 de uma vez esgotava o pool
   // enquanto as consultas mais longas ainda estavam rodando (Prisma P2024).
-  const [estoqueRows, estoqueAnoAnteriorRows, giroRows, giroAtacadoRows] = await Promise.all([
+  const [estoqueRows, valorEstoqueAnoAnterior, giroRows, giroAtacadoRows] = await Promise.all([
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
-    getEstoqueRows(productSkusFiltro, filtro.dataPosicao, -1),
+    getValorEstoqueAnoAnterior(filtro),
     getGiroRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
     getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
   ]);
@@ -1970,13 +1984,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const mapa = estoquePorSku.get(r.product_sku) || new Map<number, number>();
     mapa.set(r.branch_code, decimalToNumber(r.quantidade_estoque));
     estoquePorSku.set(r.product_sku, mapa);
-  }
-
-  const estoqueAnoAnteriorPorSku = new Map<string, Map<number, number>>();
-  for (const r of estoqueAnoAnteriorRows) {
-    const mapa = estoqueAnoAnteriorPorSku.get(r.product_sku) || new Map<number, number>();
-    mapa.set(r.branch_code, decimalToNumber(r.quantidade_estoque));
-    estoqueAnoAnteriorPorSku.set(r.product_sku, mapa);
   }
 
   const giroPorProductCode = new Map<number, Map<number, number>>(); // product_code -> branch_code -> giro
@@ -2097,7 +2104,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizStatusAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
-  let valorEstoqueAnoAnterior = 0;
   let estVarejoTotal = 0;
   let estAtacadoTotal = 0;
   let vendaVarejoTotal = 0;
@@ -2185,7 +2191,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const sku = identidade.product_sku;
     const productCode = identidade.product_code;
     const estoqueDoSku = estoquePorSku.get(sku) || new Map<number, number>();
-    const estoqueAnoAnteriorDoSku = estoqueAnoAnteriorPorSku.get(sku) || new Map<number, number>();
     const giroDoProduto = productCode !== null ? giroPorProductCode.get(productCode) : undefined;
     const vendaMesesDoProduto = productCode !== null ? vendaMesesPorProductCode.get(productCode) : undefined;
 
@@ -2201,15 +2206,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       }
     } else {
       for (const valor of estoqueDoSku.values()) estTt += valor;
-    }
-
-    let estTtAnoAnterior = 0;
-    if (branchFiltroParaDados) {
-      for (const [branchCode, valor] of estoqueAnoAnteriorDoSku) {
-        if (branchFiltroParaDados.has(branchCode)) estTtAnoAnterior += valor;
-      }
-    } else {
-      for (const valor of estoqueAnoAnteriorDoSku.values()) estTtAnoAnterior += valor;
     }
 
     const branches: Record<number, RelatorioBaseColunaFilial> = {};
@@ -2280,10 +2276,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     }
     const vendaAtacadoSku = venda30PorBranchDoSku.get(ATACADO_BRANCH_CODE) || 0;
     const valorEstoqueSku = estTt * (custo ?? 0);
-    const valorEstoqueAnoAnteriorSku = estTtAnoAnterior * (custo ?? 0);
 
     valorEstoqueTotal += valorEstoqueSku;
-    valorEstoqueAnoAnterior += valorEstoqueAnoAnteriorSku;
     estVarejoTotal += estVarejoSku;
     estAtacadoTotal += estAtacadoSku;
     vendaVarejoTotal += vendaVarejoSku;
