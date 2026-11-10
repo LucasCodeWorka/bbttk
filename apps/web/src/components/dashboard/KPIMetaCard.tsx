@@ -15,10 +15,11 @@ interface KPIMetaCardProps {
   gapFormato?: 'numero' | 'percentual';
   gapNegativoCor?: 'verde' | 'azul';
   subtitle?: string;
+  footer?: React.ReactNode;
   isLoading?: boolean;
 }
 
-export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = 'numero', gapNegativoCor = 'verde', subtitle, isLoading }: KPIMetaCardProps) {
+export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = 'numero', gapNegativoCor = 'verde', subtitle, footer, isLoading }: KPIMetaCardProps) {
   if (isLoading) {
     return (
       <Card className="border-l-4 border-l-gray-200">
@@ -42,6 +43,7 @@ export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = '
         Meta: {meta} · <span className={gapCor}>gap {gapTexto}</span>
       </p>
       {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
+      {footer}
     </Card>
   );
 }

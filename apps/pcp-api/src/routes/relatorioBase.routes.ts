@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getComparativoAnoAnterior } from '../services/relatorioBaseComparativo.service.js';
 import {
   getDiagnosticoSaldoRelatorioBase,
   getFiltrosRelatorioBase,
@@ -7,6 +8,16 @@ import {
 } from '../services/relatorioBase.service.js';
 
 const router = Router();
+
+function resolveFiltro(req: Request): RelatorioBaseFiltro {
+  return {
+    categoria: parseList(req.query.categoria), linha: parseList(req.query.linha),
+    genero: parseList(req.query.genero), status: parseList(req.query.status),
+    branches: parseBranchCodes(req.query.branches),
+    search: typeof req.query.search === 'string' ? req.query.search : undefined,
+    dataPosicao: parseDate(req.query.dataPosicao),
+  };
+}
 
 function parseList(value: unknown): string[] | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
@@ -51,6 +62,14 @@ router.get('/relatorio-base/diagnostico-saldo', async (req: Request, res: Respon
   }
 });
 
+router.get('/relatorio-base/comparativo-ano-anterior', async (req: Request, res: Response) => {
+  try {
+    res.json(await getComparativoAnoAnterior(resolveFiltro(req)));
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/relatorio-base', async (req: Request, res: Response) => {
   try {
     const page = Number(req.query.page || 1);
@@ -67,6 +86,7 @@ router.get('/relatorio-base', async (req: Request, res: Response) => {
       page: Number.isFinite(page) && page > 0 ? page : 1,
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 15,
       agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
+      incluirComparativoAnoAnterior: req.query.incluirComparativoAnoAnterior !== 'false',
     };
 
     res.json(await getRelatorioBase(filtro));

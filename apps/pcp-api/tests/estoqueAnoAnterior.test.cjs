@@ -4,6 +4,7 @@ const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { Prisma, PrismaClient } = require('@prisma/client');
 const { buildEstoqueAnoAnteriorSql, buildEstoqueAnoAnteriorAnaliticoSql } = require('../dist/services/relatorioBase.service.js');
+const { buildVendasAnoAnteriorSql, montarComparativoAnoAnterior } = require('../dist/services/relatorioBaseComparativo.service.js');
 const prisma = new PrismaClient({ log: [] });
 
 // CTEs substituem as tabelas reais. ANTIGA so existe no historico; nao ha lista
@@ -120,4 +121,91 @@ test('linhas exclusivas do AA nao compoem os indicadores atuais', { skip: !proce
     WHERE data_posicao = '2026-11-08' AND compoe_posicao_atual IS DISTINCT FROM false`;
   assert.deepEqual(row, { skus: 1, estoque: 50 });
 });
+test('estoque AA agrupado por linha preserva o total geral e os filtros', { skip: !process.env.DATABASE_URL }, async () => {
+  for (const filtro of [{}, { search: 'REF-ANTIGA' }, { branches: [-1] }]) {
+    const esperado = await consultar(filtro);
+    const rows = await prisma.$queryRaw`${fixture} SELECT * FROM (${buildEstoqueAnoAnteriorSql(filtro, '2026-11-08', true)}) calculo`;
+    assert.equal(rows.reduce((s, r) => s + Number(r.quantidade), 0), esperado.quantidade);
+    assert.equal(rows.reduce((s, r) => s + Number(r.valor), 0), esperado.valor);
+  }
+});
+
+test('AA analitico por linha inclui linhas historicas e preserva quantidades', { skip: !process.env.DATABASE_URL }, async () => {
+  const rows = await prisma.$queryRaw`${fixtureAnalitico} SELECT * FROM (${buildEstoqueAnoAnteriorAnaliticoSql({}, '2026-11-08', true)}) calculo`;
+  assert.equal(rows.reduce((s, r) => s + Number(r.quantidade), 0), 4);
+  assert.equal(rows.reduce((s, r) => s + Number(r.valor), 0), 70);
+});
+
+const fixtureVendas = Prisma.sql`${fixture},
+  classificacao_operacoes(operation_code, operations_type, operation_mode, description) AS (
+    VALUES (10,'S','4','VENDA ATACADO'),(11,'E','3','DEVOLUCAO ATACADO'),
+      (12,'E','4','PRODUCAO'),(13,'S','2','TRANSFERENCIA'),(20,'S','4','VENDA FUNCIONARIO')
+  ), documentos(id,branch_code,product_code,quantity,dia,fatura,seller_code,status,op) AS (
+    VALUES
+      (1,2,1,20,'2025-10-09'::timestamp,NULL::timestamp,2,4,10),
+      (2,2,1,2,'2025-11-08',NULL,2,4,11),
+      (3,2,1,-3,'2025-11-08',NULL,2,4,11),
+      (4,2,1,1000,'2025-10-08',NULL,2,4,10),
+      (5,2,1,1000,'2025-11-09',NULL,2,4,10),
+      (6,2,2,10,'2025-11-08',NULL,2,4,20),
+      (7,16,3,5,'2025-11-08',NULL,2,4,10),
+      (8,2,4,1000,'2025-11-08',NULL,2,4,10),
+      (9,2,5,1000,'2025-11-08',NULL,2,4,10),
+      (10,2,1000001,1000,'2025-11-08',NULL,2,4,10),
+      (11,2,1000002,2,'2025-11-08',NULL,2,4,10),
+      (12,2,1,1000,'2025-11-08',NULL,2,4,12),
+      (13,2,1,1000,'2025-11-08',NULL,2,4,13),
+      (14,2,1,1000,'2025-11-08',NULL,2,6,10),
+      (15,2,1,1000,'2025-11-08',NULL,1,4,10),
+      (16,2,1,4,'2025-10-08','2025-11-08 23:59',NULL,4,10),
+      (17,2,1,1000,'2025-11-08','2025-11-09',2,4,10),
+      (18,2,1,1000,'2025-11-08',NULL,2,4,999)
+  ), transacoes AS (
+    SELECT branch_code,id AS transaction_code,dia AS transaction_date,fatura AS dt_fatura,status,op AS operation_code FROM documentos
+  ), transacao_itens AS (
+    SELECT branch_code,id AS transaction_code,product_code,quantity,seller_code FROM documentos
+  )`;
+
+for (const [nome, filtro, esperado] of [
+  ['universo geral valido e venda liquida na mesma janela fiscal', {}, 36],
+  ['Atacado separado por operacao', { branches: [-2] }, 21],
+  ['DPA separado por operacao', { branches: [-1] }, 10],
+  ['Fabrica inteira sem duplicar DPA e Atacado', { branches: [2, -1, -2] }, 31],
+  ['empresa fechada participa do comparativo', { branches: [16] }, 5],
+  ['referencia historica e placeholder sem duplicacao', { search: 'REF-ANTIGA' }, 10],
+  ['classificacao e referencia aplicadas ao historico', { categoria: ['BLUSA'] }, 29],
+  ['filtro inexistente nao retorna vendas', { search: 'NAO-EXISTE' }, 0],
+]) {
+  test(`vendas AA: ${nome}`, { skip: !process.env.DATABASE_URL }, async () => {
+    const rows = await prisma.$transaction(async tx => {
+      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+      return tx.$queryRaw`${fixtureVendas} SELECT * FROM (${buildVendasAnoAnteriorSql({ ...filtro, dataPosicao: '2026-11-08' })}) calculo`;
+    });
+    assert.equal(rows.reduce((s, r) => s + Number(r.quantidade), 0), esperado);
+  });
+}
+
+test('cobertura AA agrega os totais, normaliza linhas e inclui vendas sem estoque', () => {
+  const result = montarComparativoAnoAnterior([
+    { linha: 'Básica', quantidade: 60, valor: 600 },
+    { linha: 'BASICO', quantidade: -10, valor: -100 },
+    { linha: 'BÁSICA RENOVÁVEL', quantidade: 12, valor: 120 },
+    { linha: 'STYLE', quantidade: 0, valor: 0 },
+  ], [
+    { linha: 'BASICA', quantidade: 10 }, { linha: 'BASICO', quantidade: 15 },
+    { linha: 'BASICA RENOVAVEL', quantidade: 0 }, { linha: 'COLECAO', quantidade: 5 },
+    { linha: 'SEM ESTOQUE', quantidade: 1 },
+  ]);
+  assert.equal(result.valorEstoque, 620);
+  assert.equal(result.coberturaGeral, 2);
+  assert.equal(result.coberturaBasico, 2);
+  assert.equal(result.coberturaBasicoRenovavel, null);
+  assert.equal(result.coberturaColecao, 0);
+});
+
+test('cobertura AA sem vendas positivas e indefinida, incluindo filtros vazios', () => {
+  assert.equal(montarComparativoAnoAnterior([], []).coberturaGeral, null);
+  assert.equal(montarComparativoAnoAnterior([{ linha: null, quantidade: 5, valor: 50 }], [{ linha: null, quantidade: -1 }]).coberturaGeral, null);
+});
+
 after(async () => prisma.$disconnect());

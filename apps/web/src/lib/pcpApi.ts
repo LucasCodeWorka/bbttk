@@ -284,6 +284,7 @@ export interface RelatorioBaseFiltro {
   branches?: number[];
   search?: string;
   dataPosicao?: string;
+  incluirComparativoAnoAnterior?: boolean;
   page?: number;
   pageSize?: number;
   agruparPorCorSalva?: boolean;
@@ -378,6 +379,7 @@ export interface RelatorioBaseReferenciaRow {
 }
 
 export interface RelatorioBaseResponse {
+  dataPosicao: string;
   config: {
     giroDias: number;
     coberturaMeses: number;
@@ -416,7 +418,7 @@ export interface RelatorioBaseKpisExtra {
   coberturaAtacado: number | null;
   giroAnualizado: number;
   valorEstoqueTotal: number;
-  valorEstoqueAnoAnterior: number;
+  valorEstoqueAnoAnterior: number | null;
   valorEstoqueVariacaoPercent: number | null;
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
@@ -471,22 +473,44 @@ export interface RelatorioBaseFiltrosResponse {
   colunas: { branchCode: number; label: string }[];
 }
 
-export const relatorioBaseApi = {
-  getRelatorioBase: (token: string, filtro: RelatorioBaseFiltro = {}) => {
+export interface RelatorioBaseComparativo {
+  dataPosicao: string;
+  dataAnoAnterior: string;
+  inicioVendas: string;
+  estoque: number;
+  vendas30d: number;
+  valorEstoque: number;
+  coberturaGeral: number | null;
+  coberturaBasico: number | null;
+  coberturaBasicoRenovavel: number | null;
+  coberturaColecao: number | null;
+}
+
+function relatorioBaseParams(filtro: RelatorioBaseFiltro) {
     const params = new URLSearchParams();
     if (filtro.search) params.set('search', filtro.search);
     if (filtro.dataPosicao) params.set('dataPosicao', filtro.dataPosicao);
     if (filtro.page) params.set('page', String(filtro.page));
     if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
     if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
+    if (filtro.incluirComparativoAnoAnterior === false) params.set('incluirComparativoAnoAnterior', 'false');
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);
     appendList(params, 'genero', filtro.genero);
     appendList(params, 'status', filtro.status);
 
-    const query = params.toString();
-    return fetchPcpApi<RelatorioBaseResponse>(`/api/pcp/relatorio-base${query ? `?${query}` : ''}`, { token });
+    return params.toString();
+}
+
+export const relatorioBaseApi = {
+  getRelatorioBase: (token: string, filtro: RelatorioBaseFiltro = {}, signal?: AbortSignal) => {
+    const query = relatorioBaseParams(filtro);
+    return fetchPcpApi<RelatorioBaseResponse>(`/api/pcp/relatorio-base${query ? `?${query}` : ''}`, { token, signal });
+  },
+  getComparativoAnoAnterior: (token: string, filtro: RelatorioBaseFiltro, signal?: AbortSignal) => {
+    const query = relatorioBaseParams(filtro);
+    return fetchPcpApi<RelatorioBaseComparativo>(`/api/pcp/relatorio-base/comparativo-ano-anterior?${query}`, { token, signal });
   },
 
   getFiltrosRelatorioBase: (token: string) =>
@@ -744,7 +768,7 @@ export interface CurvaAbcFiltro {
 }
 
 export const visaoGeralApi = {
-  getVisaoGeralExtras: (token: string, filtro: VisaoGeralExtrasFiltro = {}) => {
+  getVisaoGeralExtras: (token: string, filtro: VisaoGeralExtrasFiltro = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
@@ -752,7 +776,7 @@ export const visaoGeralApi = {
     appendList(params, 'genero', filtro.genero);
     appendList(params, 'status', filtro.status);
     const query = params.toString();
-    return fetchPcpApi<VisaoGeralExtrasResponse>(`/api/pcp/visao-geral${query ? `?${query}` : ''}`, { token });
+    return fetchPcpApi<VisaoGeralExtrasResponse>(`/api/pcp/visao-geral${query ? `?${query}` : ''}`, { token, signal });
   },
 };
 

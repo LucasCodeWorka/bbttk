@@ -156,6 +156,7 @@ export interface RelatorioBaseFiltro {
   branches?: number[];
   search?: string;
   dataPosicao?: string;
+  incluirComparativoAnoAnterior?: boolean;
   // Paginacao real por REFERENCIA (nao por SKU) - troca o antigo "rank" (Top 50/100/
   // 250/Todos) por pagina/tamanho de pagina, pedido do usuario ("nao ficar controlando
   // por rank... crie paginacoes"). pageSize grande (export) e um uso valido, nao um
@@ -287,7 +288,7 @@ export interface RelatorioBaseKpisExtra {
   coberturaAtacado: number | null;
   giroAnualizado: number;
   valorEstoqueTotal: number;
-  valorEstoqueAnoAnterior: number;
+  valorEstoqueAnoAnterior: number | null;
   valorEstoqueVariacaoPercent: number | null;
   // Critico = estoque com cobertura >= 150 dias, usando venda dos ultimos 30 dias.
   // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
@@ -342,6 +343,7 @@ export interface RelatorioBaseMatrizLinha {
 }
 
 export interface RelatorioBaseResponse {
+  dataPosicao: string;
   config: {
     giroDias: number;
     coberturaMeses: number;
@@ -427,7 +429,7 @@ function dataBaseSql(dataPosicao?: string): Prisma.Sql {
   return dataPosicao ? Prisma.sql`${dataPosicao}::date` : Prisma.sql`CURRENT_DATE`;
 }
 
-function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql {
+export function dataLimiteSuperiorSql(dataPosicao?: string, anosOffset = 0): Prisma.Sql {
   const base = dataBaseSql(dataPosicao);
   return anosOffset === 0 ? base : Prisma.sql`(${base} + make_interval(years => ${anosOffset}::int))`;
 }
@@ -468,23 +470,30 @@ async function getEstoqueRows(productSkus: string[] | null, dataPosicao?: string
 // O CSV preserva as variacoes antigas; prd_saldo complementa com capturas da API.
 // A antiga carga "CSV Virtual" da prd_saldo tinha uma unica posicao por chave e
 // nao deve sobrescrever a serie historica completa dos CSVs numerados.
-export function buildEstoqueAnoAnteriorSql(filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao): Prisma.Sql {
-  const dataCorte = dataLimiteSuperiorSql(dataPosicao, -1);
+export function buildProdutosValidosAnoAnteriorSql(filtro: RelatorioBaseFiltro): Prisma.Sql {
   return Prisma.sql`
-    WITH produto_unico AS (
+    produto_unico AS MATERIALIZED (
       SELECT DISTINCT ON (pa.product_code) pa.*
       FROM produto_analitico pa
       WHERE pa.product_code IS NOT NULL
       ORDER BY pa.product_code, (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
-    ), produtos_validos AS (
-      SELECT a.product_code
+    ), produtos_validos AS MATERIALIZED (
+      SELECT a.product_code, a.class_linha AS linha
       FROM produto_unico a
       LEFT JOIN produtos p ON p.product_sku = a.product_sku
       WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
         AND TRIM(UPPER(COALESCE(a.class_tipo, ''))) <> 'USO E CONSUMO'
         ${PCP_ESTOQUE_LIQUIDO_SKU_FILTER}
         ${buildIdentidadeFiltro(filtro)}
-    ), historico AS (
+    )`;
+}
+
+export function buildEstoqueAnoAnteriorSql(
+  filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao, porLinha = false
+): Prisma.Sql {
+  const dataCorte = dataLimiteSuperiorSql(dataPosicao, -1);
+  return Prisma.sql`
+    WITH ${buildProdutosValidosAnoAnteriorSql(filtro)}, historico AS (
       SELECT s.product_code, s.branch_code, s.stock_code, s.stock,
              s.saldo_date::timestamp AS data_saldo, 2 AS prioridade,
              s.loaded_at AS data_carga, s.row_number::bigint AS sequencia,
@@ -517,14 +526,17 @@ export function buildEstoqueAnoAnteriorSql(filtro: RelatorioBaseFiltro, dataPosi
     )
     SELECT COALESCE(SUM(s.stock), 0) AS quantidade,
            COALESCE(SUM(s.stock * COALESCE(c.custo, 0)), 0) AS valor
+           ${porLinha ? Prisma.sql`, a.linha` : Prisma.empty}
     FROM ultimo_saldo s
     LEFT JOIN custos c ON c.product_code = s.product_code
+    ${porLinha ? Prisma.sql`JOIN produtos_validos a ON a.product_code = s.product_code GROUP BY a.linha` : Prisma.empty}
   `;
 }
 
-export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro, dataPosicao: string): Prisma.Sql {
+export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro, dataPosicao: string, porLinha = false): Prisma.Sql {
   return Prisma.sql`
     SELECT COALESCE(SUM(rb.estoque_ano_anterior * COALESCE(rb.custo_producao, 0)), 0) AS valor,
+      COALESCE(SUM(rb.estoque_ano_anterior), 0) AS quantidade,
       EXISTS (
         SELECT 1 FROM pcp_relatorio_base_analitico_diario p
         WHERE p.data_posicao = ${dataPosicao}::date
@@ -532,9 +544,11 @@ export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro,
         SELECT 1 FROM pcp_relatorio_base_analitico_diario p
         WHERE p.data_posicao = ${dataPosicao}::date AND p.compoe_posicao_atual IS NULL
       ) AS completo
+      ${porLinha ? Prisma.sql`, rb.linha` : Prisma.empty}
     FROM pcp_relatorio_base_analitico_diario rb
     WHERE rb.data_posicao = ${dataPosicao}::date
       ${buildAnaliticoFiltro(filtro)}
+      ${porLinha ? Prisma.sql`GROUP BY rb.linha` : Prisma.empty}
   `;
 }
 
@@ -1893,11 +1907,13 @@ async function getRelatorioBaseAnalitico(
     .sort((a, b) => b.estTt - a.estTt);
   const giroAnualizado =
     kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
-  const valorEstoqueAnoAnterior = await getValorEstoqueAnoAnterior(filtro, dataAnalitica, possuiMarcador);
+  const valorEstoqueAnoAnterior = filtro.incluirComparativoAnoAnterior === false
+    ? null : await getValorEstoqueAnoAnterior(filtro, dataAnalitica, possuiMarcador);
   const valorEstoqueVariacaoPercent =
-    valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
+    valorEstoqueAnoAnterior !== null && valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
   return {
+    dataPosicao: dataAnalitica,
     config: {
       giroDias: config.giroDias,
       coberturaMeses: config.coberturaMeses,
@@ -1921,7 +1937,7 @@ async function getRelatorioBaseAnalitico(
       coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
       giroAnualizado,
       valorEstoqueTotal: round(valorEstoqueTotal, 2),
-      valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
+      valorEstoqueAnoAnterior: valorEstoqueAnoAnterior === null ? null : round(valorEstoqueAnoAnterior, 2),
       valorEstoqueVariacaoPercent,
       estoqueMortoQtd: round(estoqueMortoQtd, 0),
       estoqueMortoValor: round(estoqueMortoValor, 2),
@@ -1960,6 +1976,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const analitico = await getRelatorioBaseAnalitico(filtro, config);
   if (analitico) return analitico;
 
+  if (!filtro.dataPosicao) {
+    const [data] = await prisma.$queryRaw<Array<{ data: string }>>`SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS data`;
+    filtro = { ...filtro, dataPosicao: data.data };
+  }
+
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
 
   // Mapeamento de branch para busca de dados: ATACADO_BRANCH_CODE (-2) é um código sintético
@@ -1991,7 +2012,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   // enquanto as consultas mais longas ainda estavam rodando (Prisma P2024).
   const [estoqueRows, valorEstoqueAnoAnterior, giroRows, giroAtacadoRows] = await Promise.all([
     getEstoqueRows(productSkusFiltro, filtro.dataPosicao),
-    getValorEstoqueAnoAnterior(filtro),
+    filtro.incluirComparativoAnoAnterior === false ? Promise.resolve(null) : getValorEstoqueAnoAnterior(filtro),
     getGiroRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
     getGiroAtacadoRows(config.giroDias, productCodesFiltro, filtro.dataPosicao),
   ]);
@@ -2721,7 +2742,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const giroAnualizado =
     kpis.estTt > 0 && kpis.giroTt1 > 0 ? round((kpis.giroTt1 * 12) / kpis.estTt, 2) : 0;
   const valorEstoqueVariacaoPercent =
-    valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
+    valorEstoqueAnoAnterior !== null && valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
   const kpisExtra: RelatorioBaseKpisExtra = {
     coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
@@ -2729,7 +2750,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     coberturaAtacado: coberturaDe(estAtacadoTotal, vendaAtacadoTotal),
     giroAnualizado,
     valorEstoqueTotal: round(valorEstoqueTotal, 2),
-    valorEstoqueAnoAnterior: round(valorEstoqueAnoAnterior, 2),
+    valorEstoqueAnoAnterior: valorEstoqueAnoAnterior === null ? null : round(valorEstoqueAnoAnterior, 2),
     valorEstoqueVariacaoPercent,
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
@@ -2752,6 +2773,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   };
 
   return {
+    dataPosicao: filtro.dataPosicao!,
     config: {
       giroDias: config.giroDias,
       coberturaMeses: config.coberturaMeses,

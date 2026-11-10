@@ -312,6 +312,27 @@ o botao Atualizar aplica todos juntos e volta a pagina 1. Limpar filtros tambem
 aguarda Atualizar. Paginacao, indicadores extras e Excel usam os filtros aplicados,
 nao as edicoes pendentes. O sessionStorage preserva os dois estados separadamente.
 
+Desde 10/11/2026, a Visao Geral pede o relatorio principal com
+`incluirComparativoAnoAnterior=false`, que devolve AA null e a `dataPosicao`
+efetivamente consultada. Em seguida chama `/api/pcp/relatorio-base/comparativo-ano-anterior`
+com essa data e os filtros aplicados. O endpoint calcula estoque/valor AA e vendas
+liquidas D-30 a D daquele ano, sem limitar aos SKUs atuais, e devolve cobertura geral,
+Basico, Renovavel e Style. A quantidade e o valor do estoque compartilham a mesma
+consulta historica; a venda usa o mesmo catalogo valido e separa DPA/Atacado pela
+operacao. O AA materializado completo continua sendo usado quando disponivel.
+Os cinco cartoes mantem os valores atuais e carregam somente o rodape AA; falha
+permite tentar novamente apenas o comparativo. Cache por filtros/data por 5 minutos,
+Atualizar forca nova consulta, paginacao reutiliza o cache; abort/checagem de sinal
+impedem respostas antigas de trocar os filtros atuais. Clientes sem o parametro
+continuam recebendo o valor AA no relatorio principal por compatibilidade.
+
+Na VPS, a correcao de vendas foi ativada em 10/11 no checkout
+`/root/projetobb/scriptsbb`, revisao `0f9c591`, usado pelos agendamentos D-1 e D-7.
+Posicoes 03 a 09/11 reprocessadas; 08/11 = 20.785 pecas. A revisao `4f2e2e2` de
+materializacao completa do AA ainda NAO foi ativada na VPS. Backup e manifesto da
+ativacao em `/root/backups/bbtk-pcp-vendas30d-20261110-094803`. Acesso VPS esta no
+`.env` do repo ETL (`VPS_IP` e `password`); nao exibir os valores.
+
 ## Regras de negócio — Comercial
 
 - **Faturamento é sempre líquido** (venda − devolução). Devolução é identificada pelo

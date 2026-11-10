@@ -17,6 +17,7 @@ import {
   PcpClassificacaoDimensao,
   RelatorioBaseFiltro,
   RelatorioBaseResponse,
+  RelatorioBaseComparativo,
   RelatorioBaseRow,
   RelatorioBaseReferenciaRow,
   RelatorioBaseMatrizLinha,
@@ -489,6 +490,10 @@ export default function PcpRelatorioBasePage() {
   const porCor = visaoLinha !== 'referencia';
 
   const [data, setData] = useState<RelatorioBaseResponse | null>(null);
+  const [comparativo, setComparativo] = useState<RelatorioBaseComparativo | null>(null);
+  const [isLoadingComparativo, setIsLoadingComparativo] = useState(true);
+  const [erroComparativo, setErroComparativo] = useState(false);
+  const comparativoAbortRef = useRef<AbortController | null>(null);
   const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.sortKey ?? 'giroTt3');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.sortDir || 'desc');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
@@ -511,7 +516,7 @@ export default function PcpRelatorioBasePage() {
   const forcarAtualizacaoRef = useRef(false);
   const [scrollWidth, setScrollWidth] = useState(0);
 
-  const carregarDados = useCallback(async (forcarRecarregar = false) => {
+  const carregarDados = useCallback(async (forcarRecarregar = false, signal?: AbortSignal) => {
     if (!token) return;
 
     const filtro: RelatorioBaseFiltro = {
@@ -525,11 +530,12 @@ export default function PcpRelatorioBasePage() {
       page: pagina,
       pageSize: PAGE_SIZE,
       agruparPorCorSalva,
+      incluirComparativoAnoAnterior: false,
     };
 
     // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
     // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
-    const cacheKey = `visao-geral-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-v2-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
     if (!forcarRecarregar) {
@@ -541,7 +547,7 @@ export default function PcpRelatorioBasePage() {
           if (Date.now() - timestamp < VISAO_GERAL_CACHE_TTL_MS) {
             setData(cachedData);
             setIsLoading(false);
-            return true;
+            return cachedData as RelatorioBaseResponse;
           }
         }
       } catch (e) {
@@ -552,7 +558,8 @@ export default function PcpRelatorioBasePage() {
     setIsLoading(true);
     setErro(null);
     try {
-      const response = await relatorioBaseApi.getRelatorioBase(token, filtro);
+      const response = await relatorioBaseApi.getRelatorioBase(token, filtro, signal);
+      if (signal?.aborted) return;
       setData(response);
 
       // Salvar no cache
@@ -564,13 +571,14 @@ export default function PcpRelatorioBasePage() {
       } catch (e) {
         // Ignorar erros ao salvar cache (ex: quota excedida)
       }
-      return true;
+      return response;
     } catch (error) {
+      if (signal?.aborted) return;
       setErro(error instanceof Error ? error.message : 'Erro ao carregar o Relatorio Base');
       console.error(error);
       return false;
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) setIsLoading(false);
     }
   }, [token, filtroAplicado, pagina, agruparPorCorSalva]);
 
@@ -597,7 +605,7 @@ export default function PcpRelatorioBasePage() {
     });
   }, [produtoFiltro, filiaisSelecionadas, search, dataPosicao, filtroAplicado, pagina, verPorLoja, sortKey, sortDir, dimensao, visaoLinha]);
 
-  const carregarExtras = useCallback(async (forcarRecarregar = false) => {
+  const carregarExtras = useCallback(async (forcarRecarregar = false, signal?: AbortSignal) => {
     if (!token) return;
 
     const filtro = {
@@ -631,7 +639,8 @@ export default function PcpRelatorioBasePage() {
 
     setIsLoadingExtras(true);
     try {
-      const response = await visaoGeralApi.getVisaoGeralExtras(token, filtro);
+      const response = await visaoGeralApi.getVisaoGeralExtras(token, filtro, signal);
+      if (signal?.aborted) return;
       setExtras(response);
 
       // Salvar no cache
@@ -644,11 +653,78 @@ export default function PcpRelatorioBasePage() {
         // Ignorar erros ao salvar cache
       }
     } catch (error) {
+      if (signal?.aborted) return;
       console.error('Erro ao carregar indicadores extra da Visao Geral:', error);
     } finally {
-      setIsLoadingExtras(false);
+      if (!signal?.aborted) setIsLoadingExtras(false);
     }
   }, [token, filtroAplicado]);
+
+  const carregarComparativo = useCallback(async (dataEfetiva: string, forcar = false, signal?: AbortSignal) => {
+    if (!token) return;
+    const filtro: RelatorioBaseFiltro = {
+      categoria: filtroAplicado.produtoFiltro.categoria, linha: filtroAplicado.produtoFiltro.linha,
+      genero: filtroAplicado.produtoFiltro.genero, status: filtroAplicado.produtoFiltro.status,
+      branches: filtroAplicado.filiaisSelecionadas.length ? filtroAplicado.filiaisSelecionadas : undefined,
+      search: filtroAplicado.search || undefined, dataPosicao: dataEfetiva,
+    };
+    const cacheKey = `visao-geral-aa-v1-${JSON.stringify(filtro)}`;
+    setIsLoadingComparativo(true);
+    setErroComparativo(false);
+    try {
+      if (!forcar) {
+        try {
+          const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+          if (cached && Date.now() - cached.timestamp < VISAO_GERAL_CACHE_TTL_MS) {
+            if (!signal?.aborted) setComparativo(cached.data);
+            return;
+          }
+        } catch { /* Cache indisponivel: consulta normalmente. */ }
+      }
+      const requestSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(60_000)]);
+      const response = await relatorioBaseApi.getComparativoAnoAnterior(token, filtro, requestSignal);
+      if (signal?.aborted) return;
+      if (response.dataPosicao !== dataEfetiva) throw new Error('Data do comparativo diferente da posicao atual');
+      setComparativo(response);
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ data: response, timestamp: Date.now() }));
+      } catch { /* Quota de cache nao impede a exibicao. */ }
+    } catch {
+      if (!signal?.aborted) setErroComparativo(true);
+    } finally {
+      if (!signal?.aborted) setIsLoadingComparativo(false);
+    }
+  }, [token, filtroAplicado]);
+
+  function tentarComparativo() {
+    if (!data || isLoading) return;
+    comparativoAbortRef.current?.abort();
+    const controller = new AbortController();
+    comparativoAbortRef.current = controller;
+    void carregarComparativo(data.dataPosicao, true, controller.signal);
+  }
+
+  function rodapeComparativo(atual: number | null, anterior: number | null | undefined, valor = false) {
+    if (isLoadingComparativo) return (
+      <p role="status" className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
+        <span aria-hidden="true" className="inline-block h-3 w-3 rounded-full border-2 border-gray-200 border-t-gray-500 animate-spin" />
+        Calculando ano anterior…
+      </p>
+    );
+    if (erroComparativo) return (
+      <p className="text-xs text-gray-500 mt-1">
+        Comparativo indisponível.{' '}
+        <button type="button" onClick={tentarComparativo} className="underline text-[var(--bbtk-blue)]">Tentar novamente</button>
+      </p>
+    );
+    if (!comparativo) return null;
+    if (anterior === null || anterior === undefined) return <p className="text-xs text-gray-500 mt-1">AA: sem base de vendas</p>;
+    const diferenca = atual === null ? null : atual - anterior;
+    return <p className="text-xs text-gray-500 mt-1" title={`Posição AA: ${formatDate(comparativo.dataAnoAnterior)}`}>
+      AA: {valor ? formatMoney(anterior) : formatMeses(anterior, 2)}
+      {!valor && diferenca !== null ? ` · Δ ${diferenca > 0 ? '+' : ''}${formatNumber(diferenca, 2)} meses` : ''}
+    </p>;
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -663,22 +739,32 @@ export default function PcpRelatorioBasePage() {
 
   useEffect(() => {
     if (!token) return;
-    let cancelado = false;
+    const controller = new AbortController();
     const forcarRecarregar = forcarAtualizacaoRef.current;
     forcarAtualizacaoRef.current = false;
 
     async function carregarPainel() {
       setIsLoadingExtras(true);
-      const carregou = await carregarDados(forcarRecarregar);
+      setComparativo(null);
+      setErroComparativo(false);
+      setIsLoadingComparativo(true);
+      const resposta = await carregarDados(forcarRecarregar, controller.signal);
       // Os extras usam os mesmos filtros aplicados e aguardam o relatorio principal.
-      if (cancelado) return;
-      if (carregou) await carregarExtras(forcarRecarregar);
-      else setIsLoadingExtras(false);
+      if (controller.signal.aborted) return;
+      if (resposta) {
+        const aaController = new AbortController();
+        comparativoAbortRef.current = aaController;
+        void carregarComparativo(resposta.dataPosicao, forcarRecarregar, aaController.signal);
+        void carregarExtras(forcarRecarregar, controller.signal);
+      } else {
+        setIsLoadingExtras(false);
+        setIsLoadingComparativo(false);
+      }
     }
 
     void carregarPainel();
-    return () => { cancelado = true; };
-  }, [token, carregarDados, carregarExtras]);
+    return () => { controller.abort(); comparativoAbortRef.current?.abort(); };
+  }, [token, carregarDados, carregarExtras, carregarComparativo]);
 
   // Sincronizar scroll horizontal
   useEffect(() => {
@@ -930,6 +1016,7 @@ export default function PcpRelatorioBasePage() {
         agruparPorCorSalva,
         page: 1,
         pageSize: 100000,
+        incluirComparativoAnoAnterior: false,
       });
       const colunasExport = completo.colunas;
       const skuRows = completo.rows.flatMap((r) => r.skus);
@@ -1154,8 +1241,10 @@ export default function PcpRelatorioBasePage() {
         <KPICard
           title="Valor em Estoque"
           value={isLoading || !data ? '—' : formatMoney(data.kpisExtra.valorEstoqueTotal)}
-          variation={data?.kpisExtra.valorEstoqueVariacaoPercent ?? undefined}
-          subtitle={data ? `Custo | AA: ${formatMoney(data.kpisExtra.valorEstoqueAnoAnterior)}` : undefined}
+          variation={!isLoadingComparativo && !erroComparativo && comparativo && comparativo.valorEstoque > 0 && data
+            ? round1(((data.kpisExtra.valorEstoqueTotal - comparativo.valorEstoque) / comparativo.valorEstoque) * 100) : undefined}
+          subtitle="Custo"
+          footer={rodapeComparativo(data?.kpisExtra.valorEstoqueTotal ?? null, comparativo?.valorEstoque, true)}
           color="blue"
           valueSize="md"
           isLoading={isLoading}
@@ -1166,7 +1255,8 @@ export default function PcpRelatorioBasePage() {
           meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
           gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
           invertido
-          isLoading={isLoading || isLoadingExtras}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaGeral ?? null, comparativo?.coberturaGeral)}
+          isLoading={isLoading}
         />
         <KPIMetaCard
           title="Giro anual"
@@ -1187,7 +1277,8 @@ export default function PcpRelatorioBasePage() {
           gapFormato="percentual"
           gapNegativoCor="azul"
           invertido
-          isLoading={isLoading || isLoadingExtras}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaBasico ?? null, comparativo?.coberturaBasico)}
+          isLoading={isLoading}
         />
         <KPIMetaCard
           title="Cobertura Renovável"
@@ -1197,7 +1288,8 @@ export default function PcpRelatorioBasePage() {
           gapFormato="percentual"
           gapNegativoCor="azul"
           invertido
-          isLoading={isLoading || isLoadingExtras}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaBasicoRenovavel ?? null, comparativo?.coberturaBasicoRenovavel)}
+          isLoading={isLoading}
         />
         <KPIMetaCard
           title="Cobertura Style"
@@ -1207,7 +1299,8 @@ export default function PcpRelatorioBasePage() {
           gapFormato="percentual"
           gapNegativoCor="azul"
           invertido
-          isLoading={isLoading || isLoadingExtras}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaColecao ?? null, comparativo?.coberturaColecao)}
+          isLoading={isLoading}
         />
       </div>
 
