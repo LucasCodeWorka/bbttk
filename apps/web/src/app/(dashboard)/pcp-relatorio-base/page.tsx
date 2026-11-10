@@ -721,8 +721,8 @@ export default function PcpRelatorioBasePage() {
     if (anterior === null || anterior === undefined) return <p className="text-xs text-gray-500 mt-1">AA: sem base de vendas</p>;
     const diferenca = atual === null ? null : atual - anterior;
     return <p className="text-xs text-gray-500 mt-1" title={`Posição AA: ${formatDate(comparativo.dataAnoAnterior)}`}>
-      AA: {valor ? formatMoney(anterior) : formatMeses(anterior, 2)}
-      {!valor && diferenca !== null ? ` · Δ ${diferenca > 0 ? '+' : ''}${formatNumber(diferenca, 2)} meses` : ''}
+      AA: {valor ? formatMoney(anterior) : formatMeses(anterior, 1)}
+      {!valor && diferenca !== null ? ` · Δ ${diferenca > 0 ? '+' : ''}${formatNumber(diferenca, 1)} meses` : ''}
     </p>;
   }
 
