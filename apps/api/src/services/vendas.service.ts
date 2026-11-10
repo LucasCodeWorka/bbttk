@@ -1251,7 +1251,13 @@ export async function getMetasPorVendedorPeriodo(
     const proporcao = periodo.diasSelecionados / periodo.diasNoMes;
     for (const meta of metas) {
       if (meta.seller_code === null) continue;
-      if (branchCodes && !branchCodes.includes(meta.branch_code)) continue;
+      // A meta da filial real 2 pertence ao Atacado (2.3 na selecao), como no
+      // comparativo por loja. DPA nao recebe essa meta. Filtramos cada registro
+      // uma vez, mesmo quando DPA e Atacado estao selecionados juntos.
+      const filialMeta = meta.branch_code === FABRICA_BRANCH_CODE
+        ? ATACADO_BRANCH_CODE
+        : meta.branch_code;
+      if (branchCodes?.length && !branchCodes.includes(filialMeta)) continue;
       acumulado.set(
         meta.seller_code,
         (acumulado.get(meta.seller_code) || 0) + meta.nivel_3 * proporcao
