@@ -43,9 +43,11 @@ function desvioPercentualDe(valor: number | null | undefined, base: number | nul
   if (valor === null || valor === undefined || base === null || base === undefined || base <= 0) return null;
   return ((valor - base) / base) * 100;
 }
-function giroSobreEstoque(giro: number | undefined, estoque: number | undefined): string {
-  if (!estoque || estoque <= 0) return 'Giro: —';
-  return `Giro: ${formatNumber(((giro || 0) / estoque) * 100, 1)}%`;
+function giroPercentual(venda: number | undefined, estoqueFinal: number | undefined): string {
+  if (venda === undefined || estoqueFinal === undefined) return 'Giro: —';
+  const base = venda + estoqueFinal;
+  if (base <= 0) return 'Giro: —';
+  return `Giro: ${formatNumber((venda / base) * 100, 2)}%`;
 }
 function formatMeses(value: number | null | undefined, decimals: number): string {
   return value === null || value === undefined ? '—' : `${formatNumber(value, decimals)} meses`;
@@ -1268,7 +1270,7 @@ export default function PcpRelatorioBasePage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPICard title="Peças Vendidas 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
+        <KPICard title="Peças Vendidas 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroPercentual(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPIMetaCard
           title="Cobertura Básico"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 2)}
