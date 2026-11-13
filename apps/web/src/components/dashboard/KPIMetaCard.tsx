@@ -7,19 +7,14 @@ interface KPIMetaCardProps {
   title: string;
   value: string;
   meta: string;
-  gap: number;
-  /** Quando true, gap negativo = bom (verde) e gap positivo = ruim (vermelho) - usado
-   * pra metricas onde ficar ACIMA da meta é o problema (ex: cobertura, estoque morto).
-   * Quando false (padrao), gap positivo = bom - mesma polaridade do resto do dashboard. */
-  invertido?: boolean;
+  gap: number | null;
   gapFormato?: 'numero' | 'percentual';
-  gapNegativoCor?: 'verde' | 'azul';
   subtitle?: string;
   footer?: React.ReactNode;
   isLoading?: boolean;
 }
 
-export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = 'numero', gapNegativoCor = 'verde', subtitle, footer, isLoading }: KPIMetaCardProps) {
+export function KPIMetaCard({ title, value, meta, gap, gapFormato = 'numero', subtitle, footer, isLoading }: KPIMetaCardProps) {
   if (isLoading) {
     return (
       <Card className="border-l-4 border-l-gray-200">
@@ -30,17 +25,16 @@ export function KPIMetaCard({ title, value, meta, gap, invertido, gapFormato = '
     );
   }
 
-  const bom = invertido ? gap <= 0 : gap >= 0;
-  const gapCor = gap < 0 && gapNegativoCor === 'azul' ? 'text-blue-600' : bom ? 'text-green-600' : 'text-red-600';
-  const borderCor = gap < 0 && gapNegativoCor === 'azul' ? 'border-l-[var(--bbtk-blue)]' : bom ? 'border-l-[var(--bbtk-green)]' : 'border-l-[var(--bbtk-red)]';
-  const gapTexto = `${gap > 0 ? '+' : ''}${gap.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${gapFormato === 'percentual' ? '%' : ''}`;
+  const gapCor = gap !== null && gap < 0 ? 'text-blue-600' : gap !== null && gap > 0 ? 'text-red-600' : 'text-gray-500';
+  const borderCor = gap !== null && gap < 0 ? 'border-l-[var(--bbtk-blue)]' : gap !== null && gap > 0 ? 'border-l-[var(--bbtk-red)]' : 'border-l-gray-200';
+  const gapTexto = gap === null ? '—' : `${gap > 0 ? '+' : ''}${gap.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${gapFormato === 'percentual' ? '%' : ''}`;
 
   return (
     <Card className={cn('border-l-4', borderCor)}>
       <CardTitle size="xs" className="truncate">{title}</CardTitle>
       <CardValue size="lg" className="mt-2">{value}</CardValue>
       <p className="text-xs text-gray-500 mt-1">
-        Meta: {meta} · <span className={gapCor}>gap {gapTexto}</span>
+        Meta: {meta} · <span className={gapCor}>DESVIO {gapTexto}</span>
       </p>
       {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
       {footer}

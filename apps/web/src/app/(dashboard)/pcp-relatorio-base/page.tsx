@@ -39,15 +39,9 @@ const DIMENSAO_OPTIONS = [
   { value: 'status', label: 'Por status' },
 ];
 
-function gapDe(valor: number | null, meta: number): number {
-  return valor === null ? 0 : round1(valor - meta);
-}
-function gapPercentualDe(valor: number | null, meta: number): number {
-  if (valor === null || meta <= 0) return 0;
-  return ((valor - meta) / meta) * 100;
-}
-function round1(v: number): number {
-  return Math.round(v * 10) / 10;
+function desvioPercentualDe(valor: number | null | undefined, base: number | null | undefined): number | null {
+  if (valor === null || valor === undefined || base === null || base === undefined || base <= 0) return null;
+  return ((valor - base) / base) * 100;
 }
 function giroSobreEstoque(giro: number | undefined, estoque: number | undefined): string {
   if (!estoque || estoque <= 0) return 'Giro: —';
@@ -704,7 +698,7 @@ export default function PcpRelatorioBasePage() {
     void carregarComparativo(data.dataPosicao, true, controller.signal);
   }
 
-  function rodapeComparativo(atual: number | null, anterior: number | null | undefined, valor = false) {
+  function rodapeComparativo(atual: number | null, anterior: number | null | undefined, formato: 'meses' | 'valor' | 'quantidade' = 'meses', casasDecimais = 1) {
     if (isLoadingComparativo) return (
       <p role="status" className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
         <span aria-hidden="true" className="inline-block h-3 w-3 rounded-full border-2 border-gray-200 border-t-gray-500 animate-spin" />
@@ -720,9 +714,15 @@ export default function PcpRelatorioBasePage() {
     if (!comparativo) return null;
     if (anterior === null || anterior === undefined) return <p className="text-xs text-gray-500 mt-1">AA: sem base de vendas</p>;
     const diferenca = atual === null ? null : atual - anterior;
+    const desvio = desvioPercentualDe(atual, anterior);
+    const desvioCor = desvio !== null && desvio < 0 ? 'text-blue-600' : desvio !== null && desvio > 0 ? 'text-red-600' : 'text-gray-500';
     return <p className="text-xs text-gray-500 mt-1" title={`Posição AA: ${formatDate(comparativo.dataAnoAnterior)}`}>
-      AA: {valor ? formatMoney(anterior) : formatMeses(anterior, 1)}
-      {!valor && diferenca !== null ? ` · Δ ${diferenca > 0 ? '+' : ''}${formatNumber(diferenca, 1)} meses` : ''}
+      AA: {formato === 'valor' ? formatMoney(anterior) : formato === 'quantidade' ? formatNumber(anterior) : formatMeses(anterior, casasDecimais)}
+      {formato === 'meses' ? (
+        diferenca !== null ? ` · Δ ${diferenca > 0 ? '+' : ''}${formatNumber(diferenca, casasDecimais)} meses` : ''
+      ) : (
+        <> · <span className={desvioCor}>DESVIO {desvio === null ? '—' : `${desvio > 0 ? '+' : ''}${formatNumber(desvio, 2)}%`}</span></>
+      )}
     </p>;
   }
 
@@ -1234,6 +1234,7 @@ export default function PcpRelatorioBasePage() {
               ? `${formatNumber(data.kpisExtra.referenciasComEstoque || 0)} referências com estoque | ${formatNumber(data.kpis.skuCount || 0)} SKUs`
               : undefined
           }
+          footer={rodapeComparativo(data?.kpis.estTt ?? null, comparativo?.estoque, 'quantidade')}
           color="blue"
           valueSize="sm"
           isLoading={isLoading}
@@ -1241,10 +1242,8 @@ export default function PcpRelatorioBasePage() {
         <KPICard
           title="Valor em Estoque"
           value={isLoading || !data ? '—' : formatMoney(data.kpisExtra.valorEstoqueTotal)}
-          variation={!isLoadingComparativo && !erroComparativo && comparativo && comparativo.valorEstoque > 0 && data
-            ? round1(((data.kpisExtra.valorEstoqueTotal - comparativo.valorEstoque) / comparativo.valorEstoque) * 100) : undefined}
           subtitle="Custo"
-          footer={rodapeComparativo(data?.kpisExtra.valorEstoqueTotal ?? null, comparativo?.valorEstoque, true)}
+          footer={rodapeComparativo(data?.kpisExtra.valorEstoqueTotal ?? null, comparativo?.valorEstoque, 'valor')}
           color="blue"
           valueSize="md"
           isLoading={isLoading}
@@ -1253,8 +1252,8 @@ export default function PcpRelatorioBasePage() {
           title="Cobertura geral"
           value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaGeral, 2)}
           meta={formatMeses(extras?.meta.metaCoberturaGeralMeses, 1)}
-          gap={gapDe(data?.kpisExtra.coberturaGeral ?? null, extras?.meta.metaCoberturaGeralMeses ?? 0)}
-          invertido
+          gap={desvioPercentualDe(data?.kpisExtra.coberturaGeral, extras?.meta.metaCoberturaGeralMeses)}
+          gapFormato="percentual"
           footer={rodapeComparativo(data?.kpisExtra.coberturaGeral ?? null, comparativo?.coberturaGeral)}
           isLoading={isLoading}
         />
@@ -1262,7 +1261,8 @@ export default function PcpRelatorioBasePage() {
           title="Giro anual"
           value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
           meta={formatVezes(extras?.meta.metaGiroAnualizado)}
-          gap={gapDe(data?.kpisExtra.giroAnualizado ?? null, extras?.meta.metaGiroAnualizado ?? 0)}
+          gap={desvioPercentualDe(data?.kpisExtra.giroAnualizado, extras?.meta.metaGiroAnualizado)}
+          gapFormato="percentual"
           isLoading={isLoading || isLoadingExtras}
         />
       </div>
@@ -1271,35 +1271,29 @@ export default function PcpRelatorioBasePage() {
         <KPICard title="Peças Vendidas 30 dias" value={formatNumber(data?.kpis.giroTt30 || 0)} subtitle={giroSobreEstoque(data?.kpis.giroTt30, data?.kpis.estTt)} color="green" valueSize="sm" isLoading={isLoading} />
         <KPIMetaCard
           title="Cobertura Básico"
-          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 1)}
-          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapPercentualDe(data?.kpisExtra.coberturaBasico ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasico, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 2)}
+          gap={desvioPercentualDe(data?.kpisExtra.coberturaBasico, extras?.meta.metaCoberturaBasicoMeses)}
           gapFormato="percentual"
-          gapNegativoCor="azul"
-          invertido
-          footer={rodapeComparativo(data?.kpisExtra.coberturaBasico ?? null, comparativo?.coberturaBasico)}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaBasico ?? null, comparativo?.coberturaBasico, 'meses', 2)}
           isLoading={isLoading}
         />
         <KPIMetaCard
           title="Cobertura Renovável"
-          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasicoRenovavel, 1)}
-          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 1)}
-          gap={gapPercentualDe(data?.kpisExtra.coberturaBasicoRenovavel ?? null, extras?.meta.metaCoberturaBasicoMeses ?? 0)}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaBasicoRenovavel, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaBasicoMeses, 2)}
+          gap={desvioPercentualDe(data?.kpisExtra.coberturaBasicoRenovavel, extras?.meta.metaCoberturaBasicoMeses)}
           gapFormato="percentual"
-          gapNegativoCor="azul"
-          invertido
-          footer={rodapeComparativo(data?.kpisExtra.coberturaBasicoRenovavel ?? null, comparativo?.coberturaBasicoRenovavel)}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaBasicoRenovavel ?? null, comparativo?.coberturaBasicoRenovavel, 'meses', 2)}
           isLoading={isLoading}
         />
         <KPIMetaCard
           title="Cobertura Style"
-          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaColecao, 1)}
-          meta={formatMeses(extras?.meta.metaCoberturaColecaoMeses, 1)}
-          gap={gapPercentualDe(data?.kpisExtra.coberturaColecao ?? null, extras?.meta.metaCoberturaColecaoMeses ?? 0)}
+          value={isLoading || !data ? '—' : formatMeses(data.kpisExtra.coberturaColecao, 2)}
+          meta={formatMeses(extras?.meta.metaCoberturaColecaoMeses, 2)}
+          gap={desvioPercentualDe(data?.kpisExtra.coberturaColecao, extras?.meta.metaCoberturaColecaoMeses)}
           gapFormato="percentual"
-          gapNegativoCor="azul"
-          invertido
-          footer={rodapeComparativo(data?.kpisExtra.coberturaColecao ?? null, comparativo?.coberturaColecao)}
+          footer={rodapeComparativo(data?.kpisExtra.coberturaColecao ?? null, comparativo?.coberturaColecao, 'meses', 2)}
           isLoading={isLoading}
         />
       </div>
