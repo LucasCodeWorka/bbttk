@@ -1,6 +1,7 @@
 import https from 'https';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database.js';
+import { gravarSnapshotOps, prepararSnapshotOps } from './opsSnapshot.service.js';
 
 const API_BASE_URL = process.env.TOTVS_API_URL || 'https://www30.bhan.com.br:9443/api/totvsmoda';
 
@@ -640,7 +641,9 @@ export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
     page++;
   }
 
+  const capturedAt = new Date();
   await prisma.$transaction(async (tx) => {
+    await prepararSnapshotOps(tx, capturedAt);
     await tx.$executeRawUnsafe('DELETE FROM ops_em_producao');
     for (let i = 0; i < linhas.length; i += 2000) {
       const lote = linhas.slice(i, i + 2000);
@@ -678,7 +681,8 @@ export async function syncEmProducao(): Promise<SyncEmProducaoResumo> {
         )}
       `;
     }
-  });
+    await gravarSnapshotOps(tx, capturedAt);
+  }, { timeout: 60000 });
 
   return { ordens: ordensVistas.size, linhas: linhas.length };
 }

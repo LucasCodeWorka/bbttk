@@ -40,6 +40,7 @@ for (const [nome, critico, restante, valorCritico, valorRestante, percentual, ve
       }) },
       $queryRaw: async (sql) => {
         const text = Array.isArray(sql) ? sql.join('?') : sql.text;
+        if (text.includes('AS possui_diario')) return [{ possui_diario: false, hoje: '2026-11-15' }];
         if (text.includes('information_schema.columns')) return [{ possui_marcador: true }];
         if (text.includes('to_char(data_posicao') && text.includes('LIMIT 1')) return [{ data_posicao: '2026-11-10' }];
         if (text.includes('rb.giro_30d')) return snapshot;

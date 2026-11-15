@@ -18,6 +18,12 @@ import {
 
 const RELATORIO_KEY = 'relatorio_base';
 
+// Compatibilidade com o esquema antigo durante a ativacao do ETL. Depois que os
+// itens recebem cycle_code, a mesma OP numerica em ciclos distintos nao se cruza.
+export const VINCULO_CICLO_OP_SQL = Prisma.sql`
+  AND COALESCE((to_jsonb(i)->>'cycle_code')::int, o.cycle_code) = o.cycle_code
+`;
+
 function decimalToNumber(value: Decimal | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
   if (typeof value === 'number') return value;
@@ -353,6 +359,7 @@ async function getResumoMensal(
        AND o.end_date::date <= p.venda_fim
       JOIN ops_producao_itens i
         ON i.branch_code = o.branch_code AND i.order_code = o.order_code
+        ${VINCULO_CICLO_OP_SQL}
       JOIN produtos_colecao pc ON pc.product_code = i.product_code
       GROUP BY p.mes_inicio
     ),
@@ -791,6 +798,7 @@ export async function getPerformanceColecao(filtro: PerformanceColecaoFiltro): P
         FROM ops_producao o
         JOIN ops_producao_itens i
           ON i.branch_code = o.branch_code AND i.order_code = o.order_code
+          ${VINCULO_CICLO_OP_SQL}
         JOIN produto_ref pr ON pr.product_code = i.product_code
         -- O cadastro pode ser posterior a finalizacao (ex.: OP 3472, finalizada em
         -- 08/06/2026 e cadastrada em 09/06). O corte por cadastro pertence somente

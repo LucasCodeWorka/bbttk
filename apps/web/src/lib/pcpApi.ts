@@ -322,7 +322,7 @@ export interface RelatorioBaseRow {
   pdvRealAta: number | null;
   markupAta: number | null;
   estDisponivel: null;
-  emProducao: number;
+  emProducao: number | null;
   estPrevisto: null;
   estTt: number;
   giroTt1: number;
@@ -341,7 +341,7 @@ export interface RelatorioBaseCorRow {
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
-  emProducao: number;
+  emProducao: number | null;
   estTt: number;
   giroTt1: number;
   giroTt3: number;
@@ -368,7 +368,7 @@ export interface RelatorioBaseReferenciaRow {
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
-  emProducao: number;
+  emProducao: number | null;
   estTt: number;
   giroTt1: number;
   giroTt3: number;
@@ -380,6 +380,11 @@ export interface RelatorioBaseReferenciaRow {
 
 export interface RelatorioBaseResponse {
   dataPosicao: string;
+  producao: {
+    disponivel: boolean;
+    capturedAt: string | null;
+    fonte: 'diario' | 'atual' | 'indisponivel';
+  };
   config: {
     giroDias: number;
     coberturaMeses: number;

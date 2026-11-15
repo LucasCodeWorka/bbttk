@@ -423,6 +423,28 @@ model OpsEmProducao {
   @@map("ops_em_producao")
 }
 
+// ETL + sync manual mantem a ultima fotografia bem-sucedida de cada dia em Sao
+// Paulo. Sem cabecalho = desconhecido; cabecalho sem itens = zero confirmado.
+// Bootstrap pertence aos writers; nao usar db push para sincronizar essas cargas.
+model OpsEmProducaoCaptura {
+  dataPosicao DateTime             @id @map("data_posicao") @db.Date
+  capturedAt  DateTime             @map("captured_at") @db.Timestamptz(6)
+  fonte       String
+  itens       OpsEmProducaoDiario[]
+
+  @@map("ops_em_producao_capturas")
+}
+
+model OpsEmProducaoDiario {
+  dataPosicao         DateTime             @map("data_posicao") @db.Date
+  productCode         Int                  @map("product_code")
+  quantidadePendente  Decimal              @map("quantidade_pendente") @db.Decimal(15, 4)
+  captura             OpsEmProducaoCaptura @relation(fields: [dataPosicao], references: [dataPosicao], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([dataPosicao, productCode])
+  @@map("ops_em_producao_diario")
+}
+
 model PcpCoberturaIdealFilial {
   id                  Int      @id @default(autoincrement())
   relatorio           String   @db.VarChar(50)

@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
 import { filtroLocalEstoqueSql, getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
+import { ordenarColunasRelatorioBase, selecionarColunasRelatorioBase } from './relatorioBaseLojas.service.js';
+import { getProducaoRelatorio, ProducaoRelatorio, skusCanonicosProducao } from './relatorioBaseProducao.service.js';
 import {
   ATACADO_BRANCH_CODE,
   DPA_BRANCH_CODE,
@@ -307,9 +309,8 @@ export interface RelatorioBaseRow {
   estDisponivel: null;
   // Soma das quantidades pendentes de Ordens de Producao abertas do product_code, em
   // todas as filiais (sincronizado via ops_em_producao - ver totvs.service.ts
-  // syncEmProducao). Diferente de custo/preco, e sempre um numero real (0 quando nao
-  // tem O.P. aberta), nao "ainda nao sincronizado".
-  emProducao: number;
+  // syncEmProducao). null = nao ha captura da pendencia para a data selecionada.
+  emProducao: number | null;
   estPrevisto: null;
   estTt: number;
   giroTt1: number;
@@ -336,7 +337,7 @@ export interface RelatorioBaseCorRow {
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
-  emProducao: number;
+  emProducao: number | null;
   estTt: number;
   giroTt1: number;
   giroTt3: number;
@@ -370,7 +371,7 @@ export interface RelatorioBaseReferenciaRow {
   markupVar: number | null;
   pdvRealAta: number | null;
   markupAta: number | null;
-  emProducao: number;
+  emProducao: number | null;
   estTt: number;
   giroTt1: number;
   giroTt3: number;
@@ -452,6 +453,7 @@ export interface RelatorioBaseMatrizLinha {
 
 export interface RelatorioBaseResponse {
   dataPosicao: string;
+  producao: ProducaoRelatorio;
   config: {
     giroDias: number;
     coberturaMeses: number;
@@ -1115,17 +1117,15 @@ export async function getUltimaEntradaRows(productCodes: number[] | null, dataPo
   `;
 }
 
-// Quantidade pendente de Ordens de Producao abertas, somada em todas as filiais - a
-// tabela ops_em_producao vem detalhada por OP + product_code (sincronizada via
-// totvs.service.ts syncEmProducao), aqui so agrega pro nivel do relatorio (que mostra
-// "Em Producao" como 1 numero so por SKU, sem quebrar por OP/loja).
-async function getEmProducaoRows(productCodes: number[] | null): Promise<Array<{ product_code: number; quantidade: Decimal }>> {
-  return prisma.$queryRaw<Array<{ product_code: number; quantidade: Decimal }>>`
-    SELECT product_code, SUM(quantidade_pendente) AS quantidade
-    FROM ops_em_producao
-    WHERE 1=1 ${filtroProductCode(productCodes)}
-    GROUP BY product_code
-  `;
+// Ausencia de fotografia nao significa pendencia zero. Explicita a indisponibilidade
+// em todos os niveis do payload, inclusive no detalhamento usado pelo Excel.
+function aplicarDisponibilidadeProducao(rows: RelatorioBaseReferenciaRow[], info: ProducaoRelatorio): RelatorioBaseReferenciaRow[] {
+  if (!info.disponivel) for (const row of rows) {
+    row.emProducao = null;
+    for (const cor of row.cores) cor.emProducao = null;
+    for (const sku of row.skus) sku.emProducao = null;
+  }
+  return rows;
 }
 
 interface IdentidadeRow {
@@ -1448,6 +1448,27 @@ async function getRelatorioBaseAnalitico(
       ${filtroSql}
   `;
 
+  // Ignora em_producao de materializacoes antigas contaminadas pela carga atual.
+  // A captura da data e a fonte unica tanto no caminho analitico quanto ao vivo.
+  const producao = await getProducaoRelatorio(dataAnalitica);
+  const pendencias = new Map(producao.rows.map(r => [r.product_code, decimalToNumber(r.quantidade)]));
+  const identidadesProducao = producao.info.disponivel ? await getIdentidadeRows(filtro) : [];
+  const canonicosProducao = skusCanonicosProducao(identidadesProducao);
+  const presentes = new Set(rowsAnaliticas.map(r => r.product_sku));
+  for (const i of identidadesProducao) {
+    if (i.product_code === null || !pendencias.has(i.product_code)
+      || canonicosProducao.get(i.product_code) !== i.product_sku || presentes.has(i.product_sku)) continue;
+    rowsAnaliticas.push({
+      ...i, data_posicao: dataAnalitica, product_name: i.descricao,
+      branch_code: filtro.branches?.[0] ?? DPA_BRANCH_CODE,
+      estoque: null, giro_30d: null, giro_60d: null, giro_90d: null,
+      giro_1m: null, giro_3m: null, giro_6m: null, venda_cobertura_periodo: null,
+      custo_producao: null, pdv_varejo: null, pdv_atacado: null,
+      ultima_entrada: null, em_producao: null, valor_estoque_custo_producao: null,
+    });
+    presentes.add(i.product_sku);
+  }
+
   const branchFiltro = filtro.branches && filtro.branches.length > 0 ? new Set(filtro.branches) : null;
   const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
 
@@ -1567,7 +1588,8 @@ async function getRelatorioBaseAnalitico(
       custo,
       pdvVar: row.pdv_varejo !== null ? decimalToNumber(row.pdv_varejo) : null,
       pdvAta: row.pdv_atacado !== null ? decimalToNumber(row.pdv_atacado) : null,
-      emProducao: decimalToNumber(row.em_producao),
+      emProducao: row.product_code !== null && canonicosProducao.get(row.product_code) === sku
+        ? pendencias.get(row.product_code) ?? 0 : 0,
       estTt: 0,
       valorEstoque: 0,
       giro30: 0,
@@ -1621,6 +1643,7 @@ async function getRelatorioBaseAnalitico(
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
   const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
+  const lojasComValores = new Set<number>();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
 
   // Acumulado de uma COR dentro da referencia - alimenta o drill-down/visao por cor da
@@ -1665,6 +1688,7 @@ async function getRelatorioBaseAnalitico(
     let estVarejoSku = 0;
     let vendaVarejoSku = 0;
     for (const [branchCode, valores] of sku.branchesAgg) {
+      if (valores.est !== 0 || valores.giro !== 0) lojasComValores.add(branchCode);
       if (branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += valores.est;
       vendaVarejoSku += valores.giro30;
@@ -2015,6 +2039,7 @@ async function getRelatorioBaseAnalitico(
 
   return {
     dataPosicao: dataAnalitica,
+    producao: producao.info,
     config: {
       giroDias: config.giroDias,
       coberturaMeses: config.coberturaMeses,
@@ -2066,8 +2091,8 @@ async function getRelatorioBaseAnalitico(
       status: matrizStatus,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
-    colunas: colunasAtivas,
-    rows: rowsPaginadas,
+    colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),
+    rows: aplicarDisponibilidadeProducao(rowsPaginadas, producao.info),
   };
 }
 
@@ -2129,11 +2154,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
   ]);
-  const [custoPrecoRows, ultimaEntradaRows, custoSelecionadoRows, emProducaoRows] = await Promise.all([
+  const [custoPrecoRows, ultimaEntradaRows, custoSelecionadoRows, producao] = await Promise.all([
     getCustoPrecoRows(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
     getCustoProducaoRows(productCodesFiltro),
-    getEmProducaoRows(productCodesFiltro),
+    getProducaoRelatorio(filtro.dataPosicao!),
   ]);
 
   // Mapas auxiliares product_sku -> ... e product_code -> ...
@@ -2207,7 +2232,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
 
   const emProducaoPorProductCode = new Map<number, number>();
-  for (const r of emProducaoRows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+  for (const r of producao.rows) emProducaoPorProductCode.set(r.product_code, decimalToNumber(r.quantidade));
+  const canonicosProducao = skusCanonicosProducao(identidadeRows);
 
   // Soma valores de um mapa branch_code -> valor, respeitando o filtro de filiais.
   // Se branchFiltro for null (nenhum filtro), soma todas as filiais.
@@ -2271,6 +2297,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
   const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
+  const lojasComValores = new Set<number>();
 
   const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
 
@@ -2415,7 +2442,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
 
     const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
-    const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
+    const emProducao = productCode !== null && canonicosProducao.get(productCode) === sku
+      ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     // Totais brutos: todo SKU elegivel entra na tabela/card, mesmo com estoque zero,
     // estoque negativo ou sem venda/giro recente. Isso evita divergencia entre o card
@@ -2424,6 +2452,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     let estVarejoSku = 0;
     let vendaVarejoSku = 0;
     for (const coluna of colunasAtivas) {
+      const valores = branches[coluna.branchCode];
+      if (valores && (valores.est !== 0 || valores.giro !== 0)) lojasComValores.add(coluna.branchCode);
       if (coluna.branchCode === ATACADO_BRANCH_CODE) continue;
       estVarejoSku += branches[coluna.branchCode]?.est ?? 0;
       vendaVarejoSku += venda30PorBranchDoSku.get(coluna.branchCode) || 0;
@@ -2717,7 +2747,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
     const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
-    const emProducao = productCode !== null ? emProducaoPorProductCode.get(productCode) || 0 : 0;
+    const emProducao = productCode !== null && canonicosProducao.get(productCode) === sku
+      ? emProducaoPorProductCode.get(productCode) || 0 : 0;
 
     const cor = identidade.color_name || identidade.color_code || 'SEM COR';
     const tamanho = identidade.size || 'SEM TAM';
@@ -2863,6 +2894,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   return {
     dataPosicao: filtro.dataPosicao!,
+    producao: producao.info,
     config: {
       giroDias: config.giroDias,
       coberturaMeses: config.coberturaMeses,
@@ -2889,8 +2921,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       status: matrizStatus,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
-    colunas: colunasAtivas,
-    rows: rowsPaginadas,
+    colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),
+    rows: aplicarDisponibilidadeProducao(rowsPaginadas, producao.info),
   };
 }
 
@@ -2921,7 +2953,7 @@ export async function getFiltrosRelatorioBase() {
 
   return {
     classificacoes,
-    colunas: await getColunasEstoque(),
+    colunas: ordenarColunasRelatorioBase(await getColunasEstoque()),
   };
 }
 

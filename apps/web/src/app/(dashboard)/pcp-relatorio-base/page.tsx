@@ -393,7 +393,7 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
   { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
-  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => r.emProducao == null ? '—' : formatNumber(r.emProducao) },
   { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
   { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
   { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
@@ -425,7 +425,7 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
   { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
-  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => formatNumber(r.emProducao) },
+  { key: 'emProducao', label: 'EM PROD.', width: 90, align: 'right', render: (r) => r.emProducao == null ? '—' : formatNumber(r.emProducao) },
   { key: 'estPrevisto', label: 'EST. PREV', width: 90, align: 'right', render: () => '-' },
   { key: 'giroTt1', label: 'GIRO TT 1', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt1) },
   { key: 'giroTt3', label: 'GIRO TT 3', width: 90, align: 'right', render: (r) => formatNumber(r.giroTt3) },
@@ -538,7 +538,7 @@ export default function PcpRelatorioBasePage() {
 
     // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
     // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
-    const cacheKey = `visao-geral-v7-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-v9-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
     if (!forcarRecarregar) {
@@ -1086,7 +1086,7 @@ export default function PcpRelatorioBasePage() {
           pdvRealAta: r.pdvRealAta ?? '',
           markupAta: r.markupAta ?? '',
           estTt: r.estTt,
-          emProducao: r.emProducao,
+          emProducao: r.emProducao ?? 'Indisponível',
           giroTt1: r.giroTt1,
           giroTt3: r.giroTt3,
           giroTt6: r.giroTt6,
@@ -1106,7 +1106,7 @@ export default function PcpRelatorioBasePage() {
       exportToExcel({
         filename: `RelatorioBase_${dataHoje}`,
         sheetName: 'Relatório Base',
-        title: 'Relatório Base PCP - Estoque e Giro por SKU',
+        title: `Relatório Base PCP - Estoque e Giro por SKU${completo.producao?.disponivel === false ? ' — Em produção indisponível nesta data' : ''}`,
         columns: colunas,
         data: dados,
       });
@@ -1352,6 +1352,14 @@ export default function PcpRelatorioBasePage() {
         />
       </div>
 
+      {!isLoading && data?.producao && (
+        <p className="text-xs text-gray-500">
+          {data.producao.disponivel && data.producao.capturedAt
+            ? `Em produção: posição capturada em ${new Date(data.producao.capturedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`
+            : 'Em produção indisponível: não há posição registrada para a data selecionada.'}
+        </p>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Cobertura por linha/categoria/gênero × canal</CardTitle>
@@ -1486,7 +1494,7 @@ export default function PcpRelatorioBasePage() {
                   colSpan={3}
                   align="center"
                   className="border-b border-gray-200 bg-gray-50 text-gray-600 !px-1.5 !py-3 whitespace-nowrap"
-                  title={c.branchCode < 0 ? 'Estoque = Fábrica inteira; Giro = só canal Atacado' : undefined}
+                  title={c.branchCode === -1 ? 'DPA: estoque e vendas do canal DPA da Fábrica.' : c.branchCode === -2 ? 'ATACADO: estoque e vendas do canal Atacado da Fábrica.' : undefined}
                 >
                   {c.label}
                 </TableCell>

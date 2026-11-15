@@ -11,6 +11,8 @@
     "test:sem-venda": "npm run build && node --test tests/pecasSemVenda.test.cjs",
     "test:ativos": "npm run build && node --test tests/estoqueAtivos.test.cjs tests/ruptura.test.cjs",
     "test:cobertura": "npm run build && node --test tests/estoqueCobertura.test.cjs",
+    "test:lojas": "npm run build && node --test tests/relatorioBaseLojas.test.cjs",
+    "test:producao": "npm run build && node --test tests/relatorioBaseProducao.test.cjs tests/performanceColecaoProducao.test.cjs",
     "start": "node --max-old-space-size=384 dist/index.js",
     "db:generate": "prisma generate --schema=../api/prisma/schema.prisma"
   },
