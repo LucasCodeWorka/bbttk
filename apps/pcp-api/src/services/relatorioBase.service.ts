@@ -97,11 +97,51 @@ function round(value: number, decimals = 2): number {
 function temCoberturaCritica(estoque: number, venda30Dias: number): boolean {
   if (estoque <= 0) return false;
   if (venda30Dias <= 0) return true;
-  return estoque / venda30Dias >= COBERTURA_CRITICA_MESES;
+  return estoque / venda30Dias > COBERTURA_CRITICA_MESES;
 }
 
 function statusAtivo(status: string | null): boolean {
   return status?.trim().replace(/\s+/g, ' ').toUpperCase() === 'ATIVO';
+}
+
+export function skuAtivoDoMix(linha: string | null, status: string | null): boolean {
+  const bucket = linhaBucket(linha);
+  return statusAtivo(status) && (bucket === LINHA_BUCKET_BASICO || bucket === LINHA_BUCKET_BASICO_RENOVAVEL);
+}
+
+interface EstoqueAtivoSku {
+  referencia: string;
+  estoque: number;
+}
+
+export function acumularEstoqueAtivos(
+  skus: Map<string, EstoqueAtivoSku>, sku: string, referencia: string,
+  linha: string | null, status: string | null, estoque: number
+) {
+  if (!skuAtivoDoMix(linha, status)) return;
+  const acc = skus.get(sku) || { referencia, estoque: 0 };
+  acc.estoque += estoque;
+  skus.set(sku, acc);
+}
+
+export function montarIndicadoresEstoqueAtivos(skus: Map<string, EstoqueAtivoSku>): RelatorioBaseEstoqueAtivos {
+  const referencias = new Set<string>();
+  const referenciasComEstoque = new Set<string>();
+  let skusComEstoque = 0;
+  for (const { referencia, estoque } of skus.values()) {
+    referencias.add(referencia);
+    if (estoque !== 0) {
+      skusComEstoque += 1;
+      referenciasComEstoque.add(referencia);
+    }
+  }
+  const indicador = (comEstoque: number, totalAtivos: number) => ({
+    comEstoque, totalAtivos, percent: totalAtivos > 0 ? round((comEstoque / totalAtivos) * 100, 2) : 0,
+  });
+  return {
+    referencias: indicador(referenciasComEstoque.size, referencias.size),
+    skus: indicador(skusComEstoque, skus.size),
+  };
 }
 
 interface EstoqueAnaliseAcc {
@@ -131,6 +171,53 @@ function montarEstoqueAnaliseKpi(acc: EstoqueAnaliseAcc, estoqueTotal: number, v
   };
 }
 
+interface EstoqueAnaliseReferencia {
+  quantidade: number;
+  valor: number;
+  venda30: number;
+  venda60: number;
+  venda90: number;
+}
+
+export function acumularEstoqueAnaliseReferencia(
+  referencias: Map<string, EstoqueAnaliseReferencia>,
+  referenceCode: string,
+  quantidade: number,
+  valor: number,
+  venda30: number,
+  venda60: number,
+  venda90: number
+) {
+  const acc = referencias.get(referenceCode) || { quantidade: 0, valor: 0, venda30: 0, venda60: 0, venda90: 0 };
+  acc.quantidade += quantidade;
+  acc.valor += valor;
+  acc.venda30 += venda30;
+  acc.venda60 += venda60;
+  acc.venda90 += venda90;
+  referencias.set(referenceCode, acc);
+}
+
+export function calcularEstoqueAnaliseReferencias(
+  referencias: Map<string, EstoqueAnaliseReferencia>, estoqueTotal: number, valorEstoqueTotal: number
+) {
+  const semVenda30 = estoqueAnaliseAccVazio();
+  const envelhecidos60a90 = estoqueAnaliseAccVazio();
+  const envelhecidos90Mais = estoqueAnaliseAccVazio();
+  for (const [referenceCode, ref] of referencias) {
+    // Uma cor/tamanho sem venda nao torna a referencia inteira sem venda.
+    // Preserva os saldos com sinal antes de selecionar referencias com estoque.
+    if (ref.venda30 === 0) acumularEstoqueAnalise(semVenda30, referenceCode, ref.quantidade, ref.valor);
+    // Campos legados mantidos para clientes anteriores; a tela consolida em >30 dias.
+    if (ref.venda60 <= 0 && ref.venda90 > 0) acumularEstoqueAnalise(envelhecidos60a90, referenceCode, ref.quantidade, ref.valor);
+    if (ref.venda90 <= 0) acumularEstoqueAnalise(envelhecidos90Mais, referenceCode, ref.quantidade, ref.valor);
+  }
+  return {
+    itensSemVenda30d: montarEstoqueAnaliseKpi(semVenda30, estoqueTotal, valorEstoqueTotal),
+    itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(envelhecidos60a90, estoqueTotal, valorEstoqueTotal),
+    itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(envelhecidos90Mais, estoqueTotal, valorEstoqueTotal),
+  };
+}
+
 interface RupturaLinhaAcc {
   skus: number;
   totalSkus: number;
@@ -140,7 +227,22 @@ function rupturaLinhaAccVazio(): RupturaLinhaAcc {
   return { skus: 0, totalSkus: 0 };
 }
 
-function montarRupturaLinhaKpi(acc: RupturaLinhaAcc): RelatorioBaseRupturaLinhaKpi {
+export function acumularRuptura(
+  basico: RupturaLinhaAcc,
+  renovavel: RupturaLinhaAcc,
+  linha: string | null,
+  status: string | null,
+  estoque: number
+) {
+  if (!skuAtivoDoMix(linha, status)) return;
+  const bucket = linhaBucket(linha);
+  const acc = bucket === LINHA_BUCKET_BASICO ? basico : bucket === LINHA_BUCKET_BASICO_RENOVAVEL ? renovavel : null;
+  if (!acc) return;
+  acc.totalSkus += 1;
+  if (estoque <= 0) acc.skus += 1;
+}
+
+export function montarRupturaLinhaKpi(acc: RupturaLinhaAcc): RelatorioBaseRupturaLinhaKpi {
   return {
     skus: acc.skus,
     totalSkus: acc.totalSkus,
@@ -290,7 +392,7 @@ export interface RelatorioBaseKpisExtra {
   valorEstoqueTotal: number;
   valorEstoqueAnoAnterior: number | null;
   valorEstoqueVariacaoPercent: number | null;
-  // Critico = estoque com cobertura >= 150 dias, usando venda dos ultimos 30 dias.
+  // Critico = cobertura > 5 meses ou estoque sem venda liquida positiva em 30 dias.
   // Promocao = status com complemento, ex: "FORA DE LINHA BLACK FRIDAY 2025".
   estoqueMortoQtd: number;
   estoqueMortoValor: number;
@@ -302,6 +404,7 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  estoqueAtivos: RelatorioBaseEstoqueAtivos;
   itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
   itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
   itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
@@ -312,6 +415,11 @@ export interface RelatorioBaseKpisExtra {
   // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
   // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAtivos {
+  referencias: { comEstoque: number; totalAtivos: number; percent: number };
+  skus: { comEstoque: number; totalAtivos: number; percent: number };
 }
 
 export interface RelatorioBaseEstoqueAnaliseKpi {
@@ -478,7 +586,7 @@ export function buildProdutosValidosAnoAnteriorSql(filtro: RelatorioBaseFiltro):
       WHERE pa.product_code IS NOT NULL
       ORDER BY pa.product_code, (pa.product_sku LIKE 'PRODUCT_CODE:%'), pa.product_sku
     ), produtos_validos AS MATERIALIZED (
-      SELECT a.product_code, a.class_linha AS linha
+      SELECT a.product_code, a.product_sku, a.reference_code, a.class_linha AS linha, a.class_status AS status
       FROM produto_unico a
       LEFT JOIN produtos p ON p.product_sku = a.product_sku
       WHERE (p.is_finished_product = true OR p.is_finished_product IS NULL)
@@ -489,9 +597,11 @@ export function buildProdutosValidosAnoAnteriorSql(filtro: RelatorioBaseFiltro):
 }
 
 export function buildEstoqueAnoAnteriorSql(
-  filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao, porLinha = false
+  filtro: RelatorioBaseFiltro, dataPosicao = filtro.dataPosicao, agrupamento: boolean | 'sku' = false
 ): Prisma.Sql {
   const dataCorte = dataLimiteSuperiorSql(dataPosicao, -1);
+  const porLinha = agrupamento !== false;
+  const porSku = agrupamento === 'sku';
   return Prisma.sql`
     WITH ${buildProdutosValidosAnoAnteriorSql(filtro)}, historico AS (
       SELECT s.product_code, s.branch_code, s.stock_code, s.stock,
@@ -527,13 +637,17 @@ export function buildEstoqueAnoAnteriorSql(
     SELECT COALESCE(SUM(s.stock), 0) AS quantidade,
            COALESCE(SUM(s.stock * COALESCE(c.custo, 0)), 0) AS valor
            ${porLinha ? Prisma.sql`, a.linha` : Prisma.empty}
+           ${porSku ? Prisma.sql`, a.product_sku, a.reference_code, a.status` : Prisma.empty}
     FROM ultimo_saldo s
     LEFT JOIN custos c ON c.product_code = s.product_code
-    ${porLinha ? Prisma.sql`JOIN produtos_validos a ON a.product_code = s.product_code GROUP BY a.linha` : Prisma.empty}
+    ${porLinha ? Prisma.sql`JOIN produtos_validos a ON a.product_code = s.product_code
+      GROUP BY a.linha ${porSku ? Prisma.sql`, a.product_sku, a.reference_code, a.status` : Prisma.empty}` : Prisma.empty}
   `;
 }
 
-export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro, dataPosicao: string, porLinha = false): Prisma.Sql {
+export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro, dataPosicao: string, agrupamento: boolean | 'sku' = false): Prisma.Sql {
+  const porLinha = agrupamento !== false;
+  const porSku = agrupamento === 'sku';
   return Prisma.sql`
     SELECT COALESCE(SUM(rb.estoque_ano_anterior * COALESCE(rb.custo_producao, 0)), 0) AS valor,
       COALESCE(SUM(rb.estoque_ano_anterior), 0) AS quantidade,
@@ -545,10 +659,11 @@ export function buildEstoqueAnoAnteriorAnaliticoSql(filtro: RelatorioBaseFiltro,
         WHERE p.data_posicao = ${dataPosicao}::date AND p.compoe_posicao_atual IS NULL
       ) AS completo
       ${porLinha ? Prisma.sql`, rb.linha` : Prisma.empty}
+      ${porSku ? Prisma.sql`, rb.product_sku, rb.reference_code, rb.status` : Prisma.empty}
     FROM pcp_relatorio_base_analitico_diario rb
     WHERE rb.data_posicao = ${dataPosicao}::date
       ${buildAnaliticoFiltro(filtro)}
-      ${porLinha ? Prisma.sql`GROUP BY rb.linha` : Prisma.empty}
+      ${porLinha ? Prisma.sql`GROUP BY rb.linha ${porSku ? Prisma.sql`, rb.product_sku, rb.reference_code, rb.status` : Prisma.empty}` : Prisma.empty}
   `;
 }
 
@@ -994,23 +1109,6 @@ export async function getUltimaEntradaRows(productCodes: number[] | null, dataPo
     JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
     ${OPERACAO_JOIN}
     WHERE t.status = 4 AND co.operations_type = 'E'
-      AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
-      ${filtroProductCodeTi(productCodes)}
-    GROUP BY ti.product_code
-  `;
-}
-
-async function getEntradaDpaRows(productCodes: number[] | null, dataPosicao?: string): Promise<Array<{ product_code: number; ultima_entrada_dpa: Date }>> {
-  const dataBase = dataBaseSql(dataPosicao);
-  return prisma.$queryRaw<Array<{ product_code: number; ultima_entrada_dpa: Date }>>`
-    SELECT ti.product_code, MAX(t.transaction_date) AS ultima_entrada_dpa
-    FROM transacoes t
-    JOIN transacao_itens ti ON t.branch_code = ti.branch_code AND t.transaction_code = ti.transaction_code
-    ${OPERACAO_JOIN}
-    WHERE t.status = 4
-      AND co.operations_type = 'E'
-      AND t.branch_code = ${FABRICA_BRANCH_CODE}
-      AND COALESCE(co.description, '') NOT ILIKE '%ATACADO%'
       AND t.transaction_date < ${dataBase} + INTERVAL '1 day'
       ${filtroProductCodeTi(productCodes)}
     GROUP BY ti.product_code
@@ -1519,11 +1617,10 @@ async function getRelatorioBaseAnalitico(
   let estoqueMortoValor = 0;
   let estoquePromocaoQtd = 0;
   let estoquePromocaoValor = 0;
-  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
-  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
-  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const estoqueAnaliseReferencias = new Map<string, EstoqueAnaliseReferencia>();
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
+  const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
 
   // Acumulado de uma COR dentro da referencia - alimenta o drill-down/visao por cor da
@@ -1602,15 +1699,9 @@ async function getRelatorioBaseAnalitico(
       estoqueMortoQtd += sku.estTt;
       estoqueMortoValor += sku.valorEstoque;
     }
-    if (sku.giro30 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
-    if (sku.giro60 <= 0 && sku.giro90 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
-    if (sku.giro90 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, sku.referenceCode, sku.estTt, sku.valorEstoque);
-    const linhaSku = linhaBucket(sku.linha);
-    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
-    if (rupturaAcc && statusAtivo(sku.status) && sku.ultimaEntrada) {
-      rupturaAcc.totalSkus += 1;
-      if (sku.estTt <= 0) rupturaAcc.skus += 1;
-    }
+    acumularEstoqueAnaliseReferencia(estoqueAnaliseReferencias, sku.referenceCode, sku.estTt, sku.valorEstoque, sku.giro30, sku.giro60, sku.giro90);
+    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, sku.linha, sku.status, sku.estTt);
+    acumularEstoqueAtivos(estoqueAtivosAcc, sku.productSku, sku.referenceCode, sku.linha, sku.status, sku.estTt);
     if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += sku.estTt;
       estoquePromocaoValor += sku.valorEstoque;
@@ -1710,6 +1801,15 @@ async function getRelatorioBaseAnalitico(
     agg.coresAgg.set(corExibicao, corAgg);
 
     referenciaAgg.set(referenceCode, agg);
+  }
+
+  // A posicao materializada guarda SKUs com saldo ou movimento, nao o cadastro
+  // inteiro. Os ativos ausentes compoem a base da ruptura e dos indicadores de
+  // referencias/SKUs, com estoque zero na selecao consultada.
+  for (const identidade of await getIdentidadeRows(filtro)) {
+    if (skus.has(identidade.product_sku)) continue;
+    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, 0);
+    acumularEstoqueAtivos(estoqueAtivosAcc, identidade.product_sku, identidade.reference_code || identidade.product_sku, identidade.linha, identidade.status, 0);
   }
 
   const rows: RelatorioBaseReferenciaRow[] = [];
@@ -1911,6 +2011,7 @@ async function getRelatorioBaseAnalitico(
     ? null : await getValorEstoqueAnoAnterior(filtro, dataAnalitica, possuiMarcador);
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior !== null && valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
+  const estoqueAtivos = montarIndicadoresEstoqueAtivos(estoqueAtivosAcc);
 
   return {
     dataPosicao: dataAnalitica,
@@ -1941,17 +2042,16 @@ async function getRelatorioBaseAnalitico(
       valorEstoqueVariacaoPercent,
       estoqueMortoQtd: round(estoqueMortoQtd, 0),
       estoqueMortoValor: round(estoqueMortoValor, 2),
-      estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+      estoqueMortoPercent: kpis.estTt > 0 ? round((round(estoqueMortoQtd, 0) / kpis.estTt) * 100, 2) : 0,
       estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
       estoquePromocaoValor: round(estoquePromocaoValor, 2),
       estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
       coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
       coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
       coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
-      referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
-      itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
-      itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
-      itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+      referenciasComEstoque: estoqueAtivos.referencias.comEstoque,
+      estoqueAtivos,
+      ...calcularEstoqueAnaliseReferencias(estoqueAnaliseReferencias, kpis.estTt, valorEstoqueTotal),
       ruptura: {
         basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
         renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
@@ -2029,10 +2129,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     getGiroTtRows(3, productCodesFiltro, filtro.dataPosicao),
     getGiroTtRows(6, productCodesFiltro, filtro.dataPosicao),
   ]);
-  const [custoPrecoRows, ultimaEntradaRows, entradaDpaRows, custoSelecionadoRows, emProducaoRows] = await Promise.all([
+  const [custoPrecoRows, ultimaEntradaRows, custoSelecionadoRows, emProducaoRows] = await Promise.all([
     getCustoPrecoRows(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode, productCodesFiltro),
     getUltimaEntradaRows(productCodesFiltro, filtro.dataPosicao),
-    getEntradaDpaRows(productCodesFiltro, filtro.dataPosicao),
     getCustoProducaoRows(productCodesFiltro),
     getEmProducaoRows(productCodesFiltro),
   ]);
@@ -2104,9 +2203,6 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const ultimaEntradaPorProductCode = new Map<number, Date>();
   for (const r of ultimaEntradaRows) ultimaEntradaPorProductCode.set(r.product_code, r.ultima_entrada);
 
-  const entradaDpaProductCodes = new Set<number>();
-  for (const r of entradaDpaRows) entradaDpaProductCodes.add(r.product_code);
-
   const custoSelecionadoPorProductCode = new Map<number, number>();
   for (const r of custoSelecionadoRows) custoSelecionadoPorProductCode.set(r.product_code, decimalToNumber(r.valor));
 
@@ -2171,11 +2267,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   let estoqueMortoValor = 0;
   let estoquePromocaoQtd = 0;
   let estoquePromocaoValor = 0;
-  const itensSemVenda30dAcc = estoqueAnaliseAccVazio();
-  const itensEnvelhecidos60a90dAcc = estoqueAnaliseAccVazio();
-  const itensEnvelhecidos90MaisAcc = estoqueAnaliseAccVazio();
+  const estoqueAnaliseReferencias = new Map<string, EstoqueAnaliseReferencia>();
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
+  const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
 
   const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
 
@@ -2355,15 +2450,9 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       estoqueMortoValor += valorEstoqueSku;
     }
     const referenceCodeParaKpi = identidade.reference_code || sku;
-    if (giroTt1 <= 0) acumularEstoqueAnalise(itensSemVenda30dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
-    if (giroTt2 <= 0 && giroTt3 > 0) acumularEstoqueAnalise(itensEnvelhecidos60a90dAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
-    if (giroTt3 <= 0) acumularEstoqueAnalise(itensEnvelhecidos90MaisAcc, referenceCodeParaKpi, estTt, valorEstoqueSku);
-    const linhaSku = linhaBucket(identidade.linha);
-    const rupturaAcc = linhaSku === LINHA_BUCKET_BASICO ? rupturaBasicoAcc : linhaSku === LINHA_BUCKET_BASICO_RENOVAVEL ? rupturaRenovavelAcc : null;
-    if (rupturaAcc && productCode !== null && statusAtivo(identidade.status) && entradaDpaProductCodes.has(productCode)) {
-      rupturaAcc.totalSkus += 1;
-      if (estTt <= 0) rupturaAcc.skus += 1;
-    }
+    acumularEstoqueAnaliseReferencia(estoqueAnaliseReferencias, referenceCodeParaKpi, estTt, valorEstoqueSku, giroTt1, giroTt2, giroTt3);
+    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, estTt);
+    acumularEstoqueAtivos(estoqueAtivosAcc, sku, referenceCodeParaKpi, identidade.linha, identidade.status, estTt);
     if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += estTt;
       estoquePromocaoValor += valorEstoqueSku;
@@ -2744,6 +2833,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const valorEstoqueVariacaoPercent =
     valorEstoqueAnoAnterior !== null && valorEstoqueAnoAnterior > 0 ? round(((valorEstoqueTotal - valorEstoqueAnoAnterior) / valorEstoqueAnoAnterior) * 100, 1) : null;
 
+  const estoqueAtivos = montarIndicadoresEstoqueAtivos(estoqueAtivosAcc);
   const kpisExtra: RelatorioBaseKpisExtra = {
     coberturaGeral: coberturaDe(estVarejoTotal + estAtacadoTotal, vendaVarejoTotal + vendaAtacadoTotal),
     coberturaVarejo: coberturaDe(estVarejoTotal, vendaVarejoTotal),
@@ -2754,17 +2844,16 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     valorEstoqueVariacaoPercent,
     estoqueMortoQtd: round(estoqueMortoQtd, 0),
     estoqueMortoValor: round(estoqueMortoValor, 2),
-    estoqueMortoPercent: valorEstoqueTotal > 0 ? round((estoqueMortoValor / valorEstoqueTotal) * 100, 1) : 0,
+    estoqueMortoPercent: kpis.estTt > 0 ? round((round(estoqueMortoQtd, 0) / kpis.estTt) * 100, 2) : 0,
     estoquePromocaoQtd: round(estoquePromocaoQtd, 0),
     estoquePromocaoValor: round(estoquePromocaoValor, 2),
     estoquePromocaoPercent: valorEstoqueTotal > 0 ? round((estoquePromocaoValor / valorEstoqueTotal) * 100, 1) : 0,
     coberturaBasico: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO),
     coberturaBasicoRenovavel: coberturaPorLabel(matrizLinha, LINHA_BUCKET_BASICO_RENOVAVEL),
     coberturaColecao: coberturaPorLabel(matrizLinha, LINHA_BUCKET_COLECAO),
-    referenciasComEstoque: rows.filter((r) => r.estTt > 0).length,
-    itensSemVenda30d: montarEstoqueAnaliseKpi(itensSemVenda30dAcc, kpis.estTt, valorEstoqueTotal),
-    itensEnvelhecidos60a90d: montarEstoqueAnaliseKpi(itensEnvelhecidos60a90dAcc, kpis.estTt, valorEstoqueTotal),
-    itensEnvelhecidos90Mais: montarEstoqueAnaliseKpi(itensEnvelhecidos90MaisAcc, kpis.estTt, valorEstoqueTotal),
+    referenciasComEstoque: estoqueAtivos.referencias.comEstoque,
+    estoqueAtivos,
+    ...calcularEstoqueAnaliseReferencias(estoqueAnaliseReferencias, kpis.estTt, valorEstoqueTotal),
     ruptura: {
       basico: montarRupturaLinhaKpi(rupturaBasicoAcc),
       renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),

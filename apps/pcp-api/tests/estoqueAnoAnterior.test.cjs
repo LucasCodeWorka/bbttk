@@ -208,4 +208,33 @@ test('cobertura AA sem vendas positivas e indefinida, incluindo filtros vazios',
   assert.equal(montarComparativoAnoAnterior([{ linha: null, quantidade: 5, valor: 50 }], [{ linha: null, quantidade: -1 }]).coberturaGeral, null);
 });
 
+test('AA por SKU preserva os totais e disponibiliza identidade e status para a contagem', { skip: !process.env.DATABASE_URL }, async () => {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+    const [total] = await tx.$queryRaw`${fixture} SELECT * FROM (${buildEstoqueAnoAnteriorSql({}, '2026-11-08')}) total`;
+    const rows = await tx.$queryRaw`${fixture} SELECT * FROM (${buildEstoqueAnoAnteriorSql({}, '2026-11-08', 'sku')}) skus`;
+    assert.equal(rows.reduce((sum, row) => sum + Number(row.quantidade), 0), Number(total.quantidade));
+    assert.equal(rows.reduce((sum, row) => sum + Number(row.valor), 0), Number(total.valor));
+    const antigo = rows.find(row => row.product_sku === 'ANTIGA');
+    assert.equal(antigo.reference_code, 'REF-ANTIGA');
+    assert.equal(antigo.status, 'FORA DE LINHA');
+    assert.ok(!rows.some(row => row.product_sku.startsWith('PRODUCT_CODE:')));
+  });
+});
+
+test('AA materializado por SKU soma filiais e mantém SKUs exclusivos do histórico', { skip: !process.env.DATABASE_URL }, async () => {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+    const rows = await tx.$queryRaw`${fixtureAnalitico} SELECT * FROM (${buildEstoqueAnoAnteriorAnaliticoSql({}, '2026-11-08', 'sku')}) skus`;
+    const antigo = rows.find(row => row.product_sku === 'ANTIGA');
+    assert.equal(Number(antigo.quantidade), 3);
+    assert.equal(antigo.reference_code, 'REF-ANTIGA');
+    assert.ok(rows.every(row => row.completo));
+    const result = montarComparativoAnoAnterior(rows, []);
+    assert.equal(result.estoque, 4);
+    assert.equal(result.valorEstoque, 70);
+    assert.deepEqual(result.estoqueAtivos, { referencias: 1, skus: 1 });
+  });
+});
+
 after(async () => prisma.$disconnect());

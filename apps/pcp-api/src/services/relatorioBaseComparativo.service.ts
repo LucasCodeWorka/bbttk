@@ -5,6 +5,7 @@ import {
   RelatorioBaseFiltro, OPERACAO_JOIN, SALE_OPERATION_FILTER, QUANTIDADE_COM_SINAL,
   buildProdutosValidosAnoAnteriorSql, buildEstoqueAnoAnteriorSql,
   buildEstoqueAnoAnteriorAnaliticoSql, dataLimiteSuperiorSql,
+  acumularEstoqueAtivos, montarIndicadoresEstoqueAtivos,
 } from './relatorioBase.service.js';
 
 export function buildVendasAnoAnteriorSql(filtro: RelatorioBaseFiltro): Prisma.Sql {
@@ -38,7 +39,10 @@ export function buildVendasAnoAnteriorSql(filtro: RelatorioBaseFiltro): Prisma.S
   `;
 }
 
-type EstoqueLinha = { linha: string | null; quantidade: Prisma.Decimal; valor: Prisma.Decimal };
+type EstoqueLinha = {
+  linha: string | null; quantidade: Prisma.Decimal; valor: Prisma.Decimal;
+  product_sku?: string; reference_code?: string | null; status?: string | null;
+};
 type VendaLinha = { linha: string | null; quantidade: Prisma.Decimal };
 type Bucket = { estoque: number; vendas: number };
 
@@ -50,6 +54,7 @@ function linhaPadrao(linha: string | null): string {
 export function montarComparativoAnoAnterior(estoques: EstoqueLinha[], vendas: VendaLinha[]) {
   const buckets = new Map<string, Bucket>();
   let estoqueTotal = 0, vendasTotal = 0, valorEstoque = 0;
+  const ativos = new Map<string, { referencia: string; estoque: number }>();
   function bucket(linha: string | null) {
     const key = linhaPadrao(linha);
     const acc = buckets.get(key) || { estoque: 0, vendas: 0 };
@@ -61,6 +66,10 @@ export function montarComparativoAnoAnterior(estoques: EstoqueLinha[], vendas: V
     estoqueTotal += quantidade;
     valorEstoque += Number(row.valor);
     bucket(row.linha).estoque += quantidade;
+    if (row.product_sku) {
+      acumularEstoqueAtivos(ativos, row.product_sku, row.reference_code || row.product_sku,
+        row.linha, row.status ?? null, quantidade);
+    }
   }
   for (const row of vendas) {
     const quantidade = Number(row.quantidade);
@@ -75,6 +84,7 @@ export function montarComparativoAnoAnterior(estoques: EstoqueLinha[], vendas: V
     }, { estoque: 0, vendas: 0 });
     return cobertura(acc);
   }
+  const indicadoresAtivos = montarIndicadoresEstoqueAtivos(ativos);
   return {
     estoque: estoqueTotal, vendas30d: vendasTotal,
     valorEstoque: Math.round(valorEstoque * 100) / 100,
@@ -82,6 +92,10 @@ export function montarComparativoAnoAnterior(estoques: EstoqueLinha[], vendas: V
     coberturaBasico: coberturaLinhas('BASICA', 'BASICO'),
     coberturaBasicoRenovavel: coberturaLinhas('BASICA RENOVAVEL', 'BASICO RENOVAVEL'),
     coberturaColecao: coberturaLinhas('STYLE', 'COLECAO'),
+    estoqueAtivos: {
+      referencias: indicadoresAtivos.referencias.comEstoque,
+      skus: indicadoresAtivos.skus.comEstoque,
+    },
   };
 }
 
@@ -104,11 +118,11 @@ export async function getComparativoAnoAnterior(filtro: RelatorioBaseFiltro) {
       SELECT COUNT(*) > 0 AND COUNT(*) FILTER (WHERE compoe_posicao_atual IS NULL) = 0 AS completo
       FROM pcp_relatorio_base_analitico_diario WHERE data_posicao = ${filtro.dataPosicao}::date`;
     if (posicao.completo) {
-      estoques = await prisma.$queryRaw<EstoqueLinha[]>(buildEstoqueAnoAnteriorAnaliticoSql(filtro, filtro.dataPosicao!, true));
+      estoques = await prisma.$queryRaw<EstoqueLinha[]>(buildEstoqueAnoAnteriorAnaliticoSql(filtro, filtro.dataPosicao!, 'sku'));
     }
   }
   // A quantidade e a valorizacao compartilham uma unica leitura do historico.
-  if (!estoques) estoques = await prisma.$queryRaw<EstoqueLinha[]>(buildEstoqueAnoAnteriorSql(filtro, filtro.dataPosicao, true));
+  if (!estoques) estoques = await prisma.$queryRaw<EstoqueLinha[]>(buildEstoqueAnoAnteriorSql(filtro, filtro.dataPosicao, 'sku'));
   const vendas = await prisma.$queryRaw<VendaLinha[]>(buildVendasAnoAnteriorSql(filtro));
   const [datas] = await prisma.$queryRaw<Array<{ dataAnoAnterior: string; inicioVendas: string }>>`
     SELECT to_char(${dataLimiteSuperiorSql(filtro.dataPosicao, -1)}, 'YYYY-MM-DD') AS "dataAnoAnterior",

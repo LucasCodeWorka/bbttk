@@ -430,6 +430,7 @@ export interface RelatorioBaseKpisExtra {
   coberturaBasicoRenovavel: number | null;
   coberturaColecao: number | null;
   referenciasComEstoque: number;
+  estoqueAtivos: RelatorioBaseEstoqueAtivos;
   itensSemVenda30d: RelatorioBaseEstoqueAnaliseKpi;
   itensEnvelhecidos60a90d: RelatorioBaseEstoqueAnaliseKpi;
   itensEnvelhecidos90Mais: RelatorioBaseEstoqueAnaliseKpi;
@@ -438,6 +439,11 @@ export interface RelatorioBaseKpisExtra {
     renovavel: RelatorioBaseRupturaLinhaKpi;
   };
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+}
+
+export interface RelatorioBaseEstoqueAtivos {
+  referencias: { comEstoque: number; totalAtivos: number; percent: number };
+  skus: { comEstoque: number; totalAtivos: number; percent: number };
 }
 
 export interface RelatorioBaseEstoqueAnaliseKpi {
@@ -480,6 +486,7 @@ export interface RelatorioBaseComparativo {
   estoque: number;
   vendas30d: number;
   valorEstoque: number;
+  estoqueAtivos: { referencias: number; skus: number };
   coberturaGeral: number | null;
   coberturaBasico: number | null;
   coberturaBasicoRenovavel: number | null;

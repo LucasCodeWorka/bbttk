@@ -62,6 +62,13 @@ function formatEstoqueAnaliseSubtitle(kpi: RelatorioBaseEstoqueAnaliseKpi): stri
   return `${formatNumber(kpi.referencias)} refs | ${formatNumber(kpi.quantidadePercent, 1)}% das peças | ${formatMoney(kpi.valor)} (${formatNumber(kpi.valorPercent, 1)}% valor)`;
 }
 
+function totalRuptura(ruptura: RelatorioBaseResponse['kpisExtra']['ruptura'] | undefined) {
+  if (!ruptura) return null;
+  const skus = ruptura.basico.skus + ruptura.renovavel.skus;
+  const totalSkus = ruptura.basico.totalSkus + ruptura.renovavel.totalSkus;
+  return { skus, totalSkus, percent: totalSkus > 0 ? (skus / totalSkus) * 100 : 0 };
+}
+
 type MatrizSortKey = keyof Pick<
   RelatorioBaseMatrizLinha,
   | 'label'
@@ -531,7 +538,7 @@ export default function PcpRelatorioBasePage() {
 
     // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
     // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
-    const cacheKey = `visao-geral-v2-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-v7-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
     if (!forcarRecarregar) {
@@ -664,7 +671,7 @@ export default function PcpRelatorioBasePage() {
       branches: filtroAplicado.filiaisSelecionadas.length ? filtroAplicado.filiaisSelecionadas : undefined,
       search: filtroAplicado.search || undefined, dataPosicao: dataEfetiva,
     };
-    const cacheKey = `visao-geral-aa-v1-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-aa-v2-${JSON.stringify(filtro)}`;
     setIsLoadingComparativo(true);
     setErroComparativo(false);
     try {
@@ -714,7 +721,7 @@ export default function PcpRelatorioBasePage() {
       </p>
     );
     if (!comparativo) return null;
-    if (anterior === null || anterior === undefined) return <p className="text-xs text-gray-500 mt-1">AA: sem base de vendas</p>;
+    if (anterior === null || anterior === undefined) return <p className="text-xs text-gray-500 mt-1">AA: {formato === 'meses' ? 'sem base de vendas' : 'indisponível'}</p>;
     const diferenca = atual === null ? null : atual - anterior;
     const desvio = desvioPercentualDe(atual, anterior);
     const desvioCor = desvio !== null && desvio < 0 ? 'text-blue-600' : desvio !== null && desvio > 0 ? 'text-red-600' : 'text-gray-500';
@@ -976,8 +983,6 @@ export default function PcpRelatorioBasePage() {
     const referenciasMarkupFora = rows.filter((row) => ['markup_baixo', 'preco_custo'].includes(situacaoReferencia(row))).length;
 
     return {
-      referencias: data?.pagination.totalReferencias || rows.length,
-      skus: data?.kpis.skuCount || skus.length,
       precoAbaixoCusto: skus.filter(precoAbaixoCusto).length || referenciasComPrecoAbaixoCusto,
       markupFora: skus.filter((sku) => {
         const situacao = situacaoSku(sku);
@@ -1113,6 +1118,9 @@ export default function PcpRelatorioBasePage() {
     }
   }
 
+  const rupturaTotal = totalRuptura(data?.kpisExtra.ruptura);
+  const estoqueAtivos = data?.kpisExtra.estoqueAtivos;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -1232,8 +1240,8 @@ export default function PcpRelatorioBasePage() {
           title="Estoque Total"
           value={formatNumber(data?.kpis.estTt || 0)}
           subtitle={
-            data
-              ? `${formatNumber(data.kpisExtra.referenciasComEstoque || 0)} referências com estoque | ${formatNumber(data.kpis.skuCount || 0)} SKUs`
+            estoqueAtivos
+              ? `${formatNumber(estoqueAtivos.referencias.comEstoque)} referências ativas com estoque | ${formatNumber(estoqueAtivos.skus.comEstoque)} SKUs ativos com estoque`
               : undefined
           }
           footer={rodapeComparativo(data?.kpis.estTt ?? null, comparativo?.estoque, 'quantidade')}
@@ -1300,13 +1308,13 @@ export default function PcpRelatorioBasePage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
         <KPICard
-          title="Estoque crítico"
-          value={isLoading || !data ? '—' : `${data.kpisExtra.estoqueMortoPercent.toFixed(1)}%`}
+          title="Estoque crítico >5,0 meses"
+          value={isLoading || !data ? '—' : `${formatNumber(data.kpisExtra.estoqueMortoPercent, 2)}%`}
           subtitle={
             data
-              ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças | ${formatMoney(data.kpisExtra.estoqueMortoValor)} a custo (${data.kpisExtra.estoqueMortoPercent.toFixed(1)}% do total)`
+              ? `${formatNumber(data.kpisExtra.estoqueMortoQtd)} peças (${formatNumber(data.kpisExtra.estoqueMortoPercent, 2)}% das peças) | ${formatMoney(data.kpisExtra.estoqueMortoValor)} a custo`
               : undefined
           }
           color="red"
@@ -1314,7 +1322,7 @@ export default function PcpRelatorioBasePage() {
           isLoading={isLoading}
         />
         <KPICard
-          title="Itens sem venda"
+          title="PEÇAS SEM VENDA >30 DIAS"
           value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensSemVenda30d.quantidade)}
           subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensSemVenda30d) : undefined}
           color="yellow"
@@ -1322,33 +1330,22 @@ export default function PcpRelatorioBasePage() {
           isLoading={isLoading}
         />
         <KPICard
-          title="Itens envelhecidos 60/90 dias"
-          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos60a90d.quantidade)}
-          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos60a90d) : undefined}
-          color="purple"
-          valueSize="md"
-          isLoading={isLoading}
-        />
-        <KPICard
-          title="Itens envelhecidos >90 dias"
-          value={isLoading || !data ? '—' : formatNumber(data.kpisExtra.itensEnvelhecidos90Mais.quantidade)}
-          subtitle={data ? formatEstoqueAnaliseSubtitle(data.kpisExtra.itensEnvelhecidos90Mais) : undefined}
-          color="red"
-          valueSize="md"
-          isLoading={isLoading}
-        />
-        <KPICard
           title="Ruptura"
           value={
-            isLoading || !data
+            isLoading || !rupturaTotal
               ? '—'
-              : `${formatNumber(data.kpisExtra.ruptura.basico.skus + data.kpisExtra.ruptura.renovavel.skus)} SKUs`
+              : `${formatNumber(rupturaTotal.skus)} SKUs (${formatNumber(rupturaTotal.percent, 1)}%)`
           }
           subtitle={
             data
               ? `Básico: ${formatNumber(data.kpisExtra.ruptura.basico.skus)} (${formatNumber(data.kpisExtra.ruptura.basico.percent, 1)}%) | Renovável: ${formatNumber(data.kpisExtra.ruptura.renovavel.skus)} (${formatNumber(data.kpisExtra.ruptura.renovavel.percent, 1)}%)`
               : undefined
           }
+          footer={rupturaTotal && (
+            <p className="text-xs text-gray-500 mt-1" title="Base de cálculo da ruptura: SKUs de Básico e Renovável com status ATIVO, conforme os filtros aplicados.">
+              Base: {formatNumber(rupturaTotal.totalSkus)} SKUs ativos
+            </p>
+          )}
           color="green"
           valueSize="md"
           isLoading={isLoading}
@@ -1420,13 +1417,21 @@ export default function PcpRelatorioBasePage() {
         </CardHeader>
 
         <div className="mb-4 grid grid-cols-1 gap-3 px-1 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-lg bg-blue-50 px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Referências</p>
-            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.referencias)}</p>
+          <div className="rounded-lg bg-blue-50 px-4 py-3" title="Básico e Básico Renovável com STATUS = ATIVO. A referência conta quando algum SKU tem saldo positivo ou negativo.">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Referências com estoque</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !estoqueAtivos ? '—' : formatNumber(estoqueAtivos.referencias.comEstoque)}</p>
+            {!isLoading && estoqueAtivos && (
+              <p className="mt-1 text-xs text-gray-600">{formatNumber(estoqueAtivos.referencias.percent, 2)}% das {formatNumber(estoqueAtivos.referencias.totalAtivos)} referências ativas</p>
+            )}
+            {!isLoading && rodapeComparativo(estoqueAtivos?.referencias.comEstoque ?? null, comparativo?.estoqueAtivos?.referencias, 'quantidade')}
           </div>
-          <div className="rounded-lg bg-violet-50 px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-violet-500">SKUs</p>
-            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.skus)}</p>
+          <div className="rounded-lg bg-violet-50 px-4 py-3" title="Básico e Básico Renovável com STATUS = ATIVO e saldo positivo ou negativo. Ativos sem entrada também compõem a base percentual.">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-500">SKUs com estoque</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !estoqueAtivos ? '—' : formatNumber(estoqueAtivos.skus.comEstoque)}</p>
+            {!isLoading && estoqueAtivos && (
+              <p className="mt-1 text-xs text-gray-600">{formatNumber(estoqueAtivos.skus.percent, 2)}% dos {formatNumber(estoqueAtivos.skus.totalAtivos)} SKUs ativos</p>
+            )}
+            {!isLoading && rodapeComparativo(estoqueAtivos?.skus.comEstoque ?? null, comparativo?.estoqueAtivos?.skus, 'quantidade')}
           </div>
           <div className="rounded-lg bg-red-50 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Preço abaixo do custo</p>

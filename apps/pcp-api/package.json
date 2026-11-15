@@ -7,6 +7,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "test:estoque": "npm run build && node --test tests/estoqueLocal.test.cjs tests/estoqueAnoAnterior.test.cjs",
+    "test:ruptura": "npm run build && node --test tests/ruptura.test.cjs",
+    "test:sem-venda": "npm run build && node --test tests/pecasSemVenda.test.cjs",
+    "test:ativos": "npm run build && node --test tests/estoqueAtivos.test.cjs tests/ruptura.test.cjs",
+    "test:cobertura": "npm run build && node --test tests/estoqueCobertura.test.cjs",
     "start": "node --max-old-space-size=384 dist/index.js",
     "db:generate": "prisma generate --schema=../api/prisma/schema.prisma"
   },
