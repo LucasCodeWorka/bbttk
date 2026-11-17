@@ -343,6 +343,87 @@ export async function getVendasPeriodo(
   });
 }
 
+export interface ClientePeriodo {
+  tipo: 'compra' | 'devolucao';
+  codigo: number;
+  nome: string;
+  telefone: string | null;
+  email: string | null;
+  cidade: string | null;
+  uf: string | null;
+  branchCode: number;
+  loja: string;
+  movimentos: number;
+  pecas: number;
+  valor: number;
+  ticketMedio: number | null;
+  primeiroMovimento: string | null;
+  ultimoMovimento: string | null;
+}
+
+// Cliente distinto POR LOJA e TIPO de movimento, antes do split DPA/Atacado.
+// As abas ficam independentes: quem comprou e devolveu participa das duas.
+// Agrega antes de juntar o cadastro, preservando clientes sem dim_cliente e
+// vendas sem itens elegiveis (o LEFT JOIN do indicador tambem as contabiliza).
+export function buildClientesPeriodoSql(
+  startDate: Date, endDate: Date, branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro, diasExcluidos?: DiasExcluidos
+): Prisma.Sql {
+  return Prisma.sql`
+    WITH clientes_periodo AS (
+      SELECT t.branch_code, t.branch_name, t.customer_code,
+        CASE WHEN ${IS_SALE} THEN 'compra' ELSE 'devolucao' END AS tipo,
+        COUNT(DISTINCT t.transaction_code) AS movimentos,
+        COALESCE(SUM(${PECAS_COM_SINAL}), 0) AS pecas,
+        COALESCE(SUM(${FATURAMENTO_COM_SINAL}), 0) AS valor,
+        to_char(MIN(${DATA_PERIODO}), 'YYYY-MM-DD') AS primeiro_movimento,
+        to_char(MAX(${DATA_PERIODO}), 'YYYY-MM-DD') AS ultimo_movimento
+      FROM transacoes t
+      LEFT JOIN transacao_itens ti ON t.branch_code = ti.branch_code
+        AND t.transaction_code = ti.transaction_code AND ti.seller_code != 1
+      ${OPERACAO_JOIN}
+      WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
+        AND t.status = 4 AND t.customer_code IS NOT NULL
+        AND ${SALE_OPERATION_FILTER} AND ${STORE_BRANCH_FILTER}
+        ${buildBranchFilter(branchCodes)} ${buildProdutoFilter(produtoFiltro)}
+      GROUP BY t.branch_code, t.branch_name, t.customer_code, tipo
+    )
+    SELECT c.*, COALESCE(NULLIF(TRIM(d.nome), ''), NULLIF(TRIM(d.nome_fantasia), ''),
+      'Cliente ' || c.customer_code::text) AS nome,
+      d.telefone_principal AS telefone, d.email_principal AS email, d.cidade, d.uf
+    FROM clientes_periodo c
+    LEFT JOIN dim_cliente d ON d.idcliente = c.customer_code
+    ORDER BY c.branch_code, nome, c.customer_code, c.tipo
+  `;
+}
+
+export async function getClientesPeriodo(
+  startDate: Date, endDate: Date, branchCodes?: number[],
+  produtoFiltro?: ProdutoFiltro, diasExcluidos?: DiasExcluidos
+): Promise<ClientePeriodo[]> {
+  const rows = await prisma.$transaction(async tx => {
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+    await tx.$executeRawUnsafe("SELECT set_config('statement_timeout', '30s', true), set_config('lock_timeout', '5s', true)");
+    return tx.$queryRaw<Array<{
+      branch_code: number; branch_name: string | null; customer_code: number;
+      nome: string; telefone: string | null; email: string | null;
+      cidade: string | null; uf: string | null; tipo: 'compra' | 'devolucao'; movimentos: bigint;
+      pecas: Decimal; valor: Decimal; primeiro_movimento: string | null; ultimo_movimento: string | null;
+    }>>(buildClientesPeriodoSql(startDate, endDate, branchCodes, produtoFiltro, diasExcluidos));
+  }, { timeout: 35000 });
+  const fabrica = branchCodes?.includes(ATACADO_BRANCH_CODE) && !branchCodes.includes(FABRICA_BRANCH_CODE)
+    ? 'ATACADO' : branchCodes?.includes(FABRICA_BRANCH_CODE) && !branchCodes.includes(ATACADO_BRANCH_CODE)
+      ? 'DPA' : 'DPA / ATACADO';
+  return rows.map(r => ({
+    tipo: r.tipo, codigo: r.customer_code, nome: r.nome, telefone: r.telefone, email: r.email,
+    cidade: r.cidade, uf: r.uf, branchCode: r.branch_code,
+    loja: r.branch_code === FABRICA_BRANCH_CODE ? fabrica : FILIAIS[r.branch_code] || r.branch_name || `Filial ${r.branch_code}`,
+    movimentos: Number(r.movimentos), pecas: decimalToNumber(r.pecas), valor: round(decimalToNumber(r.valor)),
+    ticketMedio: Number(r.movimentos) > 0 ? round(decimalToNumber(r.valor) / Number(r.movimentos)) : null,
+    primeiroMovimento: r.primeiro_movimento, ultimoMovimento: r.ultimo_movimento,
+  }));
+}
+
 export interface FaturamentoHistoricoLoja {
   branch_code: number;
   branch_name: string;

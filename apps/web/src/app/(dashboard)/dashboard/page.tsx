@@ -8,6 +8,7 @@ import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSele
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { LineChart } from '@/components/charts/LineChart';
 import { BarChart } from '@/components/charts/BarChart';
@@ -15,11 +16,19 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { Badge, VariationBadge } from '@/components/ui/Badge';
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay';
 import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoResponse, VendedoresResponse, TopProdutosResponse, ProjecaoFiliaisResponse, FilialComparativo, ProjecaoFilial, ProdutoFiltro, ClassificacaoDimensao } from '@/lib/api';
-import { formatMoney, formatNumber, FABRICA_BRANCH_CODE, FABRICA_METADES, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
+import { formatDate, formatMoney, formatNumber, FABRICA_BRANCH_CODE, FABRICA_METADES, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 import { useAuth } from '@/contexts/AuthContext';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
+
+interface FiltroClientesDashboard {
+  inicio: string;
+  fim: string;
+  branches?: number[];
+  produto: ProdutoFiltro;
+  diasExcluidos: string[];
+}
 
 const LOJA_LABELS: Record<number, string> = {
   1: '1 IGUAT.',
@@ -82,7 +91,8 @@ const SORT_GETTERS: Record<string, (f: LinhaComparativo) => number> = {
 };
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const { showToast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [dataInicio, setDataInicio] = useState(getMonthStart());
   const [dataFim, setDataFim] = useState(getToday());
@@ -134,13 +144,22 @@ export default function DashboardPage() {
   const [vendedores, setVendedores] = useState<VendedoresResponse | null>(null);
   const [produtos, setProdutos] = useState<TopProdutosResponse | null>(null);
   const [projecao, setProjecao] = useState<ProjecaoFiliaisResponse | null>(null);
+  const [filtroClientesCarregado, setFiltroClientesCarregado] = useState<FiltroClientesDashboard | null>(null);
+  const [exportandoClientes, setExportandoClientes] = useState(false);
 
   const mesUnico = isMesUnico(dataInicio, dataFim);
 
   const carregarDados = useCallback(async () => {
+    if (!user) return;
+    if (user.role !== 'admin' && user.branchCodes.length === 0) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const branchCodes = filiaisSelecionadas.length > 0 ? filiaisSelecionadas : undefined;
+      const branchCodes = filiaisSelecionadas.length > 0 ? filiaisSelecionadas
+        : user.role === 'admin' ? undefined
+          : user.branchCodes.flatMap(code => code === FABRICA_BRANCH_CODE ? [code, 2.3] : [code]);
       const granularidade = isMesUnico(dataInicio, dataFim) ? 'diario' : 'mensal';
 
       const [vendasRes, diariasRes, compRes, vendRes, prodRes, projRes] = await Promise.all([
@@ -157,6 +176,8 @@ export default function DashboardPage() {
       ]);
 
       setVendas(vendasRes);
+      setFiltroClientesCarregado({ inicio: dataInicio, fim: dataFim, branches: branchCodes,
+        produto: produtoFiltro, diasExcluidos });
       setVendasDiarias(diariasRes);
       setComparativo(compRes);
       setVendedores(vendRes);
@@ -167,7 +188,58 @@ export default function DashboardPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [dataInicio, dataFim, diasExcluidos, filiaisSelecionadas, produtoFiltro, graficoVendasModo]);
+  }, [dataInicio, dataFim, diasExcluidos, filiaisSelecionadas, produtoFiltro, graficoVendasModo, user]);
+
+  async function exportarClientes() {
+    if (!token || !filtroClientesCarregado || exportandoClientes) return;
+    const filtro = filtroClientesCarregado;
+    setExportandoClientes(true);
+    try {
+      const resposta = await vendasApi.getClientesPeriodo(token, filtro.inicio, filtro.fim,
+        filtro.branches, filtro.produto, filtro.diasExcluidos);
+      if (!resposta.compras.length && !resposta.devolucoes.length) {
+        showToast('Nenhum cliente encontrado para os filtros selecionados.', 'info');
+        return;
+      }
+      const identidade: ExcelColumn[] = [
+        { key: 'branchCode', header: 'Cód. Loja', width: 11, type: 'number' },
+        { key: 'loja', header: 'Loja', width: 22, type: 'text' },
+        { key: 'codigo', header: 'Código Cliente', width: 16, type: 'text' },
+        { key: 'nome', header: 'Nome do cliente', width: 38, type: 'text' },
+        { key: 'telefone', header: 'Telefone', width: 20, type: 'text' },
+        { key: 'email', header: 'E-mail', width: 35, type: 'text' },
+        { key: 'cidade', header: 'Cidade', width: 22, type: 'text' },
+        { key: 'uf', header: 'UF', width: 6, type: 'text' },
+      ];
+      exportMultiSheetExcel(`clientes-dashboard-${filtro.inicio}-a-${filtro.fim}`, [
+        { sheetName: 'Compras', registros: resposta.compras },
+        { sheetName: 'Devoluções', registros: resposta.devolucoes },
+      ].map(({ sheetName, registros }) => {
+        const compra = sheetName === 'Compras';
+        return {
+          sheetName,
+          title: `Clientes por loja — ${sheetName} — ${formatDate(filtro.inicio)} a ${formatDate(filtro.fim)}`,
+          columns: [...identidade,
+            { key: 'movimentos', header: compra ? 'Quantidade de compras' : 'Quantidade de devoluções', width: 26, type: 'number' },
+            { key: 'pecas', header: compra ? 'Peças compradas' : 'Peças devolvidas', width: 19, type: 'number' },
+            { key: 'valor', header: compra ? 'Valor total de compras' : 'Valor devolvido', width: 24, type: 'currency' },
+            { key: 'ticketMedio', header: compra ? 'Ticket médio' : 'Valor médio por devolução', width: 28, type: 'currency' },
+            { key: 'primeiroMovimento', header: compra ? 'Primeira compra no período' : 'Primeira devolução no período', width: 31, type: 'text' },
+            { key: 'ultimoMovimento', header: compra ? 'Última compra no período' : 'Última devolução no período', width: 31, type: 'text' },
+          ] as ExcelColumn[],
+          data: registros.map(c => ({ ...c,
+            primeiroMovimento: c.primeiroMovimento ? formatDate(c.primeiroMovimento) : '',
+            ultimoMovimento: c.ultimoMovimento ? formatDate(c.ultimoMovimento) : '',
+          })),
+        };
+      }));
+    } catch (error) {
+      console.error('Erro ao exportar clientes:', error);
+      showToast('Não foi possível baixar o Excel de clientes. Tente novamente.', 'error');
+    } finally {
+      setExportandoClientes(false);
+    }
+  }
 
   useEffect(() => {
     carregarDados();
@@ -874,6 +946,22 @@ export default function DashboardPage() {
           color="red"
           valueSize="xs"
           isLoading={isLoading}
+          footer={
+            <button
+              type="button"
+              onClick={exportarClientes}
+              disabled={isLoading || exportandoClientes || !token || !filtroClientesCarregado}
+              aria-label="Baixar clientes em Excel"
+              aria-busy={exportandoClientes}
+              title="Baixar clientes com vendas ou devoluções no período, por loja"
+              className="mt-2 inline-flex items-center gap-1 rounded text-[11px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 16v4h14v-4" />
+              </svg>
+              {exportandoClientes ? 'Gerando Excel…' : 'Excel'}
+            </button>
+          }
         />
         <KPICard
           title="Preco Medio"
