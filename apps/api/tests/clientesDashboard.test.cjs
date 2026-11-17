@@ -130,10 +130,10 @@ test('mapeamento usa nomes conhecidos, preserva contatos e delimita a transacao 
     assert.equal(options.timeout, 35000);
     return fn({
       $executeRawUnsafe: async q => { comandos.push(q); },
-      $queryRaw: async () => [{ branch_code: 2, branch_name: 'FABRICA', customer_code: 100,
+      $queryRaw: async () => [{ branch_code: 2, branch_name: 'FABRICA', customer_code: 9007199254740993n,
         nome: 'Teste', telefone: '0011', email: null, cidade: null, uf: null,
         tipo: 'compra', movimentos: 2n, pecas: 3, valor: 150.123, primeiro_movimento: '2026-11-10', ultimo_movimento: '2026-11-11' },
-        { branch_code: 2, branch_name: 'FABRICA', customer_code: 200,
+        { branch_code: 2, branch_name: 'FABRICA', customer_code: 200n,
           nome: 'Devolucao', telefone: null, email: null, cidade: null, uf: null,
           tipo: 'devolucao', movimentos: 1n, pecas: -1, valor: -20, primeiro_movimento: '2026-11-10', ultimo_movimento: '2026-11-10' }],
     });
@@ -142,11 +142,14 @@ test('mapeamento usa nomes conhecidos, preserva contatos e delimita a transacao 
     const [r, devolucao] = await getClientesPeriodo(new Date('2026-11-10'), new Date('2026-11-11'), filtro);
     assert.equal(r.loja, nome);
     assert.equal(r.tipo, 'compra');
+    assert.equal(r.codigo, '9007199254740993');
     assert.equal(r.valor, 150.12);
     assert.equal(r.movimentos, 2);
     assert.equal(r.ticketMedio, 75.06);
     assert.equal(r.telefone, '0011');
     assert.equal(devolucao.tipo, 'devolucao');
+    assert.equal(devolucao.codigo, '200');
+    assert.doesNotThrow(() => JSON.stringify({ compras: [r], devolucoes: [devolucao] }));
     assert.equal(devolucao.movimentos, 1);
     assert.equal(devolucao.valor, -20);
     assert.equal(devolucao.ticketMedio, -20);

@@ -946,7 +946,7 @@ export default function DashboardPage() {
           color="red"
           valueSize="xs"
           isLoading={isLoading}
-          footer={
+          valueAction={
             <button
               type="button"
               onClick={exportarClientes}
@@ -954,7 +954,7 @@ export default function DashboardPage() {
               aria-label="Baixar clientes em Excel"
               aria-busy={exportandoClientes}
               title="Baixar clientes com vendas ou devoluções no período, por loja"
-              className="mt-2 inline-flex items-center gap-1 rounded text-[11px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded text-[11px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 16v4h14v-4" />

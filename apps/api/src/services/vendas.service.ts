@@ -345,7 +345,7 @@ export async function getVendasPeriodo(
 
 export interface ClientePeriodo {
   tipo: 'compra' | 'devolucao';
-  codigo: number;
+  codigo: string;
   nome: string;
   telefone: string | null;
   email: string | null;
@@ -405,7 +405,7 @@ export async function getClientesPeriodo(
     await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
     await tx.$executeRawUnsafe("SELECT set_config('statement_timeout', '30s', true), set_config('lock_timeout', '5s', true)");
     return tx.$queryRaw<Array<{
-      branch_code: number; branch_name: string | null; customer_code: number;
+      branch_code: number; branch_name: string | null; customer_code: bigint;
       nome: string; telefone: string | null; email: string | null;
       cidade: string | null; uf: string | null; tipo: 'compra' | 'devolucao'; movimentos: bigint;
       pecas: Decimal; valor: Decimal; primeiro_movimento: string | null; ultimo_movimento: string | null;
@@ -415,7 +415,7 @@ export async function getClientesPeriodo(
     ? 'ATACADO' : branchCodes?.includes(FABRICA_BRANCH_CODE) && !branchCodes.includes(ATACADO_BRANCH_CODE)
       ? 'DPA' : 'DPA / ATACADO';
   return rows.map(r => ({
-    tipo: r.tipo, codigo: r.customer_code, nome: r.nome, telefone: r.telefone, email: r.email,
+    tipo: r.tipo, codigo: String(r.customer_code), nome: r.nome, telefone: r.telefone, email: r.email,
     cidade: r.cidade, uf: r.uf, branchCode: r.branch_code,
     loja: r.branch_code === FABRICA_BRANCH_CODE ? fabrica : FILIAIS[r.branch_code] || r.branch_name || `Filial ${r.branch_code}`,
     movimentos: Number(r.movimentos), pecas: decimalToNumber(r.pecas), valor: round(decimalToNumber(r.valor)),

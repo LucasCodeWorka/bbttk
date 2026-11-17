@@ -4,6 +4,7 @@ const express = require('express');
 const auth = require('../dist/services/auth.service.js');
 const vendas = require('../dist/services/vendas.service.js');
 const totvs = require('../dist/services/totvs.service.js');
+const database = require('../dist/config/database.js');
 const router = require('../dist/routes/vendas.routes.js').default;
 
 test('exportacao de clientes exige autenticacao e respeita filiais e filtros', async t => {
@@ -59,11 +60,11 @@ test('exportacao de clientes exige autenticacao e respeita filiais e filtros', a
   const consultaVazia = vendas.getClientesPeriodo;
   vendas.getClientesPeriodo = async (...args) => {
     chamadas.push(args);
-    return [{ tipo: 'compra', codigo: 100 }, { tipo: 'devolucao', codigo: 100 }, { tipo: 'devolucao', codigo: 200 }];
+    return [{ tipo: 'compra', codigo: '100' }, { tipo: 'devolucao', codigo: '100' }, { tipo: 'devolucao', codigo: '200' }];
   };
   const separado = await (await get('admin')).json();
-  assert.deepEqual(separado.compras, [{ tipo: 'compra', codigo: 100 }]);
-  assert.deepEqual(separado.devolucoes, [{ tipo: 'devolucao', codigo: 100 }, { tipo: 'devolucao', codigo: 200 }]);
+  assert.deepEqual(separado.compras, [{ tipo: 'compra', codigo: '100' }]);
+  assert.deepEqual(separado.devolucoes, [{ tipo: 'devolucao', codigo: '100' }, { tipo: 'devolucao', codigo: '200' }]);
   vendas.getClientesPeriodo = consultaVazia;
   count = chamadas.length;
   for (const query of ['?branches=abc', '?branches=2.4', '?branches=1foo', '?branches=0']) {
@@ -74,4 +75,38 @@ test('exportacao de clientes exige autenticacao e respeita filiais e filtros', a
     assert.equal((await get('admin', '', url)).status, 400);
   }
   assert.equal(chamadas.length, count);
+});
+
+test('consulta, mapeamento e resposta HTTP serializam codigos BigInt sem perder digitos', async t => {
+  const originais = { verificar: auth.verifyToken, prisma: database.prisma, classificar: totvs.garantirClassificacaoAtualizada };
+  auth.verifyToken = () => ({ role: 'admin', branchCodes: [] });
+  totvs.garantirClassificacaoAtualizada = async () => {};
+  const base = { branch_code: 1, branch_name: 'IGUATEMI', nome: 'Cliente Teste',
+    telefone: '001199999999', email: null, cidade: null, uf: null,
+    movimentos: 1n, primeiro_movimento: '2026-11-10', ultimo_movimento: '2026-11-11' };
+  database.prisma = { $transaction: async callback => callback({
+    $executeRawUnsafe: async () => 0,
+    $queryRaw: async () => [
+      { ...base, customer_code: 9007199254740993n, tipo: 'compra', pecas: 2, valor: 150 },
+      { ...base, customer_code: 200n, tipo: 'devolucao', pecas: -1, valor: -20 },
+    ],
+  }) };
+  const server = express().use('/api', router).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(async () => {
+    auth.verifyToken = originais.verificar;
+    totvs.garantirClassificacaoAtualizada = originais.classificar;
+    database.prisma = originais.prisma;
+    await new Promise(resolve => server.close(resolve));
+  });
+  const result = await fetch(`http://127.0.0.1:${server.address().port}/api/vendas/clientes/periodo/2026-11-10/2026-11-11`, {
+    headers: { Authorization: 'Bearer admin' },
+  });
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.compras[0].codigo, '9007199254740993');
+  assert.equal(body.devolucoes[0].codigo, '200');
+  assert.equal(body.compras[0].telefone, '001199999999');
+  assert.equal(body.compras[0].movimentos, 1);
+  assert.equal(body.devolucoes[0].valor, -20);
 });

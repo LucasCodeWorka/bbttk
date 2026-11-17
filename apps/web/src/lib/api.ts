@@ -589,7 +589,7 @@ export interface VendasResponse {
 
 export interface ClienteMovimentoPeriodo {
   tipo: 'compra' | 'devolucao';
-  codigo: number; nome: string; telefone: string | null; email: string | null;
+  codigo: string; nome: string; telefone: string | null; email: string | null;
   cidade: string | null; uf: string | null; branchCode: number; loja: string;
   movimentos: number; pecas: number; valor: number; ticketMedio: number | null;
   primeiroMovimento: string | null; ultimoMovimento: string | null;

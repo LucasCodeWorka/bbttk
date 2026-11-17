@@ -24,7 +24,7 @@ A API devolve `periodo`, `compras` e `devolucoes`. A consulta agrega os moviment
 
 ## Validação
 
-- `npm run test:clientes-dashboard -w apps/api`: 13 testes passaram. Comparação com a consulta real do card em CTEs fictícias garante que todos os compradores continuam presentes na aba Compras e devoluções são segregadas. Cobre lojas, canais, classificações, datas, valores negativos, cadastros ausentes e clientes repetidos entre lojas. Um cliente com duas compras somando R$ 150 e duas devoluções somando R$ 8 aparece nas duas abas, reconciliando R$ 142 líquidos. Testes HTTP verificam autenticação, restrição por filial e separação das listagens.
+- `npm run test:clientes-dashboard -w apps/api`: 14 testes passaram. Comparação com a consulta real do card em CTEs fictícias garante que todos os compradores continuam presentes na aba Compras e devoluções são segregadas. Cobre lojas, canais, classificações, datas, valores negativos, cadastros ausentes e clientes repetidos entre lojas. Um cliente com duas compras somando R$ 150 e duas devoluções somando R$ 8 aparece nas duas abas, reconciliando R$ 142 líquidos. Testes HTTP verificam autenticação, restrição por filial, separação das listagens e serialização de códigos BigInt, incluindo valores maiores que o limite de precisão numérica do JavaScript.
 - Builds da API e do frontend passaram.
 - Chrome headless, com respostas simuladas: clique no botão baixou um XLSX válido com ambas as abas, telefone preservado como texto, moeda numérica e requisição autenticada, sem erros no navegador. Verificados o mesmo cliente nas duas abas com valores separados e o caso de Compras vazia com Devoluções preenchida, mesmo com o card mostrando zero compradores.
 - Conferência somente de leitura em dados reais, de 01/11 a 17/11/2026, todas as lojas: **Compras: 2.987 registros cliente/loja, 3.357 compras, R$ 709.225,94**. **Devoluções: 324 registros cliente/loja, 333 devoluções, -R$ 59.757,26**. O líquido de **R$ 649.468,68** coincide com o dashboard do print. Nenhum dado pessoal foi impresso ou exportado nesta conferência real.
@@ -32,3 +32,11 @@ A API devolve `periodo`, `compras` e `devolucoes`. A consulta agrega os moviment
 - A presença de clientes apenas com devolução e a participação de um mesmo cliente nas duas abas são validadas por fixtures e pelo download no navegador, sem depender da existência desses casos no recorte real consultado.
 
 Implementação e validações concluídas em 17/11/2026. Nota de entrega: `apps/api/content/entregas/2026-11-17-comercial-clientes-excel.md`.
+
+## Correção do erro 500 e alinhamento do botão
+
+O erro relatado após a publicação foi reproduzido executando o serviço completo: `transacoes.customer_code` é BIGINT no PostgreSQL, e a consulta retorna `bigint` em JavaScript. O DTO estava declarado como `number` e preservava o valor bruto, fazendo `res.json` lançar `Do not know how to serialize a BigInt`. A validação inicial havia exercitado SQL e respostas simuladas, sem serializar o DTO completo com o tipo real dessa coluna.
+
+`codigo` passa a ser texto no contrato da API e é convertido explicitamente com `String(customer_code)`, preservando todos os dígitos. O novo teste HTTP atravessa o serviço real de mapeamento com linhas BigInt e valida JSON válido sem perda de precisão. Conferência adicional com banco real, somente de leitura, e rota HTTP local: **status 200**, **2.987 compras**, **324 devoluções**, todos os códigos em texto, resposta em aproximadamente 2,4 segundos. Nenhum dado pessoal foi impresso ou salvo nessa conferência.
+
+O componente KPICard recebeu `valueAction`; o botão Excel fica à direita do valor, na mesma linha. No teste de navegador, a altura do card voltou a **90 px**, com o botão alinhado verticalmente ao valor. O XLSX baixado preservou um código de cliente de 16 dígitos como texto, além de contatos, moedas e abas. Acesso de somente devoluções também validado.
