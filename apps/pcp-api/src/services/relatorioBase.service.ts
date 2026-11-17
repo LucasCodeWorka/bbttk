@@ -106,9 +106,20 @@ function statusAtivo(status: string | null): boolean {
   return status?.trim().replace(/\s+/g, ' ').toUpperCase() === 'ATIVO';
 }
 
+// Universo da RUPTURA: so o mix que se repoe (Basico/Renovavel com STATUS ATIVO).
+// Style e colecao e nao e reposto, entao faltar estoque nele nao e ruptura.
 export function skuAtivoDoMix(linha: string | null, status: string | null): boolean {
   const bucket = linhaBucket(linha);
   return statusAtivo(status) && (bucket === LINHA_BUCKET_BASICO || bucket === LINHA_BUCKET_BASICO_RENOVAVEL);
+}
+
+// Universo dos cards REFERENCIAS/SKUS COM ESTOQUE (devolutiva, secao 6): o cadastro
+// inteiro, desconsiderando SOMENTE o STATUS INATIVO - qualquer linha, e FORA DE
+// LINHA/promocao contam como ativas. Nao reaproveitar skuAtivoDoMix aqui: com ela o
+// card contava 211 referencias contra as 758 do estoque total (15/11/2026) e o
+// percentual ficava sempre perto de 100%.
+export function skuNaoInativo(status: string | null): boolean {
+  return status?.trim().replace(/\s+/g, ' ').toUpperCase() !== 'INATIVO';
 }
 
 interface EstoqueAtivoSku {
@@ -118,9 +129,11 @@ interface EstoqueAtivoSku {
 
 export function acumularEstoqueAtivos(
   skus: Map<string, EstoqueAtivoSku>, sku: string, referencia: string,
-  linha: string | null, status: string | null, estoque: number
+  // `linha` nao entra mais na regra (ver skuNaoInativo); mantido pra nao mudar as
+  // chamadas, que passam a mesma identidade usada pela ruptura.
+  _linha: string | null, status: string | null, estoque: number
 ) {
-  if (!skuAtivoDoMix(linha, status)) return;
+  if (!skuNaoInativo(status)) return;
   const acc = skus.get(sku) || { referencia, estoque: 0 };
   acc.estoque += estoque;
   skus.set(sku, acc);

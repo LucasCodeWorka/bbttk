@@ -11,18 +11,21 @@ function calcular(rows) {
   return montarIndicadoresEstoqueAtivos(skus);
 }
 
-test('referências e SKUs usam apenas Básico/Renovável com STATUS ATIVO', () => {
+test('referências e SKUs consideram todas as linhas e status, exceto INATIVO', () => {
   const result = calcular([
     { sku: 'B', ref: 'B', estoque: 2 },
     { sku: 'R', ref: 'R', linha: ' básica renovável ', status: ' ativo ', estoque: 0 },
-    ...['FORA DE LINHA', 'FORA DE LINHA XXXX', 'INATIVO', 'ATIVO PROMOÇÃO'].map((status, i) => ({
-      sku: `EXCLUIDO-${i}`, ref: `EXCLUIDO-${i}`, status, estoque: 3,
+    ...['FORA DE LINHA', 'FORA DE LINHA XXXX', 'ATIVO PROMOÇÃO'].map((status, i) => ({
+      sku: `INCLUIDO-${i}`, ref: `INCLUIDO-${i}`, status, estoque: 3,
     })),
+    { sku: 'INATIVO', ref: 'INATIVO', status: ' inativo ', estoque: 3 },
     { sku: 'STYLE', ref: 'STYLE', linha: 'STYLE', estoque: 5 },
     { sku: 'OUTRA', ref: 'OUTRA', linha: 'CASUAL', estoque: 5 },
+    { sku: 'SEM-STATUS', ref: 'SEM-STATUS', status: null, estoque: 0 },
   ]);
-  assert.deepEqual(result.referencias, { comEstoque: 1, totalAtivos: 2, percent: 50 });
-  assert.deepEqual(result.skus, { comEstoque: 1, totalAtivos: 2, percent: 50 });
+  // Fora: so o INATIVO. R e SEM-STATUS entram na base, mas estao zerados.
+  assert.deepEqual(result.referencias, { comEstoque: 6, totalAtivos: 8, percent: 75 });
+  assert.deepEqual(result.skus, { comEstoque: 6, totalAtivos: 8, percent: 75 });
 });
 
 test('referência com tamanhos positivos e negativos conta mesmo quando a soma é zero', () => {
@@ -64,7 +67,8 @@ test('o AA conta SKUs e referências históricos elegíveis sem mudar quantidade
     { product_sku: 'FORA', reference_code: 'FORA', linha: 'BÁSICO', status: 'FORA DE LINHA', quantidade: 10, valor: 100 },
     { product_sku: 'STYLE', reference_code: 'STYLE', linha: 'STYLE', status: 'ATIVO', quantidade: 20, valor: 200 },
   ], []);
-  assert.deepEqual(result.estoqueAtivos, { referencias: 2, skus: 3 });
+  // FORA DE LINHA e STYLE agora contam; so a ZERADA fica de fora.
+  assert.deepEqual(result.estoqueAtivos, { referencias: 4, skus: 5 });
   assert.equal(result.estoque, 28);
   assert.equal(result.valorEstoque, 280);
 });

@@ -233,7 +233,8 @@ test('AA materializado por SKU soma filiais e mantém SKUs exclusivos do histór
     const result = montarComparativoAnoAnterior(rows, []);
     assert.equal(result.estoque, 4);
     assert.equal(result.valorEstoque, 70);
-    assert.deepEqual(result.estoqueAtivos, { referencias: 1, skus: 1 });
+    // ANTIGA e FORA DE LINHA: conta nos cards de referencias/SKUs (so INATIVO fica fora).
+    assert.deepEqual(result.estoqueAtivos, { referencias: 2, skus: 2 });
   });
 });
 

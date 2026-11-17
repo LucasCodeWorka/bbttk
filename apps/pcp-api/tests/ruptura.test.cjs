@@ -99,8 +99,10 @@ test('a posição histórica inclui ativos ausentes do snapshot sem duplicar fil
   const result = await getRelatorioBase({ dataPosicao: '2026-11-12', incluirComparativoAnoAnterior: false, pageSize: 1 });
   assert.deepEqual(result.kpisExtra.ruptura.basico, { skus: 1, totalSkus: 2, percent: 50 });
   assert.deepEqual(result.kpisExtra.ruptura.renovavel, { skus: 2, totalSkus: 2, percent: 100 });
-  assert.deepEqual(result.kpisExtra.estoqueAtivos.referencias, { comEstoque: 1, totalAtivos: 4, percent: 25 });
-  assert.deepEqual(result.kpisExtra.estoqueAtivos.skus, { comEstoque: 1, totalAtivos: 4, percent: 25 });
+  // Cards de referencias/SKUs: so INATIVO fica fora, entao STYLE e FORA entram na base
+  // (6), ao contrario da ruptura acima, que segue restrita a Basico/Renovavel ATIVO.
+  assert.deepEqual(result.kpisExtra.estoqueAtivos.referencias, { comEstoque: 1, totalAtivos: 6, percent: 16.67 });
+  assert.deepEqual(result.kpisExtra.estoqueAtivos.skus, { comEstoque: 1, totalAtivos: 6, percent: 16.67 });
   assert.equal(result.kpisExtra.referenciasComEstoque, 1);
   assert.equal(result.kpis.estTt, 8);
   assert.equal(result.kpis.skuCount, 4);

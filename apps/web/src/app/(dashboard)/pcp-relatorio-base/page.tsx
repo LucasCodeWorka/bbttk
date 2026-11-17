@@ -1425,7 +1425,7 @@ export default function PcpRelatorioBasePage() {
         </CardHeader>
 
         <div className="mb-4 grid grid-cols-1 gap-3 px-1 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-lg bg-blue-50 px-4 py-3" title="Básico e Básico Renovável com STATUS = ATIVO. A referência conta quando algum SKU tem saldo positivo ou negativo.">
+          <div className="rounded-lg bg-blue-50 px-4 py-3" title="Todas as linhas e status, exceto INATIVO. A referência conta quando algum SKU tem saldo positivo ou negativo; só fica de fora a zerada em todos os tamanhos.">
             <p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Referências com estoque</p>
             <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !estoqueAtivos ? '—' : formatNumber(estoqueAtivos.referencias.comEstoque)}</p>
             {!isLoading && estoqueAtivos && (
@@ -1433,7 +1433,7 @@ export default function PcpRelatorioBasePage() {
             )}
             {!isLoading && rodapeComparativo(estoqueAtivos?.referencias.comEstoque ?? null, comparativo?.estoqueAtivos?.referencias, 'quantidade')}
           </div>
-          <div className="rounded-lg bg-violet-50 px-4 py-3" title="Básico e Básico Renovável com STATUS = ATIVO e saldo positivo ou negativo. Ativos sem entrada também compõem a base percentual.">
+          <div className="rounded-lg bg-violet-50 px-4 py-3" title="Todas as linhas e status, exceto INATIVO, com saldo positivo ou negativo. SKUs sem entrada também compõem a base percentual.">
             <p className="text-xs font-semibold uppercase tracking-wide text-violet-500">SKUs com estoque</p>
             <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !estoqueAtivos ? '—' : formatNumber(estoqueAtivos.skus.comEstoque)}</p>
             {!isLoading && estoqueAtivos && (
