@@ -131,6 +131,46 @@ router.get('/vendas/periodo/:start/:end/:branchCode?', async (req: Request, res:
   }
 });
 
+// Clientes por tipo de movimento, respeitando as filiais permitidas ao usuario.
+router.get('/vendas/clientes/periodo/:start/:end', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { start, end } = req.params;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const dataValida = (value: string, date: Date) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    if (!dataValida(start, startDate) || !dataValida(end, endDate) || startDate > endDate) {
+      res.status(400).json({ error: 'Período inválido para exportar clientes.' });
+      return;
+    }
+    if (req.query.branches !== undefined && (typeof req.query.branches !== 'string'
+      || req.query.branches.split(',').some(c => !/^\d+(?:\.3)?$/.test(c.trim())
+        || !(Number(c) > 0 && (Number.isInteger(Number(c)) || Number(c) === 2.3))))) {
+      res.status(400).json({ error: 'Filiais inválidas para exportar clientes.' });
+      return;
+    }
+    let branchCodes = resolveBranchCodes(req);
+    if (req.user!.role !== 'admin') {
+      const permitidas = new Set(req.user!.branchCodes.flatMap(c => c === 2 ? [2, 2.3] : [c]));
+      if (permitidas.size === 0 || branchCodes?.some(c => !permitidas.has(c))) {
+        res.status(403).json({ error: 'Acesso não autorizado a estas filiais.' });
+        return;
+      }
+      branchCodes = branchCodes || [...permitidas];
+    }
+    const clientes = await vendasService.getClientesPeriodo(
+      startDate, endDate, branchCodes, resolveProdutoFiltro(req), resolveDiasExcluidos(req)
+    );
+    res.json({ periodo: { inicio: start, fim: end },
+      compras: clientes.filter(c => c.tipo === 'compra'),
+      devolucoes: clientes.filter(c => c.tipo === 'devolucao'),
+    });
+  } catch (error) {
+    console.error('Erro ao listar clientes do dashboard:', error);
+    res.status(500).json({ error: 'Não foi possível exportar os clientes.' });
+  }
+});
+
 // Vendas diárias por período
 router.get('/vendas/diarias/periodo/:start/:end/:branchCode?', async (req: Request, res: Response) => {
   try {

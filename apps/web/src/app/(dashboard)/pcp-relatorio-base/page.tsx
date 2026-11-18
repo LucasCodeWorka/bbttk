@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/ui/Table';
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
+import { ProdutoImagensModal } from '@/components/pcp/ProdutoImagensModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -21,6 +22,7 @@ import {
   RelatorioBaseRow,
   RelatorioBaseReferenciaRow,
   RelatorioBaseMatrizLinha,
+  RelatorioBaseMatrizValores,
   RelatorioBaseEstoqueAnaliseKpi,
   VisaoGeralExtrasResponse,
   relatorioBaseApi,
@@ -84,9 +86,85 @@ type MatrizSortKey = keyof Pick<
   | 'coberturaGeral'
 >;
 
+function MatrizValores({ valores }: { valores: RelatorioBaseMatrizValores }) {
+  const quantidade = (valor: number) => valor == null ? '—' : formatNumber(valor);
+  const meses = (valor: number | null) => valor == null ? '—' : `${valor.toFixed(1)}m`;
+  return <>
+    <TableCell align="right">{quantidade(valores.estoqueVarejo)}</TableCell>
+    <TableCell align="right">{quantidade(valores.estoqueAtacado)}</TableCell>
+    <TableCell align="right">{quantidade(valores.estoqueTotal)}</TableCell>
+    <TableCell align="right">{valores.valorEstoque == null ? '—' : formatMoney(valores.valorEstoque)}</TableCell>
+    <TableCell align="right">{quantidade(valores.vendaVarejo)}</TableCell>
+    <TableCell align="right">{quantidade(valores.vendaAtacado)}</TableCell>
+    <TableCell align="right">{quantidade(valores.vendaTotal)}</TableCell>
+    <TableCell align="right">{meses(valores.coberturaVarejo)}</TableCell>
+    <TableCell align="right">{meses(valores.coberturaAtacado)}</TableCell>
+    <TableCell align="right">{meses(valores.coberturaGeral)}</TableCell>
+  </>;
+}
+
+function MatrizReferencias({ linha, sortKey, sortDir }: {
+  linha: RelatorioBaseMatrizLinha; sortKey: MatrizSortKey; sortDir: 'asc' | 'desc';
+}) {
+  const [busca, setBusca] = useState('');
+  const [pagina, setPagina] = useState(1);
+  useEffect(() => { setPagina(1); }, [sortKey, sortDir]);
+  const referencias = useMemo(() => {
+    const termo = busca.trim().toLocaleLowerCase('pt-BR');
+    return (linha.referencias || []).filter(ref =>
+      `${ref.referenceCode} ${ref.descricao} ${ref.statusOriginais.join(' ')}`.toLocaleLowerCase('pt-BR').includes(termo)
+    ).sort((a, b) => {
+      const cmp = sortKey === 'label'
+        ? a.referenceCode.localeCompare(b.referenceCode, 'pt-BR')
+        : (a[sortKey] ?? -Infinity) - (b[sortKey] ?? -Infinity);
+      return (sortDir === 'asc' ? cmp : -cmp) || a.referenceCode.localeCompare(b.referenceCode, 'pt-BR');
+    });
+  }, [linha, busca, sortKey, sortDir]);
+  const totalPaginas = Math.max(1, Math.ceil(referencias.length / 25));
+  const controles = <div className="flex items-center gap-3 text-xs text-gray-500">
+    <span>{formatNumber(referencias.length)} referências · Página {pagina} de {totalPaginas}</span>
+    <Button variant="secondary" size="sm" aria-label={`Referências anteriores de ${linha.label}`}
+      disabled={pagina <= 1} onClick={() => setPagina(p => p - 1)}>Anterior</Button>
+    <Button variant="secondary" size="sm" aria-label={`Próximas referências de ${linha.label}`}
+      disabled={pagina >= totalPaginas} onClick={() => setPagina(p => p + 1)}>Próxima</Button>
+  </div>;
+  return <>
+    <TableRow className="bg-blue-50/50">
+      <TableCell colSpan={11}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Input className="w-80" aria-label={`Buscar referências em ${linha.label}`} placeholder="Buscar referência, descrição ou status"
+            value={busca} onChange={e => { setBusca(e.target.value); setPagina(1); }} />
+          {controles}
+        </div>
+      </TableCell>
+    </TableRow>
+    {referencias.slice((pagina - 1) * 25, pagina * 25).map(ref => (
+      <TableRow key={ref.referenceCode} className="bg-blue-50/20">
+        <TableCell className="!pl-9 border-l-2 border-blue-100">
+          <span className="block text-xs font-semibold text-gray-800">{ref.referenceCode}</span>
+          <span className="block max-w-64 whitespace-normal text-[10px] text-gray-500">{ref.descricao}</span>
+          <span className="block max-w-64 whitespace-normal text-[9px] text-gray-400">{ref.statusOriginais.join(' / ')}</span>
+        </TableCell>
+        <MatrizValores valores={ref} />
+      </TableRow>
+    ))}
+    {referencias.length === 0 && <TableRow><TableCell colSpan={11} align="center" className="text-sm text-gray-500">Nenhuma referência encontrada.</TableCell></TableRow>}
+    {referencias.length > 25 && <TableRow className="bg-blue-50/50"><TableCell colSpan={11}><div className="flex justify-end">{controles}</div></TableCell></TableRow>}
+  </>;
+}
+
 function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
   const [sortKey, setSortKey] = useState<MatrizSortKey>('estoqueTotal');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  useEffect(() => { setExpandidos(new Set()); }, [linhas]);
+  function alternarGrupo(label: string) {
+    setExpandidos(prev => {
+      const proximo = new Set(prev);
+      if (proximo.has(label)) proximo.delete(label); else proximo.add(label);
+      return proximo;
+    });
+  }
 
   function handleSort(key: string) {
     const nextKey = key as MatrizSortKey;
@@ -124,7 +202,7 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
     <Table>
       <TableHead>
         <TableRow>
-          <ThSortPcp label="Linha" sortKeyName="label" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+          <ThSortPcp label="Grupo" sortKeyName="label" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
           <ThSortPcp label="Est. Varejo" sortKeyName="estoqueVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
           <ThSortPcp label="Est. Atacado" sortKeyName="estoqueAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
           <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
@@ -139,19 +217,25 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
       </TableHead>
       <TableBody>
         {linhasOrdenadas.map((linha) => (
-          <TableRow key={linha.label} isHighlighted={linha.label === 'Total'}>
-            <TableCell>{linha.label}</TableCell>
-            <TableCell align="right">{formatNumber(linha.estoqueVarejo)}</TableCell>
-            <TableCell align="right">{formatNumber(linha.estoqueAtacado)}</TableCell>
-            <TableCell align="right">{formatNumber(linha.estoqueTotal)}</TableCell>
-            <TableCell align="right">{formatMoney(linha.valorEstoque)}</TableCell>
-            <TableCell align="right">{formatNumber(linha.vendaVarejo)}</TableCell>
-            <TableCell align="right">{formatNumber(linha.vendaAtacado)}</TableCell>
-            <TableCell align="right">{formatNumber(linha.vendaTotal)}</TableCell>
-            <TableCell align="right">{linha.coberturaVarejo === null ? '—' : `${linha.coberturaVarejo.toFixed(1)}m`}</TableCell>
-            <TableCell align="right">{linha.coberturaAtacado === null ? '—' : `${linha.coberturaAtacado.toFixed(1)}m`}</TableCell>
-            <TableCell align="right">{linha.coberturaGeral === null ? '—' : `${linha.coberturaGeral.toFixed(1)}m`}</TableCell>
+          <Fragment key={linha.label}>
+          <TableRow isHighlighted={linha.label === 'Total'} className={expandidos.has(linha.label) ? 'bg-blue-50' : undefined}
+            onClick={linha.referencias?.length ? () => alternarGrupo(linha.label) : undefined}>
+            <TableCell>
+              {linha.referencias && linha.referencias.length > 0 ? (
+                <button type="button" className="text-left" aria-expanded={expandidos.has(linha.label)}
+                  aria-label={`${expandidos.has(linha.label) ? 'Recolher' : 'Mostrar'} referências de ${linha.label}`}
+                  onClick={e => { e.stopPropagation(); alternarGrupo(linha.label); }}>
+                  <span className="block whitespace-nowrap"><span className="mr-2 text-gray-400" aria-hidden="true">{expandidos.has(linha.label) ? '▾' : '▸'}</span>{linha.label}</span>
+                  <span className="mt-1 block pl-5 text-[10px] text-blue-600 hover:underline">
+                    {expandidos.has(linha.label) ? 'Recolher' : 'Ver'} {formatNumber(linha.referencias.length)} referências
+                  </span>
+                </button>
+              ) : <span>{linha.label}</span>}
+            </TableCell>
+            <MatrizValores valores={linha} />
           </TableRow>
+          {expandidos.has(linha.label) && <MatrizReferencias linha={linha} sortKey={sortKey} sortDir={sortDir} />}
+          </Fragment>
         ))}
       </TableBody>
     </Table>
@@ -227,6 +311,7 @@ interface VisaoGeralFiltros {
 
 interface VisaoGeralPageState {
   timestamp: number;
+  ordenacaoVersao?: number;
   produtoFiltro?: Record<string, string[] | undefined>;
   filiaisSelecionadas?: number[];
   search?: string;
@@ -497,9 +582,10 @@ export default function PcpRelatorioBasePage() {
   const [isLoadingComparativo, setIsLoadingComparativo] = useState(true);
   const [erroComparativo, setErroComparativo] = useState(false);
   const comparativoAbortRef = useRef<AbortController | null>(null);
-  const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.sortKey ?? 'giroTt3');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.sortDir || 'desc');
+  const [sortKey, setSortKey] = useState<string | null>(() => initialPageState?.ordenacaoVersao === 2 ? initialPageState.sortKey ?? 'estTt' : 'estTt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.ordenacaoVersao === 2 ? initialPageState.sortDir || 'desc' : 'desc');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
+  const [fotosReferencia, setFotosReferencia] = useState<{ referencia: string; codigo: number | null } | null>(null);
 
   // Indicadores extra (Analise de Grade/Estoque Sem Giro/Curva ABC) - carregados em
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
@@ -538,7 +624,7 @@ export default function PcpRelatorioBasePage() {
 
     // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
     // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
-    const cacheKey = `visao-geral-v9-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-v11-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
     if (!forcarRecarregar) {
@@ -594,6 +680,7 @@ export default function PcpRelatorioBasePage() {
 
   useEffect(() => {
     writeVisaoGeralPageState({
+      ordenacaoVersao: 2,
       produtoFiltro,
       filiaisSelecionadas,
       search,
@@ -1362,7 +1449,7 @@ export default function PcpRelatorioBasePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Cobertura por linha/categoria/gênero × canal</CardTitle>
+          <CardTitle>Cobertura por linha/categoria/gênero/status × canal</CardTitle>
           <Select
             value={dimensao}
             onChange={(e) => setDimensao(e.target.value as 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status')}
@@ -1575,6 +1662,19 @@ export default function PcpRelatorioBasePage() {
                         >
                           {idx === 0 && !porCor && <span className="mr-2 text-lg leading-none text-gray-500">{expandida ? '⌄' : '›'}</span>}
                           {c.render(row)}
+                          {c.key === 'sku' && !porCor && (
+                            <button type="button" aria-label={`Ver fotos da referência ${row.referenceCode}`}
+                              className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setFotosReferencia({ referencia: row.referenceCode, codigo: row.skus.find(sku => sku.codigo != null && sku.codigo > 0)?.codigo ?? null });
+                              }}>
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                                <path d="M3 7h4l2-3h6l2 3h4v13H3V7Z" /><circle cx="12" cy="13" r="4" />
+                              </svg>
+                              Fotos
+                            </button>
+                          )}
                         </TableCell>
                       ))}
                       {colunas.map((c) => {
@@ -1695,6 +1795,8 @@ export default function PcpRelatorioBasePage() {
         </div>
         </div>
       </Card>
+
+      {fotosReferencia && <ProdutoImagensModal {...fotosReferencia} onClose={() => setFotosReferencia(null)} />}
 
       <Modal isOpen={metaModalAberto} onClose={() => setMetaModalAberto(false)} title="Editar metas da Visão Geral" size="md">
         {meta && (

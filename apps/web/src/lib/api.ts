@@ -98,6 +98,12 @@ function joinQuery(...parts: string[]): string {
 }
 
 export const vendasApi = {
+  getClientesPeriodo: (token: string, inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
+    fetchApi<ClientesPeriodoResponse>(
+      `/api/vendas/clientes/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`,
+      { token }
+    ),
+
   getPeriodo: (inicio: string, fim: string, branchCodes?: number[], produtoFiltro?: ProdutoFiltro, diasExcluidos?: string[]) =>
     fetchApi<VendasResponse>(
       `/api/vendas/periodo/${inicio}/${fim}${joinQuery(branchesQuery(branchCodes), produtoFiltroQuery(produtoFiltro), diasExcluidosQuery(diasExcluidos))}`
@@ -189,7 +195,15 @@ async function uploadFile<T>(endpoint: string, token: string, file: File): Promi
 }
 
 // Produtos
+export interface ProdutoImagensResponse {
+  productCode: number;
+  images: { imageCode: number; imageName: string; imageDescription: string | null;
+    typeImageCode: string | null; typeImageName: string | null; mimeType: string; base64: string }[];
+}
+
 export const produtosApi = {
+  getImagens: (token: string, productCode: number, signal?: AbortSignal) =>
+    fetchApi<ProdutoImagensResponse>(`/api/produtos/${productCode}/imagens`, { token, signal }),
   getCores: (token: string, tipo?: string, grupoId?: number) => {
     const params = new URLSearchParams();
     if (tipo) params.set('tipo', tipo);
@@ -579,6 +593,20 @@ export interface VendasResponse {
     clientes: number;
     pm: number;
   };
+}
+
+export interface ClienteMovimentoPeriodo {
+  tipo: 'compra' | 'devolucao';
+  codigo: string; nome: string; telefone: string | null; email: string | null;
+  cidade: string | null; uf: string | null; branchCode: number; loja: string;
+  movimentos: number; pecas: number; valor: number; ticketMedio: number | null;
+  primeiroMovimento: string | null; ultimoMovimento: string | null;
+}
+
+export interface ClientesPeriodoResponse {
+  periodo: { inicio: string; fim: string };
+  compras: ClienteMovimentoPeriodo[];
+  devolucoes: ClienteMovimentoPeriodo[];
 }
 
 export interface VendasDiariasResponse {

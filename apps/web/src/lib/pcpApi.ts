@@ -465,8 +465,7 @@ export interface RelatorioBaseRupturaLinhaKpi {
   percent: number;
 }
 
-export interface RelatorioBaseMatrizLinha {
-  label: string;
+export interface RelatorioBaseMatrizValores {
   estoqueVarejo: number;
   estoqueAtacado: number;
   estoqueTotal: number;
@@ -477,6 +476,18 @@ export interface RelatorioBaseMatrizLinha {
   coberturaVarejo: number | null;
   coberturaAtacado: number | null;
   coberturaGeral: number | null;
+}
+
+export interface RelatorioBaseMatrizReferencia extends RelatorioBaseMatrizValores {
+  referenceCode: string;
+  descricao: string;
+  statusOriginais: string[];
+  estTt: number;
+}
+
+export interface RelatorioBaseMatrizLinha extends RelatorioBaseMatrizValores {
+  referencias?: RelatorioBaseMatrizReferencia[];
+  label: string;
 }
 
 export interface RelatorioBaseFiltrosResponse {

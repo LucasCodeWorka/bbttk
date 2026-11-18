@@ -1,3 +1,4 @@
+import { agruparStatus, ordenarPorEstoque, ReferenciasMatriz, ReferenciaAgrupamento } from './relatorioBaseAgrupamentos.service.js';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../config/database.js';
@@ -426,7 +427,7 @@ export interface RelatorioBaseKpisExtra {
     basico: RelatorioBaseRupturaLinhaKpi;
     renovavel: RelatorioBaseRupturaLinhaKpi;
   };
-  // Participacao por status real do TOTVS (ATIVO/FORA DE LINHA/PROMOCAO/INATIVO -
+  // Participacao por status consolidado (ATIVO/FORA DE LINHA/INATIVO -
   // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
 }
@@ -451,6 +452,7 @@ export interface RelatorioBaseRupturaLinhaKpi {
 }
 
 export interface RelatorioBaseMatrizLinha {
+  referencias: ReferenciaAgrupamento[];
   label: string;
   estoqueVarejo: number;
   estoqueAtacado: number;
@@ -1637,6 +1639,7 @@ async function getRelatorioBaseAnalitico(
     skus.set(sku, agg);
   }
 
+  const referenciasMatriz = new ReferenciasMatriz();
   const matrizLinhaAgg = new Map<string, BucketAcc>();
   const matrizLinhaCompletaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
@@ -1731,7 +1734,8 @@ async function getRelatorioBaseAnalitico(
     else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
-    statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + sku.estTt);
+    const statusApresentacao = statusBucketKey.startsWith('FORA DE LINHA') ? 'FORA DE LINHA' : statusBucketKey;
+    statusAgg.set(statusApresentacao, (statusAgg.get(statusApresentacao) || 0) + sku.estTt);
     if (temCoberturaCritica(sku.estTt, sku.giro30)) {
       estoqueMortoQtd += sku.estTt;
       estoqueMortoValor += sku.valorEstoque;
@@ -1755,7 +1759,15 @@ async function getRelatorioBaseAnalitico(
     acumularBucket(matrizLinhaCompletaAgg, sku.linha?.trim() || null, bucketValores);
     acumularBucket(matrizCategoriaAgg, sku.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, sku.genero?.trim() || null, bucketValores);
-    acumularBucket(matrizStatusAgg, sku.status?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, agruparStatus(sku.status), bucketValores);
+    for (const [dimensao, label] of [
+      ['linha', linhaBucket(sku.linha)], ['linhaCompleta', sku.linha],
+      ['categoria', sku.categoria], ['genero', sku.genero],
+      ['status', agruparStatus(sku.status)],
+    ] as const) {
+      referenciasMatriz.acumular(dimensao, label, sku.referenceCode, sku.referenceName,
+        sku.status, bucketValores);
+    }
 
     const referenceCode = sku.referenceCode;
     const markupVar = markupPercentual(sku.pdvVar, custo);
@@ -1890,7 +1902,7 @@ async function getRelatorioBaseAnalitico(
     });
   }
 
-  rows.sort((a, b) => b.giroTt3 - a.giroTt3);
+  rows.sort(ordenarPorEstoque);
   const pageSize = filtro.pageSize && filtro.pageSize > 0 ? filtro.pageSize : 15;
   const totalReferencias = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
@@ -1993,6 +2005,7 @@ async function getRelatorioBaseAnalitico(
     const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
     return {
       label,
+      referencias: [],
       estoqueVarejo: round(acc.estVarejo, 0),
       estoqueAtacado: round(acc.estAtacado, 0),
       estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
@@ -2006,11 +2019,13 @@ async function getRelatorioBaseAnalitico(
     };
   }
 
-  function buildMatriz(agg: Map<string, BucketAcc>): RelatorioBaseMatrizLinha[] {
+  function buildMatriz(agg: Map<string, BucketAcc>, dimensao: string): RelatorioBaseMatrizLinha[] {
     const entradas = [...agg.entries()].sort(
-      (a, b) => b[1].vendaVarejo + b[1].vendaAtacado - (a[1].vendaVarejo + a[1].vendaAtacado)
+      (a, b) => b[1].estVarejo + b[1].estAtacado - (a[1].estVarejo + a[1].estAtacado) || a[0].localeCompare(b[0], 'pt-BR')
     );
-    const linhas = entradas.map(([label, acc]) => montarLinhaMatriz(label, acc));
+    const linhas = entradas.map(([label, acc]) => ({
+      ...montarLinhaMatriz(label, acc), referencias: referenciasMatriz.consultar(dimensao, label),
+    }));
     const totalAcc = entradas.reduce<BucketAcc>(
       (acc, [, v]) => ({
         estVarejo: acc.estVarejo + v.estVarejo,
@@ -2025,11 +2040,11 @@ async function getRelatorioBaseAnalitico(
     return linhas;
   }
 
-  const matrizLinha = buildMatriz(matrizLinhaAgg);
-  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg);
-  const matrizCategoria = buildMatriz(matrizCategoriaAgg);
-  const matrizGenero = buildMatriz(matrizGeneroAgg);
-  const matrizStatus = buildMatriz(matrizStatusAgg);
+  const matrizLinha = buildMatriz(matrizLinhaAgg, 'linha');
+  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg, 'linhaCompleta');
+  const matrizCategoria = buildMatriz(matrizCategoriaAgg, 'categoria');
+  const matrizGenero = buildMatriz(matrizGeneroAgg, 'genero');
+  const matrizStatus = buildMatriz(matrizStatusAgg, 'status');
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
     return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
@@ -2291,6 +2306,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     mapa.set(bucket, acc);
   }
 
+  const referenciasMatriz = new ReferenciasMatriz();
   const matrizLinhaAgg = new Map<string, BucketAcc>();
   const matrizLinhaCompletaAgg = new Map<string, BucketAcc>();
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
@@ -2487,7 +2503,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     else if (statusTrim === 'ATIVO') statusBucketKey = 'ATIVO';
     else if (statusTrim === 'INATIVO') statusBucketKey = 'INATIVO';
     else statusBucketKey = 'OUTROS';
-    statusAgg.set(statusBucketKey, (statusAgg.get(statusBucketKey) || 0) + estTt);
+    const statusApresentacao = statusBucketKey.startsWith('FORA DE LINHA') ? 'FORA DE LINHA' : statusBucketKey;
+    statusAgg.set(statusApresentacao, (statusAgg.get(statusApresentacao) || 0) + estTt);
     if (temCoberturaCritica(estTt, giroTt1)) {
       estoqueMortoQtd += estTt;
       estoqueMortoValor += valorEstoqueSku;
@@ -2512,7 +2529,15 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acumularBucket(matrizLinhaCompletaAgg, identidade.linha?.trim() || null, bucketValores);
     acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
-    acumularBucket(matrizStatusAgg, identidade.status?.trim() || null, bucketValores);
+    acumularBucket(matrizStatusAgg, agruparStatus(identidade.status), bucketValores);
+    for (const [dimensao, label] of [
+      ['linha', linhaBucket(identidade.linha)], ['linhaCompleta', identidade.linha],
+      ['categoria', identidade.categoria], ['genero', identidade.genero],
+      ['status', agruparStatus(identidade.status)],
+    ] as const) {
+      referenciasMatriz.acumular(dimensao, label, identidade.reference_code || sku, identidade.reference_name || identidade.reference_code || sku,
+        identidade.status, bucketValores);
+    }
 
     // Referencia/cor/tamanho vem do produto_analitico - fallback pro proprio SKU quando
     // reference_code vier nulo (dado incompleto), pra nao perder a linha, so vira uma
@@ -2689,9 +2714,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     });
   }
 
-  // Ordenado por venda (giro 3 meses), nao por estoque - pedido do usuario ("tudo vindo
-  // ordenado por venda"). Isso tambem decide a ordem das paginas, nao so a ordem visual.
-  rows.sort((a, b) => b.giroTt3 - a.giroTt3);
+  // A ordem por estoque precisa ser aplicada antes de selecionar a página.
+  rows.sort(ordenarPorEstoque);
 
   // Paginacao real por referencia (substitui o antigo "rank" Top 50/100/250/Todos, que
   // o usuario pediu pra tirar - "muito ruim... crie paginacoes"). pageSize grande e um
@@ -2817,6 +2841,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const mediaMensalGeral = acc.vendaVarejo + acc.vendaAtacado;
     return {
       label,
+      referencias: [],
       estoqueVarejo: round(acc.estVarejo, 0),
       estoqueAtacado: round(acc.estAtacado, 0),
       estoqueTotal: round(acc.estVarejo + acc.estAtacado, 0),
@@ -2830,13 +2855,14 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     };
   }
 
-  // Ordenado por venda (varejo+atacado) desc, "Total" sempre por ultimo - mesma
-  // convencao do antigo visaoGeral.service.ts.
-  function buildMatriz(agg: Map<string, BucketAcc>): RelatorioBaseMatrizLinha[] {
+  // Estoque total decrescente, com "Total" sempre por último.
+  function buildMatriz(agg: Map<string, BucketAcc>, dimensao: string): RelatorioBaseMatrizLinha[] {
     const entradas = [...agg.entries()].sort(
-      (a, b) => b[1].vendaVarejo + b[1].vendaAtacado - (a[1].vendaVarejo + a[1].vendaAtacado)
+      (a, b) => b[1].estVarejo + b[1].estAtacado - (a[1].estVarejo + a[1].estAtacado) || a[0].localeCompare(b[0], 'pt-BR')
     );
-    const linhas = entradas.map(([label, acc]) => montarLinhaMatriz(label, acc));
+    const linhas = entradas.map(([label, acc]) => ({
+      ...montarLinhaMatriz(label, acc), referencias: referenciasMatriz.consultar(dimensao, label),
+    }));
     const totalAcc = entradas.reduce<BucketAcc>(
       (acc, [, v]) => ({
         estVarejo: acc.estVarejo + v.estVarejo,
@@ -2851,11 +2877,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     return linhas;
   }
 
-  const matrizLinha = buildMatriz(matrizLinhaAgg);
-  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg);
-  const matrizCategoria = buildMatriz(matrizCategoriaAgg);
-  const matrizGenero = buildMatriz(matrizGeneroAgg);
-  const matrizStatus = buildMatriz(matrizStatusAgg);
+  const matrizLinha = buildMatriz(matrizLinhaAgg, 'linha');
+  const matrizLinhaCompleta = buildMatriz(matrizLinhaCompletaAgg, 'linhaCompleta');
+  const matrizCategoria = buildMatriz(matrizCategoriaAgg, 'categoria');
+  const matrizGenero = buildMatriz(matrizGeneroAgg, 'genero');
+  const matrizStatus = buildMatriz(matrizStatusAgg, 'status');
 
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
