@@ -195,7 +195,15 @@ async function uploadFile<T>(endpoint: string, token: string, file: File): Promi
 }
 
 // Produtos
+export interface ProdutoImagensResponse {
+  productCode: number;
+  images: { imageCode: number; imageName: string; imageDescription: string | null;
+    typeImageCode: string | null; typeImageName: string | null; mimeType: string; base64: string }[];
+}
+
 export const produtosApi = {
+  getImagens: (token: string, productCode: number, signal?: AbortSignal) =>
+    fetchApi<ProdutoImagensResponse>(`/api/produtos/${productCode}/imagens`, { token, signal }),
   getCores: (token: string, tipo?: string, grupoId?: number) => {
     const params = new URLSearchParams();
     if (tipo) params.set('tipo', tipo);

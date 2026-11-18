@@ -466,6 +466,7 @@ export interface RelatorioBaseRupturaLinhaKpi {
 }
 
 export interface RelatorioBaseMatrizLinha {
+  referencias?: { referenceCode: string; descricao: string; statusOriginais: string[]; estTt: number }[];
   label: string;
   estoqueVarejo: number;
   estoqueAtacado: number;

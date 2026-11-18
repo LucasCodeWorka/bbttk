@@ -1,10 +1,27 @@
 import { Router, Request, Response } from 'express';
 import * as produtosService from '../services/produtos.service.js';
 import { authMiddleware, moduleAccess } from '../middleware/auth.middleware.js';
+import { getProdutoImagens, ProdutoImagensError } from '../services/produtoImagens.service.js';
 
 const router = Router();
 
 router.use(authMiddleware, moduleAccess('pcp'));
+
+router.get('/produtos/:productCode/imagens', async (req: Request, res: Response) => {
+  const value = req.params.productCode;
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 2147483647) {
+    res.status(400).json({ error: 'Código de produto inválido.' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    res.json(await getProdutoImagens(Number(value)));
+  } catch (error) {
+    res.status(error instanceof ProdutoImagensError ? error.statusCode : 502).json({
+      error: error instanceof ProdutoImagensError ? error.message : 'Não foi possível carregar as fotos no momento.',
+    });
+  }
+});
 
 // Cores distintas cadastradas - ?tipo=cor_produto exclui cor ja usada em outro
 // agrupamento; ?grupoId=X mantem visiveis as cores do proprio grupo (tela de edicao)

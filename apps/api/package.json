@@ -9,6 +9,7 @@
     "test:metas": "npm run build && node --test tests/metasAtacado.test.cjs",
     "test:ops": "npm run build && node --test tests/opsSnapshot.test.cjs",
     "test:clientes-dashboard": "npm run build && node --test tests/clientesDashboard.test.cjs tests/clientesDashboardRoutes.test.cjs",
+    "test:imagens": "npm run build && node --test tests/produtoImagens.test.cjs tests/produtoImagensRoutes.test.cjs",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
