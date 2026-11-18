@@ -1753,7 +1753,7 @@ async function getRelatorioBaseAnalitico(
       ['status', agruparStatus(sku.status)],
     ] as const) {
       referenciasMatriz.acumular(dimensao, label, sku.referenceCode, sku.referenceName,
-        sku.status, estVarejoSku + estAtacadoSku);
+        sku.status, bucketValores);
     }
 
     const referenceCode = sku.referenceCode;
@@ -2523,7 +2523,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       ['status', agruparStatus(identidade.status)],
     ] as const) {
       referenciasMatriz.acumular(dimensao, label, identidade.reference_code || sku, identidade.reference_name || identidade.reference_code || sku,
-        identidade.status, estVarejoSku + estAtacadoSku);
+        identidade.status, bucketValores);
     }
 
     // Referencia/cor/tamanho vem do produto_analitico - fallback pro proprio SKU quando

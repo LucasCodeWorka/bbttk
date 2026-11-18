@@ -4,29 +4,18 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { produtosApi, ProdutoImagensResponse } from '@/lib/api';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 
-export interface GradeProdutoImagem {
-  sku: string;
-  codigo: number | null;
-  cor: string;
-  tamanho: string;
-}
-
-export function ProdutoImagensModal({ referencia, grades, skuInicial, onClose }: {
-  referencia: string; grades: GradeProdutoImagem[]; skuInicial: string; onClose: () => void;
+export function ProdutoImagensModal({ referencia, codigo, onClose }: {
+  referencia: string; codigo: number | null; onClose: () => void;
 }) {
   const { token } = useAuth();
-  const [sku, setSku] = useState(skuInicial);
   const [resposta, setResposta] = useState<ProdutoImagensResponse | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [tentativa, setTentativa] = useState(0);
   const [indice, setIndice] = useState(0);
   const [falhaImagem, setFalhaImagem] = useState(false);
-  const grade = grades.find(item => item.sku === sku) || grades[0];
-  const codigo = grade?.codigo;
   const imagens = resposta?.productCode === codigo ? resposta.images : [];
   const imagem = imagens[indice];
 
@@ -37,7 +26,7 @@ export function ProdutoImagensModal({ referencia, grades, skuInicial, onClose }:
     setIndice(0);
     setCarregando(true);
     if (!codigo || !token) {
-      setErro(!codigo ? 'Código do produto indisponível para esta grade.' : 'Entre novamente para consultar as fotos.');
+      setErro(!codigo ? 'Não foi possível identificar um produto desta referência.' : 'Entre novamente para consultar as fotos.');
       setCarregando(false);
       return () => controller.abort();
     }
@@ -54,10 +43,7 @@ export function ProdutoImagensModal({ referencia, grades, skuInicial, onClose }:
 
   return (
     <Modal isOpen onClose={onClose} title={`Fotos — ${referencia}`} size="lg">
-      <Select label="Grade (cor / tamanho)" value={grade?.sku || ''}
-        onChange={event => setSku(event.target.value)}
-        options={grades.map(item => ({ value: item.sku, label: `${item.cor} / ${item.tamanho} · SKU ${item.sku}` }))} />
-      <p className="mt-2 text-xs text-gray-500">Imagens cadastradas no TOTVS · Código {codigo || '—'}</p>
+      <p className="text-xs text-gray-500">Imagens cadastradas para a referência no TOTVS.</p>
 
       {carregando ? (
         <p role="status" className="py-16 text-center text-sm text-gray-500">Carregando fotos...</p>
@@ -67,13 +53,13 @@ export function ProdutoImagensModal({ referencia, grades, skuInicial, onClose }:
           {!!codigo && <Button variant="secondary" onClick={() => setTentativa(n => n + 1)}>Tentar novamente</Button>}
         </div>
       ) : imagens.length === 0 ? (
-        <p className="py-16 text-center text-sm text-gray-500">Nenhuma foto cadastrada para esta grade.</p>
+        <p className="py-16 text-center text-sm text-gray-500">Nenhuma foto cadastrada para esta referência.</p>
       ) : imagem && (
         <div className="mt-5">
           <div className="flex min-h-48 items-center justify-center rounded-lg bg-gray-50 p-3">
             {falhaImagem ? <p role="alert" className="text-sm text-gray-500">Não foi possível exibir esta foto.</p> : (
               <img src={`data:${imagem.mimeType};base64,${imagem.base64}`}
-                alt={`${referencia} — ${grade.cor} / ${grade.tamanho} — Foto ${indice + 1}`}
+                alt={`${referencia} — Foto ${indice + 1}`}
                 className="max-h-[48vh] max-w-full object-contain" onError={() => setFalhaImagem(true)} />
             )}
           </div>
