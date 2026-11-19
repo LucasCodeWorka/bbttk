@@ -33,10 +33,13 @@ import { pcpConfigApi, PcpMetaVisaoGeral } from '@/lib/api';
 import { cn, formatDate, formatMoney, formatNumber } from '@/lib/utils';
 import { exportToCsv } from '@/lib/exportCsv';
 import { exportToExcel, ExcelColumn } from '@/lib/exportExcel';
+import { participacaoMatriz } from '@/lib/matrizParticipacao';
 
+// Devolutiva secao 7: a visao resumida "Por linha (Basico/Style)" saiu da tela - fica
+// so a linha completa (Basico, Renovavel, Style, Embalagem, Brinde...). O backend
+// continua montando matriz.linha porque os KPIs de cobertura por linha usam ela.
 const DIMENSAO_OPTIONS = [
-  { value: 'linha', label: 'Por linha (Básico/Style)' },
-  { value: 'linhaCompleta', label: 'Por linha (todas)' },
+  { value: 'linhaCompleta', label: 'Por linha' },
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
   { value: 'status', label: 'Por status' },
@@ -87,25 +90,52 @@ type MatrizSortKey = keyof Pick<
   | 'coberturaGeral'
 >;
 
-function MatrizValores({ valores }: { valores: RelatorioBaseMatrizValores }) {
+// Colunas que ganham participacao (% sobre o total da propria coluna) logo ao lado.
+const MATRIZ_COLUNAS_PARTICIPACAO = [
+  'estoqueVarejo', 'estoqueAtacado', 'estoqueTotal', 'valorEstoque', 'vendaVarejo', 'vendaAtacado', 'vendaTotal',
+] as const;
+type MatrizColunaParticipacao = (typeof MATRIZ_COLUNAS_PARTICIPACAO)[number];
+// Grupo + 10 colunas de valor + 7 de participacao (colSpan das linhas de detalhe).
+const MATRIZ_TOTAL_COLUNAS = 1 + 10 + MATRIZ_COLUNAS_PARTICIPACAO.length;
+// 18 colunas: padding lateral menor (inline, porque cn() nao resolve conflito com o
+// px-4 do TableCell) pra cobertura caber sem rolar em tela larga.
+const CELULA_MATRIZ = { paddingLeft: 6, paddingRight: 6 };
+
+function MatrizValores({ valores, total }: {
+  valores: RelatorioBaseMatrizValores;
+  // Linha TOTAL da tabela; ausente na propria linha TOTAL (nao mostra 100%).
+  total: RelatorioBaseMatrizValores | null;
+}) {
   const quantidade = (valor: number) => valor == null ? '—' : formatNumber(valor);
-  const meses = (valor: number | null) => valor == null ? '—' : `${valor.toFixed(1)}m`;
+  const meses = (valor: number | null) => valor == null ? '—' : formatNumber(valor, 2);
+  const participacao = (coluna: MatrizColunaParticipacao) => {
+    if (!total) return <TableCell align="center" style={CELULA_MATRIZ}><span className="sr-only">sem participação na linha total</span></TableCell>;
+    const pct = participacaoMatriz(valores[coluna], total[coluna]);
+    return <TableCell align="center" style={CELULA_MATRIZ} className="text-gray-500">{pct == null ? '—' : `${formatNumber(pct, 2)}%`}</TableCell>;
+  };
   return <>
-    <TableCell align="right">{quantidade(valores.estoqueVarejo)}</TableCell>
-    <TableCell align="right">{quantidade(valores.estoqueAtacado)}</TableCell>
-    <TableCell align="right">{quantidade(valores.estoqueTotal)}</TableCell>
-    <TableCell align="right">{valores.valorEstoque == null ? '—' : formatMoney(valores.valorEstoque)}</TableCell>
-    <TableCell align="right">{quantidade(valores.vendaVarejo)}</TableCell>
-    <TableCell align="right">{quantidade(valores.vendaAtacado)}</TableCell>
-    <TableCell align="right">{quantidade(valores.vendaTotal)}</TableCell>
-    <TableCell align="right">{meses(valores.coberturaVarejo)}</TableCell>
-    <TableCell align="right">{meses(valores.coberturaAtacado)}</TableCell>
-    <TableCell align="right">{meses(valores.coberturaGeral)}</TableCell>
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.estoqueVarejo)}</TableCell>
+    {participacao('estoqueVarejo')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.estoqueAtacado)}</TableCell>
+    {participacao('estoqueAtacado')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.estoqueTotal)}</TableCell>
+    {participacao('estoqueTotal')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{valores.valorEstoque == null ? '—' : formatMoney(valores.valorEstoque)}</TableCell>
+    {participacao('valorEstoque')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.vendaVarejo)}</TableCell>
+    {participacao('vendaVarejo')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.vendaAtacado)}</TableCell>
+    {participacao('vendaAtacado')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.vendaTotal)}</TableCell>
+    {participacao('vendaTotal')}
+    <TableCell align="center" style={CELULA_MATRIZ}>{meses(valores.coberturaVarejo)}</TableCell>
+    <TableCell align="center" style={CELULA_MATRIZ}>{meses(valores.coberturaAtacado)}</TableCell>
+    <TableCell align="center" style={CELULA_MATRIZ}>{meses(valores.coberturaGeral)}</TableCell>
   </>;
 }
 
-function MatrizReferencias({ linha, sortKey, sortDir }: {
-  linha: RelatorioBaseMatrizLinha; sortKey: MatrizSortKey; sortDir: 'asc' | 'desc';
+function MatrizReferencias({ linha, total, sortKey, sortDir }: {
+  linha: RelatorioBaseMatrizLinha; total: RelatorioBaseMatrizValores | null; sortKey: MatrizSortKey; sortDir: 'asc' | 'desc';
 }) {
   const [busca, setBusca] = useState('');
   const [pagina, setPagina] = useState(1);
@@ -131,7 +161,7 @@ function MatrizReferencias({ linha, sortKey, sortDir }: {
   </div>;
   return <>
     <TableRow className="bg-blue-50/50">
-      <TableCell colSpan={11}>
+      <TableCell colSpan={MATRIZ_TOTAL_COLUNAS}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Input className="w-80" aria-label={`Buscar referências em ${linha.label}`} placeholder="Buscar referência, descrição ou status"
             value={busca} onChange={e => { setBusca(e.target.value); setPagina(1); }} />
@@ -146,11 +176,11 @@ function MatrizReferencias({ linha, sortKey, sortDir }: {
           <span className="block max-w-64 whitespace-normal text-[10px] text-gray-500">{ref.descricao}</span>
           <span className="block max-w-64 whitespace-normal text-[9px] text-gray-400">{ref.statusOriginais.join(' / ')}</span>
         </TableCell>
-        <MatrizValores valores={ref} />
+        <MatrizValores valores={ref} total={total} />
       </TableRow>
     ))}
-    {referencias.length === 0 && <TableRow><TableCell colSpan={11} align="center" className="text-sm text-gray-500">Nenhuma referência encontrada.</TableCell></TableRow>}
-    {referencias.length > 25 && <TableRow className="bg-blue-50/50"><TableCell colSpan={11}><div className="flex justify-end">{controles}</div></TableCell></TableRow>}
+    {referencias.length === 0 && <TableRow><TableCell colSpan={MATRIZ_TOTAL_COLUNAS} align="center" className="text-sm text-gray-500">Nenhuma referência encontrada.</TableCell></TableRow>}
+    {referencias.length > 25 && <TableRow className="bg-blue-50/50"><TableCell colSpan={MATRIZ_TOTAL_COLUNAS}><div className="flex justify-end">{controles}</div></TableCell></TableRow>}
   </>;
 }
 
@@ -198,22 +228,33 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
 
     return [...linhasSemTotal, ...totais];
   }, [linhas, sortDir, sortKey]);
+  const linhaTotal = linhas.find((linha) => linha.label === 'Total') ?? null;
+  const thParticipacao = (coluna: string) => (
+    <TableCell isHeader align="center" style={CELULA_MATRIZ} title={`Participação de cada item no total de ${coluna}`}>Part. %</TableCell>
+  );
 
   return (
     <Table>
       <TableHead>
         <TableRow>
           <ThSortPcp label="Grupo" sortKeyName="label" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-          <ThSortPcp label="Est. Varejo" sortKeyName="estoqueVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Est. Atacado" sortKeyName="estoqueAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Valor em Estoque" sortKeyName="valorEstoque" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Venda Varejo 30d" sortKeyName="vendaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Venda Atacado 30d" sortKeyName="vendaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Venda Total 30d" sortKeyName="vendaTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Cob. Varejo" sortKeyName="coberturaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Cob. Atacado" sortKeyName="coberturaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
-          <ThSortPcp label="Cob. Geral" sortKeyName="coberturaGeral" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" />
+          <ThSortPcp label="Est. Varejo" sortKeyName="estoqueVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Est. Varejo')}
+          <ThSortPcp label="Est. Atacado" sortKeyName="estoqueAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Est. Atacado')}
+          <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Est. Total')}
+          <ThSortPcp label="Valor em Estoque" sortKeyName="valorEstoque" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Valor em Estoque')}
+          <ThSortPcp label="Venda Varejo 30d" sortKeyName="vendaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Venda Varejo 30d')}
+          <ThSortPcp label="Venda Atacado 30d" sortKeyName="vendaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Venda Atacado 30d')}
+          <ThSortPcp label="Venda Total 30d" sortKeyName="vendaTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          {thParticipacao('Venda Total 30d')}
+          <ThSortPcp label="Cob. Varejo" sortKeyName="coberturaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          <ThSortPcp label="Cob. Atacado" sortKeyName="coberturaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
+          <ThSortPcp label="Cob. Geral" sortKeyName="coberturaGeral" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
         </TableRow>
       </TableHead>
       <TableBody>
@@ -233,9 +274,9 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
                 </button>
               ) : <span>{linha.label}</span>}
             </TableCell>
-            <MatrizValores valores={linha} />
+            <MatrizValores valores={linha} total={linha.label === 'Total' ? null : linhaTotal} />
           </TableRow>
-          {expandidos.has(linha.label) && <MatrizReferencias linha={linha} sortKey={sortKey} sortDir={sortDir} />}
+          {expandidos.has(linha.label) && <MatrizReferencias linha={linha} total={linhaTotal} sortKey={sortKey} sortDir={sortDir} />}
           </Fragment>
         ))}
       </TableBody>
@@ -274,7 +315,7 @@ function ThSortPcp({
       onClick={() => onSort(sortKeyName)}
       title={title}
     >
-      <span className="flex items-center gap-1.5">
+      <span className={cn('flex items-center gap-1.5', align === 'center' && 'justify-center')}>
         <span>{label}</span>
         {active ? (
           <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '▲' : '▼'}</span>
@@ -605,7 +646,8 @@ export default function PcpRelatorioBasePage() {
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
   const [dimensao, setDimensao] = useState<'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status'>(
-    () => initialPageState?.dimensao || 'linha'
+    // Estado salvo na sessao com a visao resumida antiga cai na linha completa.
+    () => (!initialPageState?.dimensao || initialPageState.dimensao === 'linha' ? 'linhaCompleta' : initialPageState.dimensao)
   );
 
   const [metaModalAberto, setMetaModalAberto] = useState(false);

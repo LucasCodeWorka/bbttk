@@ -363,6 +363,28 @@ carregada no navegador. Clicar no card filtra a tabela (`alertaPreco=preco_custo
 markup_fora`, aplicado antes da paginacao; KPIs nao mudam). A regra de situacao
 (`situacaoPrecoSku`) espelha a `situacaoSku` da tela: preco abaixo do custo vence;
 SKU com estoque e sem venda em 6 meses fica neutro; depois markup < 2.
+Preco ZERADO (ex.: sem preco de atacado cadastrado, PDV ATA = 0) conta como abaixo do
+custo: em 17/11 eram 71 dos 214 SKUs (26 refs so por isso). Regra em aberto com o
+usuario - nao mudar sem ele decidir.
+
+## Quadro de cobertura da Visao Geral (devolutiva secao 7, 19/11/2026)
+
+`MatrizTable` em `pcp-relatorio-base/page.tsx`. A visao resumida "Por linha
+(Basico/Style)" saiu do seletor; "Por linha" agora e a linha completa (`linhaCompleta`,
+com Embalagem/Brinde/Promocoes/Teenkis abertos). O backend continua montando
+`matriz.linha` porque os KPIs de cobertura Basico/Renovavel/Style usam. Estado salvo na
+sessao com `dimensao='linha'` cai em `linhaCompleta`.
+
+Numeros centralizados (ThSortPcp com `align="center"` centraliza o flex interno),
+cobertura com 2 casas sem "m", e coluna "Part. %" ao lado de Est. Varejo/Atacado/Total,
+Valor em Estoque e Venda Varejo/Atacado/Total: valor / linha TOTAL da mesma coluna
+(`participacaoMatriz` em `lib/matrizParticipacao.ts`). TOTAL sem percentual.
+Referencias abertas dentro de um grupo tambem usam o TOTAL da tabela como base.
+18 colunas: padding lateral inline (`CELULA_MATRIZ`) pra caber sem rolar em 1900px.
+Exemplo da devolutiva conferido na posicao 08/11 (visao resumida antiga): varejo
+Basico 38,05 / Renovavel 37,06 / Style 15,24 / Nao classificado 9,65%. Na visao por
+linha o "Nao classificado" se abre em Embalagem 6,56 + Brinde 2,15 + Promocoes 0,88 +
+Teenkis 0,06 = 9,65%. Teste: `apps/web/tests/matrizParticipacao.test.ts`.
 
 ## Regras de negócio — Comercial
 
@@ -828,6 +850,17 @@ contrário**.
   vendedoras batesse exatamente com a meta da loja, sem saber desse modo novo —
   bloqueava salvar. Corrigido: com gerente em modo "restante", só é erro se a soma
   **ultrapassar** a meta (sobra é esperada, vira a meta da gerente).
+- **Vendedor GERAL recebe o restante (18/11/2026)**: o `seller_code` 50 ("GERAL",
+  vinculado a todas as filiais no TOTVS) voltou ao cadastro de metas — só lá
+  (`GERAL_SELLER_CODE` em `constants.ts`; continua em `EXCLUDED_SELLER_CODES` pra
+  ranking, comissão e lista de candidatas). Aparece por último em toda loja, fica fora da
+  divisão automática e sua meta é calculada: meta da loja − soma das vendedoras (quando a
+  loja reduz a meta de quem falta/folga, a sobra vai pra ele). Se a gerente estiver em
+  "assume o restante", a sobra continua com ela e o GERAL fica com 0. GERAL com 0 não é
+  salvo. Regra única em `calcularRestanteLoja` (`VendedoresLojaTable.tsx`), usada pelos
+  dois modais; teste em `apps/web/tests/metaRestanteGeral.test.ts`
+  (`npx tsx --test tests/metaRestanteGeral.test.ts` em `apps/web`). Backend não mudou a
+  validação: o GERAL vai como vendedor comum com a sobra, então a soma bate.
 
 ### PCP — "Sugestão de Produção" (`/relatorios/sugestao-producao`)
 
