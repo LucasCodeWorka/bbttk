@@ -14,6 +14,7 @@
     "test:lojas": "npm run build && node --test tests/relatorioBaseLojas.test.cjs",
     "test:agrupamentos": "npm run build && node --test tests/relatorioBaseAgrupamentos.test.cjs",
     "test:producao": "npm run build && node --test tests/relatorioBaseProducao.test.cjs tests/performanceColecaoProducao.test.cjs",
+    "test:preco": "npm run build && node --test tests/precoMarkup.test.cjs",
     "start": "node --max-old-space-size=384 dist/index.js",
     "db:generate": "prisma generate --schema=../api/prisma/schema.prisma"
   },

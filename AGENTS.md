@@ -333,6 +333,37 @@ materializacao completa do AA ainda NAO foi ativada na VPS. Backup e manifesto d
 ativacao em `/root/backups/bbtk-pcp-vendas30d-20261110-094803`. Acesso VPS esta no
 `.env` do repo ETL (`VPS_IP` e `password`); nao exibir os valores.
 
+## Precos, promocao e markup do Relatorio Base (devolutiva secao 9, 18/11/2026)
+
+Colunas da Visao Geral: **PDV ORIGINAL** = preco de tabela do varejo (campo `pdvAtual`);
+**PDV ATUAL VAR/ATA** = preco promocional vigente quando ha promocao, senao o de tabela
+(campos `pdvRealVar`/`pdvRealAta` - nomes antigos mantidos, so o rotulo mudou).
+**Markup = PDV ATUAL / custo**, multiplicador com 2 casas (nao mais percentual);
+sinaliza abaixo de 2,00 (equivale ao antigo < 100%). CNJ398, custo 60,3973:
+99,99 -> 1,66 (a devolutiva escreveu 1,65, que e truncamento; arredondamos) e
+119,99 -> 1,99. `markupPercentual` continua so pro Performance Colecao.
+
+**De onde vem a promocao**: `produto_precos` so tem o preco de tabela (o ETL externo
+atualiza poucas linhas por dia e nao traz promocao). O promocional so aparece em
+`product/v2/prices/search` com `option.prices[].isPromotionalPrice=true`, campo
+`promotionalPrice` (0 = sem promocao). O endpoint `GET product/v2/promotion` NAO serve:
+em 18/11 so tinha campanhas de 2022-2023 e nao continha o CNJ398. A foto fica em
+`produto_precos_promocionais` + `produto_precos_promocionais_sync` (tabelas da app,
+criadas por `CREATE IF NOT EXISTS` no proprio sync e declaradas no schema so pra um
+db push nao dropar). Sync: `npm run sync:precos-promocionais -w apps/api` ou o botao
+"Preco promocional" em Configuracoes PCP. E foto COMPLETA tudo-ou-nada (promocao que
+vence por data nao gera alteracao no TOTVS, entao incremental por `change` nao tira o
+produto da promocao). **Nao ha agendamento**: sem rodar, a foto envelhece. A tela avisa
+a data da foto e so aplica a promocao em posicao de ate 7 dias antes da foto (a ultima
+posicao materializada costuma estar 1-3 dias atras).
+
+Cards "Preco abaixo do custo" e "MKUP fora da faixa" agora sao contados no backend
+sobre o recorte inteiro (`kpisExtra.alertasPreco`) - antes contavam so a pagina
+carregada no navegador. Clicar no card filtra a tabela (`alertaPreco=preco_custo|
+markup_fora`, aplicado antes da paginacao; KPIs nao mudam). A regra de situacao
+(`situacaoPrecoSku`) espelha a `situacaoSku` da tela: preco abaixo do custo vence;
+SKU com estoque e sem venda em 6 meses fica neutro; depois markup < 2.
+
 ## Regras de negócio — Comercial
 
 - **Faturamento é sempre líquido** (venda − devolução). Devolução é identificada pelo

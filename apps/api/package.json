@@ -16,6 +16,8 @@
     "db:migrate": "prisma migrate dev",
     "sync:custo-preco-sku-filial": "tsx src/scripts/sync-custo-preco-sku-filial.ts",
     "sync:custo-preco-sku-filial:dryrun": "tsx src/scripts/sync-custo-preco-sku-filial.ts --dry-run",
+    "sync:precos-promocionais": "tsx src/scripts/sync-precos-promocionais.ts",
+    "sync:precos-promocionais:dryrun": "tsx src/scripts/sync-precos-promocionais.ts --dry-run",
     "sync:em-producao": "tsx src/scripts/sync-em-producao.ts",
     "sync:em-producao:dryrun": "tsx src/scripts/sync-em-producao.ts --dry-run",
     "sync:em-producao:dryrun-detalhado": "tsx src/scripts/sync-em-producao.ts --dry-run --detalhado",

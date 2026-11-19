@@ -340,6 +340,16 @@ export interface PcpCorteMinimoSkuItem {
   corteMinimo: number;
 }
 
+// Foto do preco promocional vigente (PDV ATUAL do Relatorio Base).
+export interface PcpPrecosPromocionaisSyncJob {
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  finishedAt?: string;
+  progress: { chunkIndex: number; totalChunks: number; page: number; produtosLidos: number; promocoes: number } | null;
+  resultado?: { branchCode: number; produtos: number; promocoes: number; duracaoMs: number };
+  erro?: string;
+}
+
 export interface PcpCustoPrecoSyncJob {
   status: 'running' | 'done' | 'error';
   startedAt: string;
@@ -370,6 +380,12 @@ export const pcpConfigApi = {
 
   getStatusSincronizacaoCustosPrecos: (token: string) =>
     fetchApi<{ job: PcpCustoPrecoSyncJob | null }>('/api/pcp-config/sincronizar-custos-precos/status', { token }),
+
+  sincronizarPrecosPromocionais: (token: string) =>
+    fetchApi<{ jaEmAndamento: boolean }>('/api/pcp-config/sincronizar-precos-promocionais', { token, method: 'POST' }),
+
+  getStatusSincronizacaoPrecosPromocionais: (token: string) =>
+    fetchApi<{ job: PcpPrecosPromocionaisSyncJob | null }>('/api/pcp-config/sincronizar-precos-promocionais/status', { token }),
 
   sincronizarEmProducao: (token: string) =>
     fetchApi<{ ordens: number; linhas: number }>('/api/pcp-config/sincronizar-em-producao', { token, method: 'POST' }),

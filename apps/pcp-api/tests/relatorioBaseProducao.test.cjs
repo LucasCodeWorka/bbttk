@@ -13,7 +13,11 @@ function banco(t, query) {
       giroDias: 30, coberturaMeses: 1, atacadoCoberturaBase: 'atacado_only',
       coberturaLimiteVerde: 3, coberturaLimiteVermelho: 6,
     }) },
-    $queryRaw: async sql => query(Array.isArray(sql) ? sql.join('?') : sql.text),
+    $queryRaw: async sql => {
+      const text = Array.isArray(sql) ? sql.join('?') : sql.text;
+      if (text.includes('produto_precos_promocionais')) return [{ existe: false }];
+      return query(text);
+    },
   };
 }
 

@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import * as pcpConfigService from '../services/pcpConfig.service.js';
-import { syncEmProducao, iniciarCustoPrecoSyncJob, getCustoPrecoSyncJobStatus } from '../services/totvs.service.js';
+import {
+  syncEmProducao, iniciarCustoPrecoSyncJob, getCustoPrecoSyncJobStatus,
+  iniciarPrecosPromocionaisSyncJob, getPrecosPromocionaisSyncJobStatus,
+} from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
 
 const router = Router();
@@ -60,6 +63,16 @@ router.post('/pcp-config/sincronizar-custos-precos', (_req: Request, res: Respon
 // Status/progresso da sincronizacao disparada acima - poll a cada poucos segundos.
 router.get('/pcp-config/sincronizar-custos-precos/status', (_req: Request, res: Response) => {
   res.json({ job: getCustoPrecoSyncJobStatus() });
+});
+
+// Foto do preco promocional vigente (PDV ATUAL do Relatorio Base) - assincrono, ~5 min.
+router.post('/pcp-config/sincronizar-precos-promocionais', (_req: Request, res: Response) => {
+  const { jaEmAndamento } = iniciarPrecosPromocionaisSyncJob();
+  res.json({ jaEmAndamento });
+});
+
+router.get('/pcp-config/sincronizar-precos-promocionais/status', (_req: Request, res: Response) => {
+  res.json({ job: getPrecosPromocionaisSyncJobStatus() });
 });
 
 // Resincroniza o snapshot de Ordens de Producao abertas direto da API do TOTVS

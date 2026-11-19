@@ -68,6 +68,7 @@ function instalarBancoFake(t, consultar) {
     }) },
     $queryRaw: async (sql) => {
       const text = Array.isArray(sql) ? sql.join('?') : sql.text;
+      if (text.includes('produto_precos_promocionais')) return [{ existe: false }];
       if (text.includes('AS possui_diario')) return [{ possui_diario: false, hoje: '2026-11-16' }];
       return consultar(text);
     },

@@ -284,7 +284,13 @@ export interface RelatorioBaseFiltro {
   // Quando true, o drill-down por cor usa o nome do grupo do Agrupamento de Cores
   // (cores originais unificadas viram uma linha so).
   agruparPorCorSalva?: boolean;
+  // Lista so as referencias com algum SKU no alerta de preco (cards "Preco abaixo do
+  // custo"/"MKUP fora da faixa"). Filtra a TABELA (antes da paginacao); os KPIs
+  // continuam descrevendo o recorte inteiro.
+  alertaPreco?: AlertaPreco;
 }
+
+export type AlertaPreco = 'preco_custo' | 'markup_fora';
 
 export interface RelatorioBaseColunaFilial {
   giro: number;
@@ -310,10 +316,11 @@ export interface RelatorioBaseRow {
   // transacao de entrada (TOTVS). Ambos null se o produto nao tiver essa info.
   lancamento: string | null;
   ultimaEntrada: string | null;
-  // custo/pdvRealVar/markupVar/pdvRealAta/markupAta vem de produto_custos/produto_precos
-  // (sincronizados do TOTVS via pcpConfig), null se o SKU ainda nao foi sincronizado ou
-  // nao tem o codigo escolhido no Configurador. pdvAtual e um alias de pdvRealVar (por
-  // pedido do usuario, sem sync propria - mesmo valor, coluna separada por proposito).
+  // Devolutiva secao 9 (18/11/2026): pdvAtual = PDV ORIGINAL (preco de tabela do
+  // varejo); pdvRealVar/pdvRealAta = PDV ATUAL VAR/ATA, que trocam pelo preco
+  // promocional vigente quando ha promocao (ver getPrecosPromocionais). Os nomes dos
+  // campos ficaram os antigos pra nao espalhar renomeacao; o rotulo e da tela.
+  // markupVar/markupAta = PDV ATUAL / custo (multiplicador, ex 1,66), nao percentual.
   custo: number | null;
   pdvAtual: number | null;
   pdvRealVar: number | null;
@@ -347,6 +354,7 @@ export interface RelatorioBaseCorRow {
   coresOriginais: number;
   totalSkus: number;
   custo: number | null;
+  pdvAtual: number | null;
   pdvRealVar: number | null;
   markupVar: number | null;
   pdvRealAta: number | null;
@@ -430,6 +438,23 @@ export interface RelatorioBaseKpisExtra {
   // Participacao por status consolidado (ATIVO/FORA DE LINHA/INATIVO -
   // "OUTROS" pega qualquer status novo/inesperado, nunca descarta silenciosamente).
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+  // Contagem sobre TODOS os SKUs do recorte (nao so a pagina) - os cards da tela
+  // contavam a pagina carregada. Ver situacaoPrecoSku.
+  alertasPreco: RelatorioBaseAlertasPreco;
+}
+
+export interface RelatorioBaseAlertasPreco {
+  precoAbaixoCusto: { skus: number; referencias: number };
+  markupFora: { skus: number; referencias: number };
+}
+
+// Preco promocional vigente usado no PDV ATUAL. sincronizadoEm = ultima foto
+// completa (null = nunca sincronizado); aplicado = false quando a posicao consultada
+// e anterior a foto (promocao de hoje nao vale pra uma data antiga).
+export interface RelatorioBasePrecosPromocionais {
+  sincronizadoEm: string | null;
+  aplicado: boolean;
+  skusEmPromocao: number;
 }
 
 export interface RelatorioBaseEstoqueAtivos {
@@ -502,6 +527,7 @@ export interface RelatorioBaseResponse {
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
   rows: RelatorioBaseReferenciaRow[];
+  precosPromocionais: RelatorioBasePrecosPromocionais;
 }
 
 export async function getConfig() {
@@ -1075,6 +1101,129 @@ export function markupPercentual(preco: number | null, custo: number | null): nu
   return round(((preco - custo) / custo) * 100, 1);
 }
 
+// Markup do Relatorio Base (devolutiva secao 9): PRECO DE VENDA / PRECO DE CUSTO, sem
+// percentual, 2 casas. CNJ398 (custo 60,3973): 99,99 / 60,40 = 1,66 no varejo em
+// promocao e 119,99 / 60,40 = 1,99 no atacado. markupPercentual continua existindo
+// pro Performance Colecao, que nao entrou nesse pedido.
+export function markupMultiplicador(preco: number | null, custo: number | null): number | null {
+  if (preco === null || custo === null || custo <= 0) return null;
+  return round(preco / custo, 2);
+}
+
+// Abaixo disso o markup e sinalizado. Equivale ao antigo "< 100%" (preco < 2x custo).
+export const MARKUP_MINIMO = 2;
+
+export type SituacaoPreco = 'ok' | 'markup_baixo' | 'preco_custo' | 'sem_movimento';
+
+// Mesma regra que a tela usa pra colorir o markup (situacaoSku no page.tsx), trazida
+// pro backend pra contar e filtrar o recorte inteiro. A ordem importa: preco abaixo
+// do custo vence; SKU com estoque e sem venda em 6 meses fica neutro; so depois
+// avalia o markup (o de varejo, ou o de atacado quando nao ha preco de varejo).
+export function situacaoPrecoSku(sku: {
+  custo: number | null; pdvOriginal: number | null; pdvAtualVar: number | null;
+  pdvAtualAta: number | null; markupVar: number | null; markupAta: number | null;
+  estTt: number; giroTt6: number;
+}): SituacaoPreco {
+  if (sku.custo !== null && [sku.pdvOriginal, sku.pdvAtualVar, sku.pdvAtualAta]
+    .some((preco) => preco !== null && preco < sku.custo!)) return 'preco_custo';
+  if (sku.giroTt6 <= 0 && sku.estTt > 0) return 'sem_movimento';
+  const markup = sku.markupVar ?? sku.markupAta;
+  if (markup !== null && markup < MARKUP_MINIMO) return 'markup_baixo';
+  return 'ok';
+}
+
+export interface AlertasPrecoAcc {
+  skusPrecoCusto: number;
+  skusMarkupFora: number;
+  refsPrecoCusto: Set<string>;
+  refsMarkupFora: Set<string>;
+}
+
+export function alertasPrecoAccVazio(): AlertasPrecoAcc {
+  return { skusPrecoCusto: 0, skusMarkupFora: 0, refsPrecoCusto: new Set(), refsMarkupFora: new Set() };
+}
+
+// "MKUP fora da faixa" inclui o preco abaixo do custo (markup < 1), como no card antigo.
+export function acumularAlertaPreco(acc: AlertasPrecoAcc, referenceCode: string, situacao: SituacaoPreco) {
+  if (situacao === 'preco_custo') {
+    acc.skusPrecoCusto += 1;
+    acc.refsPrecoCusto.add(referenceCode);
+  }
+  if (situacao === 'preco_custo' || situacao === 'markup_baixo') {
+    acc.skusMarkupFora += 1;
+    acc.refsMarkupFora.add(referenceCode);
+  }
+}
+
+export function montarAlertasPreco(acc: AlertasPrecoAcc): RelatorioBaseAlertasPreco {
+  return {
+    precoAbaixoCusto: { skus: acc.skusPrecoCusto, referencias: acc.refsPrecoCusto.size },
+    markupFora: { skus: acc.skusMarkupFora, referencias: acc.refsMarkupFora.size },
+  };
+}
+
+export function filtrarPorAlertaPreco<T extends { referenceCode: string }>(
+  rows: T[], acc: AlertasPrecoAcc, alerta: AlertaPreco | undefined
+): T[] {
+  if (!alerta) return rows;
+  const refs = alerta === 'preco_custo' ? acc.refsPrecoCusto : acc.refsMarkupFora;
+  return rows.filter((row) => refs.has(row.referenceCode));
+}
+
+// ---- Preco promocional vigente (devolutiva secao 9) ----
+// O produto_precos guarda so o preco de tabela; o promocional (cadastro PRDFM002 do
+// TOTVS, "DE 199,99 POR 99,99" na Consulta Preco) e uma foto separada, gravada pelo
+// apps/api (syncPrecosPromocionais) em produto_precos_promocionais. As tabelas nascem
+// na primeira sincronizacao, entao a leitura tolera que ainda nao existam.
+export interface PrecosPromocionais {
+  porProduto: Map<number, { var: number | null; ata: number | null }>;
+  sincronizadoEm: string | null;
+  dataSincronizacao: string | null;
+}
+
+export async function getPrecosPromocionais(branchCode: number, pdvVarejoCode: number, pdvAtacadoCode: number): Promise<PrecosPromocionais> {
+  const vazio: PrecosPromocionais = { porProduto: new Map(), sincronizadoEm: null, dataSincronizacao: null };
+  const [tabela] = await prisma.$queryRaw<Array<{ existe: boolean }>>`
+    SELECT to_regclass('public.produto_precos_promocionais_sync') IS NOT NULL AS existe`;
+  if (!tabela?.existe) return vazio;
+  const [sync] = await prisma.$queryRaw<Array<{ sincronizado_em: string; data: string }>>`
+    SELECT to_char(sincronizado_em, 'YYYY-MM-DD"T"HH24:MI:SS') AS sincronizado_em,
+      to_char(sincronizado_em, 'YYYY-MM-DD') AS data
+    FROM produto_precos_promocionais_sync WHERE branch_code = ${branchCode}`;
+  if (!sync) return vazio;
+  const rows = await prisma.$queryRaw<Array<{ product_code: number; price_code: number; preco_promocional: Decimal }>>`
+    SELECT product_code, price_code, preco_promocional FROM produto_precos_promocionais
+    WHERE branch_code = ${branchCode} AND price_code IN (${pdvVarejoCode}, ${pdvAtacadoCode})`;
+  const porProduto = new Map<number, { var: number | null; ata: number | null }>();
+  for (const row of rows) {
+    const atual = porProduto.get(row.product_code) || { var: null, ata: null };
+    const valor = decimalToNumber(row.preco_promocional);
+    if (row.price_code === pdvVarejoCode) atual.var = valor;
+    if (row.price_code === pdvAtacadoCode) atual.ata = valor;
+    porProduto.set(row.product_code, atual);
+  }
+  return { porProduto, sincronizadoEm: sync.sincronizado_em, dataSincronizacao: sync.data };
+}
+
+// A foto descreve a promocao do dia em que foi tirada. Vale pra posicoes ate 7 dias
+// antes dela: a ultima posicao materializada costuma estar 1-3 dias atras (medido em
+// 18/11/2026: foto de 18/11, ultima posicao 16/11). Posicao mais antiga mostra o preco
+// de tabela, sem inventar que a promocao de hoje ja valia naquela data. Sem data =
+// calculo ao vivo (hoje).
+export const PROMOCAO_TOLERANCIA_DIAS = 7;
+export function promocaoAplicavel(dataPosicao: string | undefined | null, dataSincronizacao: string | null): boolean {
+  if (!dataSincronizacao) return false;
+  if (!dataPosicao) return true;
+  const limite = new Date(`${dataSincronizacao}T00:00:00Z`);
+  limite.setUTCDate(limite.getUTCDate() - PROMOCAO_TOLERANCIA_DIAS);
+  return dataPosicao >= limite.toISOString().slice(0, 10);
+}
+
+// PDV ATUAL = promocional quando ha promocao vigente pro produto, senao o de tabela.
+export function precoAtual(tabela: number | null, promocional: number | null | undefined): number | null {
+  return promocional !== null && promocional !== undefined && promocional > 0 ? promocional : tabela;
+}
+
 // Base do MARKUP (decisao do usuario): nao usa o CUSTO configurado no Configurador
 // (esse continua mostrando o preco de TABELA do TOTVS, pra referencia) - usa custo da
 // ULTIMA COMPRA (costCode=2, fixo) contra o PDV Real/Atual (pdvRealVar/pdvRealAta, ja
@@ -1556,6 +1705,8 @@ async function getRelatorioBaseAnalitico(
     lancamento: string | null;
     ultimaEntrada: string | null;
     custo: number | null;
+    // pdvVarTabela = PDV ORIGINAL; pdvVar/pdvAta = PDV ATUAL (promocao ja aplicada).
+    pdvVarTabela: number | null;
     pdvVar: number | null;
     pdvAta: number | null;
     emProducao: number;
@@ -1601,6 +1752,7 @@ async function getRelatorioBaseAnalitico(
       lancamento: formatarLancamento(row.lancamento),
       ultimaEntrada: null,
       custo,
+      pdvVarTabela: null,
       pdvVar: row.pdv_varejo !== null ? decimalToNumber(row.pdv_varejo) : null,
       pdvAta: row.pdv_atacado !== null ? decimalToNumber(row.pdv_atacado) : null,
       emProducao: row.product_code !== null && canonicosProducao.get(row.product_code) === sku
@@ -1699,6 +1851,23 @@ async function getRelatorioBaseAnalitico(
   const referenciaAgg = new Map<string, RefAgg>();
   const agruparPorCorSalva = filtro.agruparPorCorSalva ?? false;
 
+  // PDV ORIGINAL fica com o preco de tabela materializado; PDV ATUAL troca pelo
+  // promocional vigente (foto do TOTVS) quando a posicao e recente o bastante.
+  const promocoes = await getPrecosPromocionais(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode);
+  const aplicarPromocao = promocaoAplicavel(dataAnalitica, promocoes.dataSincronizacao);
+  let skusEmPromocao = 0;
+  for (const sku of skus.values()) {
+    sku.pdvVarTabela = sku.pdvVar;
+    const promo = aplicarPromocao && sku.productCode !== null ? promocoes.porProduto.get(sku.productCode) : undefined;
+    if (!promo) continue;
+    const pdvVar = precoAtual(sku.pdvVar, promo.var);
+    const pdvAta = precoAtual(sku.pdvAta, promo.ata);
+    if (pdvVar !== sku.pdvVar || pdvAta !== sku.pdvAta) skusEmPromocao += 1;
+    sku.pdvVar = pdvVar;
+    sku.pdvAta = pdvAta;
+  }
+  const alertasPrecoAcc = alertasPrecoAccVazio();
+
   for (const sku of skus.values()) {
     const estAtacadoSku = sku.branchesAgg.get(ATACADO_BRANCH_CODE)?.est ?? 0;
     let estVarejoSku = 0;
@@ -1770,8 +1939,12 @@ async function getRelatorioBaseAnalitico(
     }
 
     const referenceCode = sku.referenceCode;
-    const markupVar = markupPercentual(sku.pdvVar, custo);
-    const markupAta = markupPercentual(sku.pdvAta, custo);
+    const markupVar = markupMultiplicador(sku.pdvVar, custo);
+    const markupAta = markupMultiplicador(sku.pdvAta, custo);
+    acumularAlertaPreco(alertasPrecoAcc, referenceCode, situacaoPrecoSku({
+      custo, pdvOriginal: sku.pdvVarTabela, pdvAtualVar: sku.pdvVar, pdvAtualAta: sku.pdvAta,
+      markupVar, markupAta, estTt: round(sku.estTt, 0), giroTt6: round(sku.giroTt6, 0),
+    }));
     const agg = referenciaAgg.get(referenceCode) || {
       referenceName: sku.referenceName,
       categoria: sku.categoria,
@@ -1798,7 +1971,7 @@ async function getRelatorioBaseAnalitico(
     agg.giroTt6 += round(sku.giroTt6, 0);
     agg.totalSkus += 1;
     addConsistency(agg.consistency.custo, custo);
-    addConsistency(agg.consistency.pdvAtual, sku.pdvVar);
+    addConsistency(agg.consistency.pdvAtual, sku.pdvVarTabela);
     addConsistency(agg.consistency.pdvRealVar, sku.pdvVar);
     addConsistency(agg.consistency.markupVar, markupVar);
     addConsistency(agg.consistency.pdvRealAta, sku.pdvAta);
@@ -1836,6 +2009,7 @@ async function getRelatorioBaseAnalitico(
     corAgg.giroTt3 += round(sku.giroTt3, 0);
     corAgg.giroTt6 += round(sku.giroTt6, 0);
     addConsistency(corAgg.consistency.custo, custo);
+    addConsistency(corAgg.consistency.pdvAtual, sku.pdvVarTabela);
     addConsistency(corAgg.consistency.pdvRealVar, sku.pdvVar);
     addConsistency(corAgg.consistency.markupVar, markupVar);
     addConsistency(corAgg.consistency.pdvRealAta, sku.pdvAta);
@@ -1902,20 +2076,21 @@ async function getRelatorioBaseAnalitico(
     });
   }
 
-  rows.sort(ordenarPorEstoque);
+  const rowsFiltradas = filtrarPorAlertaPreco(rows, alertasPrecoAcc, filtro.alertaPreco);
+  rowsFiltradas.sort(ordenarPorEstoque);
   const pageSize = filtro.pageSize && filtro.pageSize > 0 ? filtro.pageSize : 15;
-  const totalReferencias = rows.length;
+  const totalReferencias = rowsFiltradas.length;
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
-  const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPaginadas = rowsFiltradas.slice((page - 1) * pageSize, page * pageSize);
   const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
   for (const sku of skus.values()) {
     const row = rowsPorReferencia.get(sku.referenceCode);
     if (!row) continue;
 
     const custo = sku.custo;
-    const markupVar = markupPercentual(sku.pdvVar, custo);
-    const markupAta = markupPercentual(sku.pdvAta, custo);
+    const markupVar = markupMultiplicador(sku.pdvVar, custo);
+    const markupAta = markupMultiplicador(sku.pdvAta, custo);
     const skuBranches: Record<number, RelatorioBaseColunaFilial> = {};
     for (const coluna of colunasAtivas) {
       const valores = sku.branchesAgg.get(coluna.branchCode) || { est: 0, giro: 0, vendaCobertura: 0, giro30: 0 };
@@ -1943,7 +2118,7 @@ async function getRelatorioBaseAnalitico(
       lancamento: sku.lancamento,
       ultimaEntrada: sku.ultimaEntrada,
       custo,
-      pdvAtual: sku.pdvVar,
+      pdvAtual: sku.pdvVarTabela,
       pdvRealVar: sku.pdvVar,
       markupVar,
       pdvRealAta: sku.pdvAta,
@@ -1984,6 +2159,7 @@ async function getRelatorioBaseAnalitico(
               coresOriginais: corAgg.coresOriginais.size,
               totalSkus: corAgg.totalSkus,
               custo: getConsistency(corAgg.consistency.custo),
+              pdvAtual: getConsistency(corAgg.consistency.pdvAtual),
               pdvRealVar: getConsistency(corAgg.consistency.pdvRealVar),
               markupVar: getConsistency(corAgg.consistency.markupVar),
               pdvRealAta: getConsistency(corAgg.consistency.pdvRealAta),
@@ -2110,6 +2286,7 @@ async function getRelatorioBaseAnalitico(
         renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
       },
       statusBreakdown,
+      alertasPreco: montarAlertasPreco(alertasPrecoAcc),
     },
     matriz: {
       linha: matrizLinha,
@@ -2121,6 +2298,11 @@ async function getRelatorioBaseAnalitico(
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),
     rows: aplicarDisponibilidadeProducao(rowsPaginadas, producao.info),
+    precosPromocionais: {
+      sincronizadoEm: promocoes.sincronizadoEm,
+      aplicado: aplicarPromocao,
+      skusEmPromocao,
+    },
   };
 }
 
@@ -2244,12 +2426,23 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     giroTt6PorProductCode.set(r.product_code, mapa);
   }
 
-  const custoPrecoPorProductCode = new Map<number, { custo: number | null; pdvVar: number | null; pdvAta: number | null }>();
+  // pdvVarTabela = PDV ORIGINAL; pdvVar/pdvAta = PDV ATUAL (promocional vigente
+  // quando houver - ver getPrecosPromocionais).
+  const promocoes = await getPrecosPromocionais(config.precoCustoBranchCode, config.pdvVarejoCode, config.pdvAtacadoCode);
+  const aplicarPromocao = promocaoAplicavel(filtro.dataPosicao, promocoes.dataSincronizacao);
+  const custoPrecoPorProductCode = new Map<number, { custo: number | null; pdvVarTabela: number | null; pdvVar: number | null; pdvAta: number | null; emPromocao: boolean }>();
   for (const r of custoPrecoRows) {
+    const pdvVarTabela = r.pdv_var !== null ? decimalToNumber(r.pdv_var) : null;
+    const pdvAtaTabela = r.pdv_ata !== null ? decimalToNumber(r.pdv_ata) : null;
+    const promo = aplicarPromocao ? promocoes.porProduto.get(r.product_code) : undefined;
+    const pdvVar = precoAtual(pdvVarTabela, promo?.var);
+    const pdvAta = precoAtual(pdvAtaTabela, promo?.ata);
     custoPrecoPorProductCode.set(r.product_code, {
       custo: r.custo !== null ? decimalToNumber(r.custo) : null,
-      pdvVar: r.pdv_var !== null ? decimalToNumber(r.pdv_var) : null,
-      pdvAta: r.pdv_ata !== null ? decimalToNumber(r.pdv_ata) : null,
+      pdvVarTabela,
+      pdvVar,
+      pdvAta,
+      emPromocao: pdvVar !== pdvVarTabela || pdvAta !== pdvAtaTabela,
     });
   }
 
@@ -2326,6 +2519,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
   const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
+  const alertasPrecoAcc = alertasPrecoAccVazio();
+  let skusEmPromocao = 0;
   const lojasComValores = new Set<number>();
 
   const colunasAtivas = (await getColunasEstoque()).filter((c) => !branchFiltro || branchFiltro.has(c.branchCode));
@@ -2464,8 +2659,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
+    const pdvOriginal = custoPreco?.pdvVarTabela ?? null;
     const pdvRealVar = custoPreco?.pdvVar ?? null;
     const pdvRealAta = custoPreco?.pdvAta ?? null;
+    if (custoPreco?.emPromocao) skusEmPromocao += 1;
 
     const ultimaEntradaData = productCode !== null ? ultimaEntradaPorProductCode.get(productCode) : undefined;
     const ultimaEntrada = ultimaEntradaData ? ultimaEntradaData.toISOString().slice(0, 10) : null;
@@ -2549,8 +2746,12 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt1Round = round(giroTt1, 0);
     const giroTt3Round = round(giroTt3, 0);
     const giroTt6Round = round(giroTt6, 0);
-    const markupVar = markupPercentual(pdvRealVar, custoSelecionado);
-    const markupAta = markupPercentual(pdvRealAta, custoSelecionado);
+    const markupVar = markupMultiplicador(pdvRealVar, custoSelecionado);
+    const markupAta = markupMultiplicador(pdvRealAta, custoSelecionado);
+    acumularAlertaPreco(alertasPrecoAcc, referenceCode, situacaoPrecoSku({
+      custo, pdvOriginal, pdvAtualVar: pdvRealVar, pdvAtualAta: pdvRealAta,
+      markupVar, markupAta, estTt: estTtRound, giroTt6: giroTt6Round,
+    }));
 
     kpis.giroTt1 += giroTt1Round;
     kpis.giroTt3 += giroTt3Round;
@@ -2602,6 +2803,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     corAgg.giroTt3 += giroTt3Round;
     corAgg.giroTt6 += giroTt6Round;
     addConsistency(corAgg.consistency.custo, custo);
+    addConsistency(corAgg.consistency.pdvAtual, pdvOriginal);
     addConsistency(corAgg.consistency.pdvRealVar, pdvRealVar);
     addConsistency(corAgg.consistency.markupVar, markupVar);
     addConsistency(corAgg.consistency.pdvRealAta, pdvRealAta);
@@ -2621,7 +2823,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     agg.giroTt6 += giroTt6Round;
     agg.totalSkus += 1;
     addConsistency(agg.consistency.custo, custo);
-    addConsistency(agg.consistency.pdvAtual, pdvRealVar);
+    addConsistency(agg.consistency.pdvAtual, pdvOriginal);
     addConsistency(agg.consistency.pdvRealVar, pdvRealVar);
     addConsistency(agg.consistency.markupVar, markupVar);
     addConsistency(agg.consistency.pdvRealAta, pdvRealAta);
@@ -2657,6 +2859,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
           coresOriginais: corAgg.coresOriginais.size,
           totalSkus: corAgg.totalSkus,
           custo: getConsistency(corAgg.consistency.custo),
+          pdvAtual: getConsistency(corAgg.consistency.pdvAtual),
           pdvRealVar: getConsistency(corAgg.consistency.pdvRealVar),
           markupVar: getConsistency(corAgg.consistency.markupVar),
           pdvRealAta: getConsistency(corAgg.consistency.pdvRealAta),
@@ -2715,16 +2918,17 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   }
 
   // A ordem por estoque precisa ser aplicada antes de selecionar a página.
-  rows.sort(ordenarPorEstoque);
+  const rowsFiltradas = filtrarPorAlertaPreco(rows, alertasPrecoAcc, filtro.alertaPreco);
+  rowsFiltradas.sort(ordenarPorEstoque);
 
   // Paginacao real por referencia (substitui o antigo "rank" Top 50/100/250/Todos, que
   // o usuario pediu pra tirar - "muito ruim... crie paginacoes"). pageSize grande e um
   // uso valido (ex: exportar tudo numa pagina so), nao precisa de sentinel especial.
   const pageSize = filtro.pageSize && filtro.pageSize > 0 ? filtro.pageSize : 15;
-  const totalReferencias = rows.length;
+  const totalReferencias = rowsFiltradas.length;
   const totalPages = Math.max(1, Math.ceil(totalReferencias / pageSize));
   const page = filtro.page && filtro.page > 0 ? Math.min(filtro.page, totalPages) : 1;
-  const rowsPaginadas = rows.slice((page - 1) * pageSize, page * pageSize);
+  const rowsPaginadas = rowsFiltradas.slice((page - 1) * pageSize, page * pageSize);
   const rowsPorReferencia = new Map(rowsPaginadas.map((row) => [row.referenceCode, row]));
   for (const identidade of identidadeRows) {
     const referenceCode = identidade.reference_code || identidade.product_sku;
@@ -2779,6 +2983,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     const giroTt6 = productCode !== null ? somaMapaFiltrado(giroTt6PorProductCode.get(productCode), branchFiltroParaDados) : 0;
     const custoPreco = productCode !== null ? custoPrecoPorProductCode.get(productCode) : undefined;
     const custo = custoPreco?.custo ?? null;
+    const pdvOriginal = custoPreco?.pdvVarTabela ?? null;
     const pdvRealVar = custoPreco?.pdvVar ?? null;
     const pdvRealAta = custoPreco?.pdvAta ?? null;
     const custoSelecionado = productCode !== null ? custoSelecionadoPorProductCode.get(productCode) ?? null : null;
@@ -2806,11 +3011,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       lancamento: formatarLancamento(identidade.lancamento),
       ultimaEntrada,
       custo,
-      pdvAtual: pdvRealVar,
+      pdvAtual: pdvOriginal,
       pdvRealVar,
-      markupVar: markupPercentual(pdvRealVar, custoSelecionado),
+      markupVar: markupMultiplicador(pdvRealVar, custoSelecionado),
       pdvRealAta,
-      markupAta: markupPercentual(pdvRealAta, custoSelecionado),
+      markupAta: markupMultiplicador(pdvRealAta, custoSelecionado),
       estDisponivel: null,
       emProducao: round(emProducao, 0),
       estPrevisto: null,
@@ -2929,6 +3134,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       renovavel: montarRupturaLinhaKpi(rupturaRenovavelAcc),
     },
     statusBreakdown,
+    alertasPreco: montarAlertasPreco(alertasPrecoAcc),
   };
 
   return {
@@ -2962,6 +3168,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),
     rows: aplicarDisponibilidadeProducao(rowsPaginadas, producao.info),
+    precosPromocionais: {
+      sincronizadoEm: promocoes.sincronizadoEm,
+      aplicado: aplicarPromocao,
+      skusEmPromocao,
+    },
   };
 }
 

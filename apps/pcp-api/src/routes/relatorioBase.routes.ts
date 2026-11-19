@@ -87,6 +87,8 @@ router.get('/relatorio-base', async (req: Request, res: Response) => {
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 15,
       agruparPorCorSalva: req.query.agruparPorCorSalva === 'true',
       incluirComparativoAnoAnterior: req.query.incluirComparativoAnoAnterior !== 'false',
+      alertaPreco: req.query.alertaPreco === 'preco_custo' || req.query.alertaPreco === 'markup_fora'
+        ? req.query.alertaPreco : undefined,
     };
 
     res.json(await getRelatorioBase(filtro));

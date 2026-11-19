@@ -288,7 +288,11 @@ export interface RelatorioBaseFiltro {
   page?: number;
   pageSize?: number;
   agruparPorCorSalva?: boolean;
+  // Lista so as referencias com SKU em alerta de preco (cards da Visao Geral).
+  alertaPreco?: RelatorioBaseAlertaPreco;
 }
+
+export type RelatorioBaseAlertaPreco = 'preco_custo' | 'markup_fora';
 
 export interface RelatorioBaseColunaFilial {
   giro: number;
@@ -337,6 +341,7 @@ export interface RelatorioBaseCorRow {
   coresOriginais: number;
   totalSkus: number;
   custo: number | null;
+  pdvAtual: number | null;
   pdvRealVar: number | null;
   markupVar: number | null;
   pdvRealAta: number | null;
@@ -415,6 +420,9 @@ export interface RelatorioBaseResponse {
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
   rows: RelatorioBaseReferenciaRow[];
+  // PDV ATUAL troca pelo preco promocional do TOTVS (foto sincronizada em
+  // sincronizadoEm). aplicado=false: posicao anterior a foto, mostra a tabela.
+  precosPromocionais?: { sincronizadoEm: string | null; aplicado: boolean; skusEmPromocao: number };
 }
 
 export interface RelatorioBaseKpisExtra {
@@ -444,6 +452,11 @@ export interface RelatorioBaseKpisExtra {
     renovavel: RelatorioBaseRupturaLinhaKpi;
   };
   statusBreakdown: { status: string; estTt: number; percent: number }[];
+  // Contagem sobre todo o recorte filtrado (nao so a pagina carregada).
+  alertasPreco?: {
+    precoAbaixoCusto: { skus: number; referencias: number };
+    markupFora: { skus: number; referencias: number };
+  };
 }
 
 export interface RelatorioBaseEstoqueAtivos {
@@ -517,6 +530,7 @@ function relatorioBaseParams(filtro: RelatorioBaseFiltro) {
     if (filtro.pageSize) params.set('pageSize', String(filtro.pageSize));
     if (filtro.agruparPorCorSalva) params.set('agruparPorCorSalva', 'true');
     if (filtro.incluirComparativoAnoAnterior === false) params.set('incluirComparativoAnoAnterior', 'false');
+    if (filtro.alertaPreco) params.set('alertaPreco', filtro.alertaPreco);
     appendList(params, 'branches', filtro.branches);
     appendList(params, 'categoria', filtro.categoria);
     appendList(params, 'linha', filtro.linha);

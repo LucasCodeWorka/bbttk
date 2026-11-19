@@ -49,6 +49,7 @@ for (const historico of [true, false]) {
       }) },
       $queryRaw: async sql => {
         const text = Array.isArray(sql) ? sql.join('?') : sql.text;
+        if (text.includes('produto_precos_promocionais')) return [{ existe: false }];
         if (text.includes('AS possui_diario')) return [{ possui_diario: false, hoje: '2026-11-17' }];
         if (text.includes('information_schema.columns')) return [{ possui_marcador: true }];
         if (text.includes('to_char(data_posicao') && text.includes('LIMIT 1')) {

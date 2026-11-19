@@ -12,7 +12,7 @@ import {
   PcpCoberturaIdealItem,
   PcpCodigosDisponiveis,
   PcpCurvaAbcConfig,
-  PcpCustoPrecoSyncJob,
+  PcpPrecosPromocionaisSyncJob, PcpCustoPrecoSyncJob,
   PcpCorteMinimoSkuItem,
 } from '@/lib/api';
 import { RELATORIO_BASE_BRANCH_ORDER } from '@/lib/pcpBranches';
@@ -54,6 +54,8 @@ export default function ConfiguracoesPcpPage() {
   const [codigos, setCodigos] = useState<PcpCodigosDisponiveis>({ custos: [], precos: [] });
   const [sincronizando, setSincronizando] = useState(false);
   const [syncJob, setSyncJob] = useState<PcpCustoPrecoSyncJob | null>(null);
+  const [sincronizandoPromocoes, setSincronizandoPromocoes] = useState(false);
+  const [promoJob, setPromoJob] = useState<PcpPrecosPromocionaisSyncJob | null>(null);
   const [sincronizandoProducao, setSincronizandoProducao] = useState(false);
   const [coberturaIdeal, setCoberturaIdeal] = useState<Record<number, string>>({});
   const [salvandoCobertura, setSalvandoCobertura] = useState(false);
@@ -263,6 +265,62 @@ export default function ConfiguracoesPcpPage() {
       showToast('Erro ao iniciar sincronizacao com o TOTVS', 'error');
       console.error(error);
       setSincronizando(false);
+    }
+  }
+
+  // Mesmo esquema da sync de custo/preco: o POST dispara, o polling acompanha.
+  const pollPromocoes = useCallback(
+    (tokenAtual: string) => {
+      const interval = setInterval(async () => {
+        try {
+          const { job } = await pcpConfigApi.getStatusSincronizacaoPrecosPromocionais(tokenAtual);
+          setPromoJob(job);
+          if (!job || job.status === 'running') return;
+          clearInterval(interval);
+          setSincronizandoPromocoes(false);
+          if (job.status === 'done' && job.resultado) {
+            showToast(`Promocoes sincronizadas: ${job.resultado.promocoes} precos em promocao em ${job.resultado.produtos} produtos`, 'success');
+          } else if (job.status === 'error') {
+            showToast(`Erro ao sincronizar promocoes: ${job.erro || 'erro desconhecido'}`, 'error');
+          }
+        } catch (error) {
+          clearInterval(interval);
+          setSincronizandoPromocoes(false);
+          showToast('Erro ao consultar status da sincronizacao de promocoes', 'error');
+          console.error(error);
+        }
+      }, 3000);
+    },
+    [showToast]
+  );
+
+  useEffect(() => {
+    if (!token) return;
+    pcpConfigApi
+      .getStatusSincronizacaoPrecosPromocionais(token)
+      .then(({ job }) => {
+        setPromoJob(job);
+        if (job?.status === 'running') {
+          setSincronizandoPromocoes(true);
+          pollPromocoes(token);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  async function handleSincronizarPromocoes() {
+    if (!token) return;
+    setSincronizandoPromocoes(true);
+    setPromoJob(null);
+    try {
+      const { jaEmAndamento } = await pcpConfigApi.sincronizarPrecosPromocionais(token);
+      if (jaEmAndamento) showToast('Ja tem uma sincronizacao de promocoes rodando - acompanhando...', 'info');
+      pollPromocoes(token);
+    } catch (error) {
+      showToast('Erro ao iniciar a sincronizacao de promocoes', 'error');
+      console.error(error);
+      setSincronizandoPromocoes(false);
     }
   }
 
@@ -686,6 +744,31 @@ export default function ConfiguracoesPcpPage() {
                 Salvar
               </Button>
             </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Preco promocional</CardTitle>
+              <Button variant="secondary" size="sm" onClick={handleSincronizarPromocoes} isLoading={sincronizandoPromocoes}>
+                Sincronizar com o TOTVS
+              </Button>
+            </CardHeader>
+            <p className="text-sm text-gray-500 -mt-2">
+              Alimenta o PDV ATUAL VAR/ATA do Relatorio Base com o preco em promocao vigente no TOTVS (o mesmo &quot;DE / POR&quot; da Consulta Preco), na loja de referencia acima. O PDV ORIGINAL continua sendo o preco de tabela. A promocao muda e vence sem aviso: sincronize sempre que houver campanha nova (leva cerca de 5 minutos).
+            </p>
+            {(sincronizandoPromocoes || promoJob) && (
+              <p className="text-xs text-gray-400 mt-2">
+                {promoJob?.status === 'running' || sincronizandoPromocoes
+                  ? `Sincronizando em segundo plano - ${promoJob?.progress
+                    ? `lote ${promoJob.progress.chunkIndex}/${promoJob.progress.totalChunks || 1}, ${promoJob.progress.produtosLidos} produtos lidos, ${promoJob.progress.promocoes} em promocao`
+                    : 'iniciando...'}`
+                  : promoJob?.status === 'done' && promoJob.resultado
+                    ? `Ultima sincronizacao desta sessao: ${promoJob.resultado.promocoes} precos em promocao em ${promoJob.resultado.produtos} produtos.`
+                    : promoJob?.status === 'error'
+                      ? `Falhou: ${promoJob.erro || 'erro desconhecido'}`
+                      : null}
+              </p>
+            )}
           </Card>
 
           <Card>

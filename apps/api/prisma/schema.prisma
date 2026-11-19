@@ -375,6 +375,32 @@ model ProdutoPreco {
   @@map("produto_precos")
 }
 
+// Foto do preco promocional vigente (PRDFM002) por produto, na filial de referencia do
+// Relatorio Base - PDV ATUAL VAR/ATA. Criada e substituida inteira por
+// syncPrecosPromocionais (apps/api/src/services/totvs.service.ts, CREATE IF NOT EXISTS);
+// declarada aqui so pra um db push nao propor dropar. Lida por $queryRaw no pcp-api.
+model ProdutoPrecoPromocional {
+  productCode      Int      @map("product_code")
+  branchCode       Int      @map("branch_code")
+  priceCode        Int      @map("price_code")
+  preco            Decimal? @db.Decimal(15, 4)
+  precoPromocional Decimal  @map("preco_promocional") @db.Decimal(15, 4)
+  syncedAt         DateTime @default(now()) @map("synced_at") @db.Timestamp(6)
+
+  @@id([productCode, branchCode, priceCode])
+  @@map("produto_precos_promocionais")
+}
+
+// Quando a foto acima foi tirada (1 linha por filial). Sem linha = nunca sincronizado.
+model ProdutoPrecoPromocionalSync {
+  branchCode     Int      @id @map("branch_code")
+  sincronizadoEm DateTime @map("sincronizado_em") @db.Timestamp(6)
+  produtos       Int
+  promocoes      Int
+
+  @@map("produto_precos_promocionais_sync")
+}
+
 model ProdutoCustoPrecoSkuFilial {
   id            BigInt   @id @default(autoincrement())
   productSku    String   @map("product_sku") @db.VarChar(50)

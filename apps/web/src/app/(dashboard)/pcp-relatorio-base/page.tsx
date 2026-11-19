@@ -24,6 +24,7 @@ import {
   RelatorioBaseMatrizLinha,
   RelatorioBaseMatrizValores,
   RelatorioBaseEstoqueAnaliseKpi,
+  RelatorioBaseAlertaPreco,
   VisaoGeralExtrasResponse,
   relatorioBaseApi,
   visaoGeralApi,
@@ -374,7 +375,16 @@ interface ColunaFixa<T> {
   render: (row: T) => React.ReactNode;
 }
 
+function formatarDataHora(iso: string): string {
+  const [data, hora = ''] = iso.split('T');
+  return `${formatDate(data)} ${hora.slice(0, 5)}`.trim();
+}
+
 type SituacaoCodigo = 'ok' | 'markup_baixo' | 'preco_custo' | 'sem_movimento';
+// Markup = PDV ATUAL / CUSTO (devolutiva secao 9). Abaixo de 2,00 e sinalizado - o mesmo
+// limite do antigo "< 100%". Espelha MARKUP_MINIMO/situacaoPrecoSku do pcp-api, que
+// conta os cards de alerta sobre o recorte inteiro.
+const MARKUP_MINIMO = 2;
 function pdvRealPrincipal(row: Pick<RelatorioBaseRow, 'pdvRealVar' | 'pdvRealAta'>): number | null {
   return row.pdvRealVar ?? row.pdvRealAta ?? null;
 }
@@ -392,7 +402,7 @@ function situacaoSku(row: RelatorioBaseRow): SituacaoCodigo {
   const markup = markupRealPrincipal(row);
   if (precoAbaixoCusto(row)) return 'preco_custo';
   if ((row.giroTt6 || 0) <= 0 && (row.estTt || 0) > 0) return 'sem_movimento';
-  if (markup !== null && markup < 100) return 'markup_baixo';
+  if (markup !== null && markup < MARKUP_MINIMO) return 'markup_baixo';
   return 'ok';
 }
 
@@ -400,9 +410,9 @@ function situacaoReferencia(row: RelatorioBaseReferenciaRow): SituacaoCodigo {
   if (precoAbaixoCusto(row) || row.skus.some(precoAbaixoCusto)) return 'preco_custo';
   if ((row.giroTt6 || 0) <= 0 && (row.estTt || 0) > 0) return 'sem_movimento';
   const markup = markupRealPrincipal(row);
-  if ((markup !== null && markup < 100) || row.skus.some((sku) => {
+  if ((markup !== null && markup < MARKUP_MINIMO) || row.skus.some((sku) => {
     const skuMarkup = markupRealPrincipal(sku);
-    return skuMarkup !== null && skuMarkup < 100;
+    return skuMarkup !== null && skuMarkup < MARKUP_MINIMO;
   })) {
     return 'markup_baixo';
   }
@@ -428,7 +438,7 @@ function MarkupIndicador({ value, situacao }: { value: number | null; situacao: 
 
   return (
     <span className={cn('font-semibold tabular-nums', problem ? 'text-red-600' : neutral ? 'text-gray-500' : 'text-green-700')}>
-      {formatNumber(value, 1)}%
+      {formatNumber(value, 2)}
     </span>
   );
 }
@@ -471,10 +481,10 @@ const COLUNAS_REFERENCIA: ColunaFixa<RelatorioBaseReferenciaRow>[] = [
   { key: 'lancamento', label: 'LANÇ.', width: 80, align: 'center', render: (r) => r.lancamento || '-' },
   { key: 'ultimaEntrada', label: 'ÚLT. ENTRADA', width: 115, align: 'center', render: (r) => (r.ultimaEntrada ? formatDate(r.ultimaEntrada) : '-') },
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
-  { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
-  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'pdvAtual', label: 'PDV ORIGINAL', width: 115, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
+  { key: 'pdvRealVar', label: 'PDV ATUAL VAR', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
   { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoReferencia(r)} /> },
-  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'pdvRealAta', label: 'PDV ATUAL ATA', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
   { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoReferencia(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
@@ -503,10 +513,10 @@ const COLUNAS_SKU_DETALHE: ColunaFixa<RelatorioBaseRow>[] = [
   },
   { key: 'codigo', label: 'CÓDIGO', width: 80, align: 'right', render: (r) => r.codigo ?? '-' },
   { key: 'custo', label: 'CUSTO', width: 95, align: 'right', render: (r) => (r.custo === null ? '-' : formatMoney(r.custo)) },
-  { key: 'pdvAtual', label: 'PDV ATUAL', width: 105, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
-  { key: 'pdvRealVar', label: 'PDV REAL (VAR)', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
+  { key: 'pdvAtual', label: 'PDV ORIGINAL', width: 115, align: 'right', render: (r) => (r.pdvAtual === null ? '-' : formatMoney(r.pdvAtual)) },
+  { key: 'pdvRealVar', label: 'PDV ATUAL VAR', width: 115, align: 'right', render: (r) => (r.pdvRealVar === null ? '-' : formatMoney(r.pdvRealVar)) },
   { key: 'markupVar', label: 'MKUP VAR', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupVar} situacao={situacaoSku(r)} /> },
-  { key: 'pdvRealAta', label: 'PDV REAL (ATA)', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
+  { key: 'pdvRealAta', label: 'PDV ATUAL ATA', width: 115, align: 'right', render: (r) => (r.pdvRealAta === null ? '-' : formatMoney(r.pdvRealAta)) },
   { key: 'markupAta', label: 'MKUP ATA', width: 85, align: 'right', render: (r) => <MarkupIndicador value={r.markupAta} situacao={situacaoSku(r)} /> },
   { key: 'estTt', label: 'EST. TT', width: 85, align: 'right', render: (r) => formatNumber(r.estTt) },
   { key: 'estDisponivel', label: 'EST. DISP', width: 90, align: 'right', render: () => '-' },
@@ -564,6 +574,9 @@ export default function PcpRelatorioBasePage() {
   );
   const filtrosPendentes = JSON.stringify(filtroSelecionado) !== JSON.stringify(filtroAplicado);
   const [pagina, setPagina] = useState(() => initialPageState?.pagina || 1);
+  // Clique num card de alerta de preco lista so as referencias dele (filtro de tabela,
+  // aplicado na hora - nao espera o Atualizar, nao mexe nos KPIs).
+  const [alertaPreco, setAlertaPreco] = useState<RelatorioBaseAlertaPreco | null>(null);
   const [verPorLoja, setVerPorLoja] = useState(() => initialPageState?.verPorLoja || false);
   const [exportando, setExportando] = useState(false);
   // Granularidade da tabela principal: "referencia" mostra 1 linha por referencia (com
@@ -619,12 +632,13 @@ export default function PcpRelatorioBasePage() {
       page: pagina,
       pageSize: PAGE_SIZE,
       agruparPorCorSalva,
+      alertaPreco: alertaPreco || undefined,
       incluirComparativoAnoAnterior: false,
     };
 
     // Gerar chave de cache baseada nos filtros (agruparPorCorSalva entra aqui junto,
     // senao o modo "cor agrupada" reaproveitaria a resposta do modo normal)
-    const cacheKey = `visao-geral-v11-${JSON.stringify(filtro)}`;
+    const cacheKey = `visao-geral-v12-${JSON.stringify(filtro)}`;
 
     // Tentar carregar do cache se não for forçar recarregar
     if (!forcarRecarregar) {
@@ -669,7 +683,7 @@ export default function PcpRelatorioBasePage() {
     } finally {
       if (!signal?.aborted) setIsLoading(false);
     }
-  }, [token, filtroAplicado, pagina, agruparPorCorSalva]);
+  }, [token, filtroAplicado, pagina, agruparPorCorSalva, alertaPreco]);
 
   function aplicarFiltros() {
     forcarAtualizacaoRef.current = true;
@@ -1017,7 +1031,7 @@ export default function PcpRelatorioBasePage() {
         referenceCode: cor.coresOriginais > 1 ? `${cor.refCor} (${cor.coresOriginais} cores)` : cor.refCor,
         totalSkus: cor.totalSkus,
         custo: cor.custo,
-        pdvAtual: cor.pdvRealVar,
+        pdvAtual: cor.pdvAtual,
         pdvRealVar: cor.pdvRealVar,
         markupVar: cor.markupVar,
         pdvRealAta: cor.pdvRealAta,
@@ -1064,6 +1078,17 @@ export default function PcpRelatorioBasePage() {
   );
 
   const resumoSkuLoja = useMemo(() => {
+    // Contagem do servidor cobre o recorte inteiro. O calculo local abaixo so contava a
+    // pagina carregada; fica como fallback pra resposta antiga em cache.
+    const alertas = data?.kpisExtra.alertasPreco;
+    if (alertas) {
+      return {
+        precoAbaixoCusto: alertas.precoAbaixoCusto.skus,
+        precoAbaixoCustoRefs: alertas.precoAbaixoCusto.referencias,
+        markupFora: alertas.markupFora.skus,
+        markupForaRefs: alertas.markupFora.referencias,
+      };
+    }
     const rows = data?.rows || [];
     const skus = rows.flatMap((row) => row.skus);
     const referenciasComPrecoAbaixoCusto = rows.filter((row) => situacaoReferencia(row) === 'preco_custo').length;
@@ -1071,10 +1096,12 @@ export default function PcpRelatorioBasePage() {
 
     return {
       precoAbaixoCusto: skus.filter(precoAbaixoCusto).length || referenciasComPrecoAbaixoCusto,
+      precoAbaixoCustoRefs: referenciasComPrecoAbaixoCusto,
       markupFora: skus.filter((sku) => {
         const situacao = situacaoSku(sku);
         return situacao === 'markup_baixo' || situacao === 'preco_custo';
       }).length || referenciasMarkupFora,
+      markupForaRefs: referenciasMarkupFora,
     };
   }, [data]);
 
@@ -1093,6 +1120,12 @@ export default function PcpRelatorioBasePage() {
     return '';
   }
 
+  function alternarAlertaPreco(alerta: RelatorioBaseAlertaPreco) {
+    setAlertaPreco((atual) => (atual === alerta ? null : alerta));
+    setPagina(1);
+    setReferenciaExpandida(null);
+  }
+
   // Exportar sempre traz o universo INTEIRO filtrado (nao so a pagina atual na tela) -
   // busca dedicada com pageSize bem grande, independente da paginacao visual.
   async function exportarExcel() {
@@ -1108,6 +1141,7 @@ export default function PcpRelatorioBasePage() {
         search: filtroAplicado.search || undefined,
         dataPosicao: filtroAplicado.dataPosicao || undefined,
         agruparPorCorSalva,
+        alertaPreco: alertaPreco || undefined,
         page: 1,
         pageSize: 100000,
         incluirComparativoAnoAnterior: false,
@@ -1130,10 +1164,10 @@ export default function PcpRelatorioBasePage() {
         { key: 'lancamento', header: 'LANÇ', width: 10, type: 'text' },
         { key: 'ultimaEntrada', header: 'ÚLT. ENTRADA', width: 14, type: 'text' },
         { key: 'custo', header: 'CUSTO', width: 12, type: 'number' },
-        { key: 'pdvAtual', header: 'PDV ATUAL', width: 12, type: 'number' },
-        { key: 'pdvRealVar', header: 'PDV REAL VAR', width: 14, type: 'number' },
+        { key: 'pdvAtual', header: 'PDV ORIGINAL', width: 13, type: 'number' },
+        { key: 'pdvRealVar', header: 'PDV ATUAL VAR', width: 14, type: 'number' },
         { key: 'markupVar', header: 'MKUP VAR', width: 12, type: 'number' },
-        { key: 'pdvRealAta', header: 'PDV REAL ATA', width: 14, type: 'number' },
+        { key: 'pdvRealAta', header: 'PDV ATUAL ATA', width: 14, type: 'number' },
         { key: 'markupAta', header: 'MKUP ATA', width: 12, type: 'number' },
         { key: 'estTt', header: 'EST. TT', width: 10, type: 'number' },
         { key: 'emProducao', header: 'EM PROD.', width: 10, type: 'number' },
@@ -1528,15 +1562,65 @@ export default function PcpRelatorioBasePage() {
             )}
             {!isLoading && rodapeComparativo(estoqueAtivos?.skus.comEstoque ?? null, comparativo?.estoqueAtivos?.skus, 'quantidade')}
           </div>
-          <div className="rounded-lg bg-red-50 px-4 py-3">
+          <button
+            type="button"
+            onClick={() => alternarAlertaPreco('preco_custo')}
+            aria-pressed={alertaPreco === 'preco_custo'}
+            title="Algum PDV (original, atual varejo ou atual atacado) menor que o custo. Clique para listar as referências."
+            className={cn(
+              'rounded-lg bg-red-50 px-4 py-3 text-left transition hover:ring-2 hover:ring-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400',
+              alertaPreco === 'preco_custo' && 'ring-2 ring-red-500'
+            )}
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Preço abaixo do custo</p>
             <p className="mt-1 text-2xl font-black text-red-700">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.precoAbaixoCusto)}</p>
-          </div>
-          <div className="rounded-lg bg-amber-50 px-4 py-3">
+            {!isLoading && data && (
+              <p className="mt-1 text-xs text-gray-600">
+                SKUs em {formatNumber(resumoSkuLoja.precoAbaixoCustoRefs)} referências · {alertaPreco === 'preco_custo' ? 'listando na tabela' : 'clique para listar'}
+              </p>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => alternarAlertaPreco('markup_fora')}
+            aria-pressed={alertaPreco === 'markup_fora'}
+            title={`Markup (PDV atual ÷ custo) abaixo de ${formatNumber(MARKUP_MINIMO, 2)}, incluindo preço abaixo do custo. SKU com estoque e sem venda em 6 meses não entra. Clique para listar as referências.`}
+            className={cn(
+              'rounded-lg bg-amber-50 px-4 py-3 text-left transition hover:ring-2 hover:ring-amber-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400',
+              alertaPreco === 'markup_fora' && 'ring-2 ring-amber-500'
+            )}
+          >
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">MKUP fora da faixa</p>
             <p className="mt-1 text-2xl font-black text-gray-950">{isLoading || !data ? '—' : formatNumber(resumoSkuLoja.markupFora)}</p>
-          </div>
+            {!isLoading && data && (
+              <p className="mt-1 text-xs text-gray-600">
+                SKUs em {formatNumber(resumoSkuLoja.markupForaRefs)} referências · {alertaPreco === 'markup_fora' ? 'listando na tabela' : 'clique para listar'}
+              </p>
+            )}
+          </button>
         </div>
+
+        {alertaPreco && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+            <span>
+              Mostrando só as referências com <strong>{alertaPreco === 'preco_custo' ? 'preço abaixo do custo' : 'markup fora da faixa'}</strong>
+              {data ? ` (${formatNumber(data.pagination.totalReferencias)})` : ''}. Os indicadores acima continuam com o recorte inteiro.
+            </span>
+            <button type="button" onClick={() => alternarAlertaPreco(alertaPreco)} className="font-semibold text-[var(--bbtk-purple)] hover:underline">
+              Mostrar todas
+            </button>
+          </div>
+        )}
+
+        {data?.precosPromocionais && (
+          <p className="mb-3 px-1 text-xs text-gray-500">
+            {!data.precosPromocionais.sincronizadoEm
+              ? 'PDV ATUAL mostra o preço de tabela: o preço promocional do TOTVS ainda não foi sincronizado (Configurações PCP).'
+              : !data.precosPromocionais.aplicado
+                ? `PDV ATUAL mostra o preço de tabela: a foto de promoções é de ${formatarDataHora(data.precosPromocionais.sincronizadoEm)} e não vale para esta data de posição.`
+                : `PDV ATUAL usa o preço promocional do TOTVS quando há promoção vigente (${formatNumber(data.precosPromocionais.skusEmPromocao)} SKUs neste recorte; promoções atualizadas em ${formatarDataHora(data.precosPromocionais.sincronizadoEm)}). PDV ORIGINAL é o preço de tabela.`}
+          </p>
+        )}
 
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div

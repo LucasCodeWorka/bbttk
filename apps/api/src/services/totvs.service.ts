@@ -521,6 +521,222 @@ export function iniciarCustoPrecoSyncJob(): { jaEmAndamento: boolean } {
   return { jaEmAndamento: false };
 }
 
+// ---- Preco promocional vigente (Relatorio Base, devolutiva secao 9) ----
+// O produto_precos guarda so o "price" (preco de tabela). O preco promocional (PRDFM002,
+// o "DE 199,99 POR 99,99" da Consulta Preco do TOTVS) so vem em prices/search quando a
+// consulta pede isPromotionalPrice=true, como "promotionalPrice" (0 = sem promocao).
+// O endpoint proprio de promocoes (GET product/v2/promotion) nao serve: em 18/11/2026
+// so tinha campanhas de 2022-2023 e nao trazia a promocao vigente do CNJ398.
+//
+// Foto COMPLETA, nao incremental: promocao que vence por data nao gera alteracao no
+// TOTVS, entao so uma varredura inteira tira o produto da promocao. Por isso a troca e
+// tudo-ou-nada (DELETE + INSERT na mesma transacao, so depois de ler todas as paginas):
+// uma falha no meio mantem a foto anterior inteira em vez de uma foto pela metade.
+// Medido: 1 filial x 2 codigos de preco, pageSize 500 -> ~11s por pagina, ~4-5 min no
+// catalogo (vs. horas da sync de custo/preco, que pede 13 filiais x 15 codigos).
+//
+// As tabelas nascem aqui (CREATE IF NOT EXISTS) e estao declaradas no schema.prisma so
+// pra um db push nao propor dropa-las. O pcp-api le por $queryRaw.
+const PROMO_PAGE_SIZE = 500;
+
+interface PrecoPromocionalPagina {
+  hasNext?: boolean;
+  items?: Array<{
+    productCode: number;
+    prices?: Array<{ branchCode: number; priceCode: number; price: number | null; promotionalPrice: number | null }>;
+  }>;
+}
+
+export interface SyncPrecosPromocionaisResumo {
+  branchCode: number;
+  produtos: number;
+  promocoes: number;
+  duracaoMs: number;
+  dryRun: boolean;
+}
+
+export interface SyncPrecosPromocionaisProgress {
+  chunkIndex: number;
+  totalChunks: number;
+  page: number;
+  produtosLidos: number;
+  promocoes: number;
+  tentativa?: number;
+  erro?: string;
+}
+
+export async function ensurePrecoPromocionalTables(): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS produto_precos_promocionais (
+      product_code INTEGER NOT NULL,
+      branch_code INTEGER NOT NULL,
+      price_code INTEGER NOT NULL,
+      preco NUMERIC(15,4),
+      preco_promocional NUMERIC(15,4) NOT NULL,
+      synced_at TIMESTAMP(6) NOT NULL DEFAULT now(),
+      PRIMARY KEY (product_code, branch_code, price_code)
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS produto_precos_promocionais_sync (
+      branch_code INTEGER PRIMARY KEY,
+      sincronizado_em TIMESTAMP(6) NOT NULL,
+      produtos INTEGER NOT NULL,
+      promocoes INTEGER NOT NULL
+    )
+  `);
+}
+
+export async function syncPrecosPromocionais(options: {
+  dryRun?: boolean;
+  onProgress?: (event: SyncPrecosPromocionaisProgress) => void;
+} = {}): Promise<SyncPrecosPromocionaisResumo> {
+  const startedAt = Date.now();
+  const dryRun = options.dryRun ?? false;
+  const config = await prisma.pcpRelatorioConfig.upsert({
+    where: { relatorio: 'relatorio_base' },
+    create: { relatorio: 'relatorio_base' },
+    update: {},
+  });
+  const branchCode = config.precoCustoBranchCode;
+  const priceCodes = [...new Set([config.pdvVarejoCode, config.pdvAtacadoCode])];
+
+  // Universo = todo produto com preco de tabela na filial de referencia (o mesmo que o
+  // Relatorio Base consegue mostrar). Nao usa getProductCodesRelevantes: SKU zerado ou
+  // negativo tambem aparece no relatorio e precisa do preco atual.
+  const produtosRows = await prisma.$queryRaw<Array<{ product_code: number }>>`
+    SELECT DISTINCT product_code FROM produto_precos
+    WHERE branch_code = ${branchCode} AND price_code IN (${Prisma.join(priceCodes)})
+    ORDER BY product_code
+  `;
+  const productCodes = produtosRows.map((r) => r.product_code);
+
+  const linhas: Array<{ productCode: number; priceCode: number; preco: number | null; promocional: number }> = [];
+  const produtosVistos = new Set<number>();
+  const PRODUCT_CODE_CHUNK = 900; // limite do filtro productCodeList (ListExceeded)
+  const MAX_TENTATIVAS = 4;
+  const totalChunks = Math.ceil(productCodes.length / PRODUCT_CODE_CHUNK);
+
+  for (let chunkStart = 0; chunkStart < productCodes.length; chunkStart += PRODUCT_CODE_CHUNK) {
+    const chunk = productCodes.slice(chunkStart, chunkStart + PRODUCT_CODE_CHUNK);
+    const chunkIndex = Math.floor(chunkStart / PRODUCT_CODE_CHUNK) + 1;
+    let page = 1;
+    let hasNext = true;
+    while (hasNext) {
+      let data: PrecoPromocionalPagina | null = null;
+      let ultimoErro = '';
+      for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+        try {
+          const token = await getApiToken();
+          if (!token) throw new Error('Nao foi possivel autenticar na API TOTVS');
+          const response = await fetch(`${API_BASE_URL}/product/v2/prices/search`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filter: { productCodeList: chunk },
+              option: { prices: [{ branchCode, priceCodeList: priceCodes, isPromotionalPrice: true }] },
+              page,
+              pageSize: PROMO_PAGE_SIZE,
+            }),
+            // @ts-ignore
+            agent: httpsAgent,
+          });
+          if (!response.ok) {
+            ultimoErro = `HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 200)}`;
+          } else {
+            data = (await response.json()) as PrecoPromocionalPagina;
+            break;
+          }
+        } catch (error) {
+          ultimoErro = error instanceof Error ? error.message : String(error);
+        }
+        if (tentativa < MAX_TENTATIVAS) {
+          options.onProgress?.({ chunkIndex, totalChunks, page, produtosLidos: produtosVistos.size, promocoes: linhas.length, tentativa, erro: ultimoErro });
+          await new Promise((r) => setTimeout(r, tentativa * 3000));
+        }
+      }
+      if (!data) {
+        throw new Error(`Erro ao buscar precos promocionais no TOTVS (lote ${chunkIndex}, pagina ${page}) apos ${MAX_TENTATIVAS} tentativas: ${ultimoErro}`);
+      }
+
+      for (const item of data.items || []) {
+        if (item.productCode == null) continue;
+        produtosVistos.add(item.productCode);
+        for (const preco of item.prices || []) {
+          if (preco.branchCode !== branchCode || !priceCodes.includes(preco.priceCode)) continue;
+          if (!preco.promotionalPrice || preco.promotionalPrice <= 0) continue;
+          linhas.push({ productCode: item.productCode, priceCode: preco.priceCode, preco: preco.price ?? null, promocional: preco.promotionalPrice });
+        }
+      }
+      options.onProgress?.({ chunkIndex, totalChunks, page, produtosLidos: produtosVistos.size, promocoes: linhas.length });
+      hasNext = !!data.hasNext;
+      page += 1;
+    }
+  }
+
+  if (!dryRun) {
+    await ensurePrecoPromocionalTables();
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`DELETE FROM produto_precos_promocionais WHERE branch_code = ${branchCode}`;
+      for (let i = 0; i < linhas.length; i += 2000) {
+        const lote = linhas.slice(i, i + 2000);
+        await tx.$executeRaw`
+          INSERT INTO produto_precos_promocionais (product_code, branch_code, price_code, preco, preco_promocional, synced_at)
+          VALUES ${Prisma.join(lote.map((l) => Prisma.sql`(${l.productCode}, ${branchCode}, ${l.priceCode}, ${l.preco}, ${l.promocional}, now())`))}
+        `;
+      }
+      await tx.$executeRaw`
+        INSERT INTO produto_precos_promocionais_sync (branch_code, sincronizado_em, produtos, promocoes)
+        VALUES (${branchCode}, now(), ${produtosVistos.size}, ${linhas.length})
+        ON CONFLICT (branch_code) DO UPDATE SET sincronizado_em = EXCLUDED.sincronizado_em,
+          produtos = EXCLUDED.produtos, promocoes = EXCLUDED.promocoes
+      `;
+    }, { timeout: 120000 });
+  }
+
+  return { branchCode, produtos: produtosVistos.size, promocoes: linhas.length, duracaoMs: Date.now() - startedAt, dryRun };
+}
+
+// Job em memoria pro botao das Configuracoes PCP (mesmo motivo do job de custo/preco:
+// a varredura passa do timeout do proxy do Render se rodar dentro do request).
+export interface PrecosPromocionaisSyncJobState {
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  finishedAt?: string;
+  progress: SyncPrecosPromocionaisProgress | null;
+  resultado?: SyncPrecosPromocionaisResumo;
+  erro?: string;
+}
+
+let precosPromocionaisSyncJob: PrecosPromocionaisSyncJobState | null = null;
+
+export function getPrecosPromocionaisSyncJobStatus(): PrecosPromocionaisSyncJobState | null {
+  return precosPromocionaisSyncJob;
+}
+
+export function iniciarPrecosPromocionaisSyncJob(): { jaEmAndamento: boolean } {
+  if (precosPromocionaisSyncJob?.status === 'running') return { jaEmAndamento: true };
+  precosPromocionaisSyncJob = { status: 'running', startedAt: new Date().toISOString(), progress: null };
+  syncPrecosPromocionais({
+    onProgress: (event) => {
+      if (precosPromocionaisSyncJob) precosPromocionaisSyncJob.progress = event;
+    },
+  })
+    .then((resultado) => {
+      if (!precosPromocionaisSyncJob) return;
+      precosPromocionaisSyncJob.status = 'done';
+      precosPromocionaisSyncJob.finishedAt = new Date().toISOString();
+      precosPromocionaisSyncJob.resultado = resultado;
+    })
+    .catch((error) => {
+      if (!precosPromocionaisSyncJob) return;
+      precosPromocionaisSyncJob.status = 'error';
+      precosPromocionaisSyncJob.finishedAt = new Date().toISOString();
+      precosPromocionaisSyncJob.erro = error instanceof Error ? error.message : String(error);
+    });
+  return { jaEmAndamento: false };
+}
+
 interface OrderItemApi {
   productCode: number;
   quantity?: number | null;
