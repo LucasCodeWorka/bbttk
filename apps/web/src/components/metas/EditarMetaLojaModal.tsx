@@ -21,6 +21,9 @@ import {
   COMISSAO_VAZIA,
   comissaoVazia,
   pesoVendedor,
+  participaDivisao,
+  calcularRestanteLoja,
+  valorEfetivoVendedor,
 } from './VendedoresLojaTable';
 
 interface EditarMetaLojaModalProps {
@@ -91,6 +94,7 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
             comissaoAtiva: !comissaoVazia(overrideDeMeta(metaExistente)),
             comissaoOverride: overrideDeMeta(metaExistente),
             isGerente: false,
+            isGeral: !!v.is_geral,
           };
         });
 
@@ -125,7 +129,7 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
   }, [isOpen, branchCode, ano, mes]);
 
   function trocarTipo(novoTipo: TipoDistribuicao) {
-    const temEdicaoManual = vendedores.some((v) => !v.isGerente && v.editadaManualmente);
+    const temEdicaoManual = vendedores.some((v) => participaDivisao(v) && v.editadaManualmente);
     if (temEdicaoManual && novoTipo !== 'manual') {
       const ok = confirm('Existem valores ajustados manualmente. Ao trocar o tipo de distribuição, esses valores serão substituídos. Deseja continuar?');
       if (!ok) return;
@@ -135,18 +139,18 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
 
   function restaurarCalculoAutomatico() {
     setVendedores((prev) => {
-      const regulares = prev.filter((v) => !v.isGerente);
-      if (regulares.length === 0 || tipo === 'manual') return prev.map((v) => (v.isGerente ? v : { ...v, editadaManualmente: false }));
+      const regulares = prev.filter(participaDivisao);
+      if (regulares.length === 0 || tipo === 'manual') return prev.map((v) => (participaDivisao(v) ? { ...v, editadaManualmente: false } : v));
       const pesos = regulares.map((v) => pesoVendedor(v, tipo));
       const valores = distribuirValor(lojaValor, pesos);
       const valorPorCodigo = new Map(regulares.map((v, i) => [v.sellerCode, valores[i]]));
-      return prev.map((v) => (v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }));
+      return prev.map((v) => (participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v));
     });
   }
 
   function redistribuirRestante() {
     setVendedores((prev) => {
-      const regulares = prev.filter((v) => !v.isGerente);
+      const regulares = prev.filter(participaDivisao);
       const editadas = regulares.filter((v) => v.editadaManualmente);
       const naoEditadas = regulares.filter((v) => !v.editadaManualmente);
       if (naoEditadas.length === 0) return prev;
@@ -182,24 +186,24 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
       if (!alvo) return prev;
       const vaiVirarGerente = !alvo.isGerente;
       const atualizados = prev.map((v) => ({ ...v, isGerente: v.sellerCode === sellerCode ? vaiVirarGerente : false }));
-      const regulares = atualizados.filter((v) => !v.isGerente);
+      const regulares = atualizados.filter(participaDivisao);
       if (regulares.length === 0) return atualizados;
       const pesos = regulares.map((v) => pesoVendedor(v, tipo));
       const valores = distribuirValor(lojaValor, pesos);
       const valorPorCodigo = new Map(regulares.map((v, i) => [v.sellerCode, valores[i]]));
-      return atualizados.map((v) => (v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }));
+      return atualizados.map((v) => (participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v));
     });
   }
 
   function removerVendedor(sellerCode: number) {
     setVendedores((prev) => {
       const atuais = prev.filter((v) => v.sellerCode !== sellerCode);
-      const regulares = atuais.filter((v) => !v.isGerente);
+      const regulares = atuais.filter(participaDivisao);
       if (regulares.length === 0 || tipo === 'manual') return atuais;
       const pesos = regulares.map((v) => pesoVendedor(v, tipo));
       const valores = distribuirValor(lojaValor, pesos);
       const valorPorCodigo = new Map(regulares.map((v, i) => [v.sellerCode, valores[i]]));
-      return atuais.map((v) => (v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }));
+      return atuais.map((v) => (participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v));
     });
   }
 
@@ -207,20 +211,20 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
     setLojaComissaoOverride((prev) => ({ ...prev, [nivel]: valorStr === '' ? null : parseFloat(valorStr) }));
   }
 
-  const regulares = vendedores.filter((v) => !v.isGerente);
-  const temGerente = vendedores.some((v) => v.isGerente);
-  const somaRegulares = regulares.reduce((s, v) => s + v.valor, 0);
+  const regulares = vendedores.filter(participaDivisao);
+  const restanteLoja = calcularRestanteLoja(lojaValor, vendedores, modoGerente);
 
   const erros = useMemo(() => {
     const lista: string[] = [];
     if (!(lojaValor > 0)) lista.push('Informe o valor total da meta da loja.');
     if (lojaValor < 0) lista.push('O valor da loja não pode ser negativo.');
     if (regulares.length > 0) {
-      const diferenca = somaRegulares - lojaValor;
-      const excedeuComGerente = temGerente && modoGerente === 'restante' && diferenca > 0.02;
-      const naoBateuSemGerenteRestante = (!temGerente || modoGerente !== 'restante') && Math.abs(diferenca) > 0.02;
-      if (excedeuComGerente) lista.push(`Os vendedores somam ${formatMoney(diferenca)} a mais que a meta da loja.`);
-      else if (naoBateuSemGerenteRestante) {
+      // Gerente em "assume o restante" ou o GERAL absorvem a sobra: so e erro passar da meta.
+      const diferenca = -restanteLoja.sobra;
+      const excedeuComAbsorcao = restanteLoja.absorveSobra && diferenca > 0.02;
+      const naoBateuSemAbsorcao = !restanteLoja.absorveSobra && Math.abs(diferenca) > 0.02;
+      if (excedeuComAbsorcao) lista.push(`Os vendedores somam ${formatMoney(diferenca)} a mais que a meta da loja.`);
+      else if (naoBateuSemAbsorcao) {
         lista.push(
           diferenca < 0
             ? `Ainda faltam ${formatMoney(-diferenca)} para distribuir entre os vendedores.`
@@ -230,18 +234,22 @@ export function EditarMetaLojaModal({ isOpen, onClose, ano, mes, branchCode, bra
       if (regulares.some((v) => v.valor < 0)) lista.push('Há um vendedor com valor negativo.');
     }
     return lista;
-  }, [lojaValor, regulares, somaRegulares, temGerente, modoGerente]);
+  }, [lojaValor, regulares, restanteLoja]);
 
   async function handleSalvar() {
     if (!token || erros.length > 0) return;
     setSalvando(true);
     try {
-      const vendedoresPayload: SalvarDistribuicaoVendedor[] = vendedores.map((v) => ({
-        sellerCode: v.sellerCode,
-        valor: v.isGerente ? (modoGerente === 'restante' ? Math.max(0, lojaValor - somaRegulares) : lojaValor) : v.valor,
-        comissaoOverride: v.comissaoAtiva && !comissaoVazia(v.comissaoOverride) ? v.comissaoOverride : null,
-        isGerente: v.isGerente,
-      }));
+      // GERAL sem sobra nao vira meta zerada (e, com sincronizarVendedores, uma meta
+      // antiga dele e removida).
+      const vendedoresPayload: SalvarDistribuicaoVendedor[] = vendedores
+        .filter((v) => !v.isGeral || restanteLoja.valorGeral > 0)
+        .map((v) => ({
+          sellerCode: v.sellerCode,
+          valor: valorEfetivoVendedor(v, restanteLoja),
+          comissaoOverride: v.comissaoAtiva && !comissaoVazia(v.comissaoOverride) ? v.comissaoOverride : null,
+          isGerente: v.isGerente,
+        }));
 
       await metasApi.salvarDistribuicao(token, {
         ano,

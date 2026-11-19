@@ -4,6 +4,7 @@ import { ProdutoFiltro } from '../services/vendas.service.js';
 import * as produtosService from '../services/produtos.service.js';
 import { syncClassificacaoOperacoes, garantirClassificacaoAtualizada } from '../services/totvs.service.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.middleware.js';
+import { GERAL_SELLER_CODE } from '../config/constants.js';
 
 const router = Router();
 
@@ -387,6 +388,9 @@ router.get('/vendedores-lista', async (req: Request, res: Response) => {
   try {
     const soAtivos = req.query.ativos === 'true';
     const nomes = await vendasService.getVendedoresMap(soAtivos);
+    // Selecao de candidato (ativos=true): o GERAL nao e pessoa, so aparece no cadastro
+    // por loja como destino do restante (ver GERAL_SELLER_CODE).
+    if (soAtivos) nomes.delete(GERAL_SELLER_CODE);
     const vendedores = Array.from(nomes.entries())
       .map(([code, name]) => ({ code, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -413,16 +417,18 @@ router.get('/vendedores-por-filial/:branchCode/:ano/:mes', async (req: Request, 
     const endDate = new Date(ano, mes - 1, 0);
 
     const vinculadas = await vendasService.getVendedoresVinculadosLoja(branchCode);
-    const vendas = await vendasService.getVendasVendedor(startDate, endDate, [branchCode]);
+    const vendas = await vendasService.getVendasVendedor(startDate, endDate, [branchCode], undefined, undefined, true);
     const faturamentoMap = new Map(vendas.map(v => [v.seller_code, v.faturamento]));
 
+    // GERAL vai sempre por ultimo: nao entra na divisao, so recebe o restante.
     const vendedoresComNomes = vinculadas
       .map(v => ({
         seller_code: v.seller_code,
         seller_name: v.seller_name,
         faturamento: faturamentoMap.get(v.seller_code) || 0,
+        is_geral: v.seller_code === GERAL_SELLER_CODE,
       }))
-      .sort((a, b) => b.faturamento - a.faturamento);
+      .sort((a, b) => Number(a.is_geral) - Number(b.is_geral) || b.faturamento - a.faturamento);
 
     res.json({
       periodo: {

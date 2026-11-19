@@ -29,6 +29,12 @@ export const EXCLUDED_BRANCH_CODES = new Set<number>([]);
 // como candidato a meta/comissão nem poluir ranking de vendedores.
 export const EXCLUDED_SELLER_CODES = new Set<number>([1, 50, 51]);
 
+// Excecao do GERAL (50) so no CADASTRO de metas (pedido de 18/11/2026): ele aparece em
+// toda loja como destino do restante da meta - quando a loja nao consegue dividir tudo
+// entre as vendedoras (falta, folga, afastamento), a sobra fica com o GERAL. Continua
+// fora de ranking/comissao/lista de vendedores (EXCLUDED_SELLER_CODES acima).
+export const GERAL_SELLER_CODE = 50;
+
 // branch_code sintetico (nao existe na tabela `branches` do TOTVS) usado so na tabela
 // `metas` pra representar vendedoras "volante" - sem loja fixa, meta calculada sobre o
 // faturamento somado de TODAS as lojas onde ela vendeu no mes. Nao entra em FILIAIS de

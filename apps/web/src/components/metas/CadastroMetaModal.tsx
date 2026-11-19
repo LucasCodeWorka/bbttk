@@ -27,6 +27,9 @@ import {
   COMISSAO_VAZIA,
   comissaoVazia,
   pesoVendedor,
+  participaDivisao,
+  calcularRestanteLoja,
+  valorEfetivoVendedor,
 } from './VendedoresLojaTable';
 
 type Aba = 'lojas' | 'volante';
@@ -290,12 +293,16 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
           comissaoAtiva: false,
           comissaoOverride: { ...COMISSAO_VAZIA },
           isGerente: false,
+          isGeral: !!v.is_geral,
         }));
 
-        if (vendedoresBase.length > 0 && loja) {
-          const pesos = vendedoresBase.map((v) => pesoVendedor(v, tipo));
+        // O GERAL fica fora da divisao: comeca com a sobra (zero, se as vendedoras
+        // dividirem tudo) e cresce conforme a meta delas for reduzida.
+        const divididos = vendedoresBase.filter(participaDivisao);
+        if (divididos.length > 0 && loja) {
+          const pesos = divididos.map((v) => pesoVendedor(v, tipo));
           const valores = distribuirValor(loja.valor, pesos);
-          vendedoresBase.forEach((v, i) => (v.valor = valores[i]));
+          divididos.forEach((v, i) => (v.valor = valores[i]));
         }
 
         setTipoVendedoresPorLoja((prev) => ({ ...prev, [branchCode]: tipo }));
@@ -313,7 +320,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
 
   function trocarTipoVendedores(branchCode: number, novoTipo: TipoDistribuicao) {
     const vendedores = vendedoresPorLoja[branchCode] || [];
-    const temEdicaoManual = vendedores.some((v) => !v.isGerente && v.editadaManualmente);
+    const temEdicaoManual = vendedores.some((v) => participaDivisao(v) && v.editadaManualmente);
     if (temEdicaoManual && novoTipo !== 'manual') {
       const ok = confirm('Existem valores ajustados manualmente. Ao trocar o tipo de distribuição, esses valores serão substituídos. Deseja continuar?');
       if (!ok) return;
@@ -324,7 +331,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
     if (novoTipo === 'manual') {
       setVendedoresPorLoja((prev) => ({
         ...prev,
-        [branchCode]: (prev[branchCode] || []).map((v) => (v.isGerente ? v : { ...v, editadaManualmente: false })),
+        [branchCode]: (prev[branchCode] || []).map((v) => (participaDivisao(v) ? { ...v, editadaManualmente: false } : v)),
       }));
       return;
     }
@@ -333,14 +340,14 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
     if (!loja) return;
     setVendedoresPorLoja((prev) => {
       const atuais = prev[branchCode] || [];
-      const regulares = atuais.filter((v) => !v.isGerente);
+      const regulares = atuais.filter(participaDivisao);
       if (regulares.length === 0) return prev;
       const pesos = regulares.map((v) => pesoVendedor(v, novoTipo));
       const valores = distribuirValor(loja.valor, pesos);
       const valorPorCodigo = new Map(regulares.map((v, i) => [v.sellerCode, valores[i]]));
       return {
         ...prev,
-        [branchCode]: atuais.map((v) => (v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false })),
+        [branchCode]: atuais.map((v) => (participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v)),
       };
     });
   }
@@ -391,7 +398,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
         isGerente: v.sellerCode === sellerCode ? vaiVirarGerente : false,
       }));
 
-      const regulares = atualizados.filter((v) => !v.isGerente);
+      const regulares = atualizados.filter(participaDivisao);
       if (regulares.length === 0) return { ...prev, [branchCode]: atualizados };
 
       const pesos = regulares.map((v) => pesoVendedor(v, tipo));
@@ -401,7 +408,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
       return {
         ...prev,
         [branchCode]: atualizados.map((v) =>
-          v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }
+          participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v
         ),
       };
     });
@@ -418,7 +425,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
 
     setVendedoresPorLoja((prev) => {
       const atuais = (prev[branchCode] || []).filter((v) => v.sellerCode !== sellerCode);
-      const regulares = atuais.filter((v) => !v.isGerente);
+      const regulares = atuais.filter(participaDivisao);
       if (regulares.length === 0 || tipo === 'manual') return { ...prev, [branchCode]: atuais };
 
       const pesos = regulares.map((v) => pesoVendedor(v, tipo));
@@ -428,7 +435,7 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
       return {
         ...prev,
         [branchCode]: atuais.map((v) =>
-          v.isGerente ? v : { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false }
+          participaDivisao(v) ? { ...v, valor: valorPorCodigo.get(v.sellerCode) ?? v.valor, editadaManualmente: false } : v
         ),
       };
     });
@@ -530,11 +537,8 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
     const distribuidoVendedores = lojas.reduce((sum, l) => {
       const vs = vendedoresPorLoja[l.branchCode];
       if (!vs) return sum;
-      const regularesValor = vs.filter((v) => !v.isGerente).reduce((s, v) => s + v.valor, 0);
-      const temGerente = vs.some((v) => v.isGerente);
-      const modo = modoGerentePorLoja[l.branchCode] || 'cheio';
-      const gerenteValor = temGerente ? (modo === 'restante' ? Math.max(0, l.valor - regularesValor) : l.valor) : 0;
-      return sum + regularesValor + gerenteValor;
+      const r = calcularRestanteLoja(l.valor, vs, modoGerentePorLoja[l.branchCode] || 'cheio');
+      return sum + r.distribuido + r.valorGerente + r.valorGeral;
     }, 0);
     const diferenca = totalValue - distribuidoLojas;
 
@@ -612,14 +616,13 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
         if (l.valor < 0) erros.push(`O valor da loja ${l.branchName} não pode ser negativo.`);
         const vendedores = vendedoresPorLoja[l.branchCode];
         if (vendedores && vendedores.length > 0) {
-          const regulares = vendedores.filter((v) => !v.isGerente);
-          const gerenteAssumeRestante = vendedores.some((v) => v.isGerente) && (modoGerentePorLoja[l.branchCode] || 'cheio') === 'restante';
+          const regulares = vendedores.filter(participaDivisao);
+          const restanteLoja = calcularRestanteLoja(l.valor, vendedores, modoGerentePorLoja[l.branchCode] || 'cheio');
           if (regulares.length > 0) {
-            const somaVendedores = regulares.reduce((s, v) => s + v.valor, 0);
-            const faltaLoja = l.valor - somaVendedores;
-            if (gerenteAssumeRestante) {
-              // Nesse modo a gerente absorve a sobra - so e erro se os regulares
-              // somarem MAIS que a meta da loja (sobra negativa).
+            const faltaLoja = restanteLoja.sobra;
+            if (restanteLoja.absorveSobra) {
+              // A gerente ("assume o restante") ou o GERAL absorve a sobra - so e erro
+              // se as vendedoras somarem MAIS que a meta da loja (sobra negativa).
               if (faltaLoja < -0.02) {
                 erros.push(`Os vendedores da loja ${l.branchName} somam ${formatMoney(-faltaLoja)} a mais que a meta da loja.`);
               }
@@ -663,14 +666,16 @@ export function CadastroMetaModal({ isOpen, onClose, ano, mes, niveis, onSaved }
           .filter((l) => l.selecionada)
           .map((l) => {
             const vendedoresLoja = vendedoresPorLoja[l.branchCode] || [];
-            const somaRegulares = vendedoresLoja.filter((v) => !v.isGerente).reduce((s, v) => s + v.valor, 0);
-            const modoGerente = modoGerentePorLoja[l.branchCode] || 'cheio';
-            const vendedoresPayload: SalvarDistribuicaoVendedor[] = vendedoresLoja.map((v) => ({
-              sellerCode: v.sellerCode,
-              valor: v.isGerente ? (modoGerente === 'restante' ? Math.max(0, l.valor - somaRegulares) : l.valor) : v.valor,
-              comissaoOverride: v.comissaoAtiva && !comissaoVazia(v.comissaoOverride) ? v.comissaoOverride : null,
-              isGerente: v.isGerente,
-            }));
+            const restanteLoja = calcularRestanteLoja(l.valor, vendedoresLoja, modoGerentePorLoja[l.branchCode] || 'cheio');
+            // GERAL sem sobra nao vira meta zerada no banco.
+            const vendedoresPayload: SalvarDistribuicaoVendedor[] = vendedoresLoja
+              .filter((v) => !v.isGeral || restanteLoja.valorGeral > 0)
+              .map((v) => ({
+                sellerCode: v.sellerCode,
+                valor: valorEfetivoVendedor(v, restanteLoja),
+                comissaoOverride: v.comissaoAtiva && !comissaoVazia(v.comissaoOverride) ? v.comissaoOverride : null,
+                isGerente: v.isGerente,
+              }));
 
             return {
               branchCode: l.branchCode,

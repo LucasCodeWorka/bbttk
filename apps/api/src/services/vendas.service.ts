@@ -1,11 +1,13 @@
 import { prisma } from '../config/database.js';
 import { Prisma } from '@prisma/client';
-import { FILIAIS, EXCLUDED_BRANCH_CODES, EXCLUDED_SELLER_CODES } from '../config/constants.js';
+import { FILIAIS, EXCLUDED_BRANCH_CODES, EXCLUDED_SELLER_CODES, GERAL_SELLER_CODE } from '../config/constants.js';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as metasService from './metas.service.js';
 
 const EXCLUDED_BRANCH_LIST = [...EXCLUDED_BRANCH_CODES];
 const EXCLUDED_SELLER_LIST = [...EXCLUDED_SELLER_CODES];
+// Mesma lista sem o GERAL - so pro cadastro de metas, ver GERAL_SELLER_CODE.
+const EXCLUDED_SELLER_LIST_SEM_GERAL = EXCLUDED_SELLER_LIST.filter((c) => c !== GERAL_SELLER_CODE);
 
 // Classificacao de operacao vem do cache local (classificacao_operacoes, sincronizado
 // direto de general/v2/operations na API do TOTVS) em vez de lista de operation_code
@@ -76,6 +78,7 @@ const STORE_BRANCH_FILTER = EXCLUDED_BRANCH_LIST.length > 0
 // Filtro reutilizado nos relatorios POR VENDEDOR (nao usado nos totais por loja) - tira os
 // seller_code que sao bucket generico do TOTVS, ver EXCLUDED_SELLER_CODES.
 const SELLER_FILTER = Prisma.sql`ti.seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST)})`;
+const SELLER_FILTER_COM_GERAL = Prisma.sql`ti.seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST_SEM_GERAL)})`;
 
 interface VendasFilial {
   branch_code: number;
@@ -834,12 +837,15 @@ export async function getVendasMensais(
 }
 
 // Vendas por vendedor
+// incluirGeral=true so no cadastro de metas (media 3m do GERAL na loja) - ver
+// GERAL_SELLER_CODE. Ranking/comissao seguem sem ele.
 export async function getVendasVendedor(
   startDate: Date,
   endDate: Date,
   branchCodes?: number[],
   produtoFiltro?: ProdutoFiltro,
-  diasExcluidos?: DiasExcluidos
+  diasExcluidos?: DiasExcluidos,
+  incluirGeral = false
 ): Promise<VendasVendedor[]> {
   const branchFilter = buildBranchFilter(branchCodes);
   const produtoFilter = buildProdutoFilter(produtoFiltro);
@@ -863,7 +869,7 @@ export async function getVendasVendedor(
     ${OPERACAO_JOIN}
     WHERE ${buildPeriodoFilter(startDate, endDate, diasExcluidos)}
       AND t.status = 4
-      AND ${SELLER_FILTER}
+      AND ${incluirGeral ? SELLER_FILTER_COM_GERAL : SELLER_FILTER}
       AND ti.seller_code IS NOT NULL
       AND ${SALE_OPERATION_FILTER}
       AND ${STORE_BRANCH_FILTER}
@@ -964,7 +970,11 @@ export async function getVendedoresMap(soAtivos = false): Promise<Map<number, st
   });
   const map = new Map<number, string>();
   for (const r of rows) {
-    if (r.seller_name && !EXCLUDED_SELLER_CODES.has(r.seller_code)) map.set(r.seller_code, r.seller_name);
+    // GERAL fica no mapa so pra resolver nome de meta ja salva pra ele (ver
+    // GERAL_SELLER_CODE); /vendedores-lista?ativos=true tira ele da selecao.
+    if (r.seller_name && (!EXCLUDED_SELLER_CODES.has(r.seller_code) || r.seller_code === GERAL_SELLER_CODE)) {
+      map.set(r.seller_code, r.seller_name);
+    }
   }
   return map;
 }
@@ -976,13 +986,15 @@ export async function getVendedoresMap(soAtivos = false): Promise<Map<number, st
 // loja a so oferecer quem ja vendeu. Pode trazer codigo "tecnico" (ex: canal online da
 // mesma pessoa) que nao deveria virar meta - o usuario remove manualmente na tela
 // ("desconsiderar vendedora" no CadastroMetaModal), nao tentamos adivinhar por nome.
+// O GERAL (50) entra de proposito - e o destino do restante da meta da loja (ver
+// GERAL_SELLER_CODE); o 1 e o 51 continuam fora.
 export async function getVendedoresVinculadosLoja(branchCode: number): Promise<{ seller_code: number; seller_name: string }[]> {
   return prisma.$queryRaw<{ seller_code: number; seller_name: string }[]>`
     SELECT seller_code, seller_name
     FROM dim_vendedor
     WHERE is_inactive IS NOT TRUE
       AND seller_name IS NOT NULL
-      AND seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST)})
+      AND seller_code NOT IN (${Prisma.join(EXCLUDED_SELLER_LIST_SEM_GERAL)})
       AND EXISTS (
         SELECT 1 FROM jsonb_array_elements(dados_api->'branchInformations') AS bi
         WHERE (bi->>'branchCode')::int = ${branchCode}

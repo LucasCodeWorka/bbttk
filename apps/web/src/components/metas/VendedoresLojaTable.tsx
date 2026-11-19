@@ -25,6 +25,8 @@ export interface VendedorState {
   comissaoAtiva: boolean;
   comissaoOverride: ComissaoOverrideData;
   isGerente: boolean;
+  // Vendedor GERAL do TOTVS: nao entra na divisao, recebe o que sobrar da loja.
+  isGeral?: boolean;
 }
 
 // Formato minimo de loja que a tabela precisa - CadastroMetaModal passa seu LojaState
@@ -54,6 +56,55 @@ export function comissaoVazia(o: ComissaoOverrideData): boolean {
 
 export function pesoVendedor(v: VendedorState, tipo: TipoDistribuicao): number {
   return tipo === 'historico' ? v.historico3m : 1;
+}
+
+// Quem entra na divisao automatica (igual/historico) da meta da loja: a gerente sai
+// (meta cheia ou restante) e o GERAL tambem (ele so recebe o que sobrar).
+export function participaDivisao(v: VendedorState): boolean {
+  return !v.isGerente && !v.isGeral;
+}
+
+export interface RestanteLoja {
+  // Soma das vendedoras que dividem a meta (sem gerente e sem GERAL).
+  distribuido: number;
+  // Meta da loja menos `distribuido` (negativo = vendedoras passaram da meta).
+  sobra: number;
+  valorGerente: number;
+  valorGeral: number;
+  // Alguem absorve a sobra (gerente em "assume o restante" ou o GERAL) - nesse caso
+  // so e erro a sobra ficar negativa.
+  absorveSobra: boolean;
+  quemAbsorve: 'gerente' | 'geral' | null;
+}
+
+// Regra unica da sobra, usada pela tabela, pelo resumo, pela validacao e pelo payload
+// dos dois modais. Se a gerente esta em "assume o restante", a sobra continua com ela
+// (comportamento que ja existia) e o GERAL fica com 0; senao, a sobra vai pro GERAL.
+export function calcularRestanteLoja(
+  lojaValor: number,
+  vendedores: VendedorState[],
+  modoGerente: 'cheio' | 'restante'
+): RestanteLoja {
+  const distribuido = vendedores.filter(participaDivisao).reduce((s, v) => s + v.valor, 0);
+  const sobra = lojaValor - distribuido;
+  const temGerente = vendedores.some((v) => v.isGerente);
+  const temGeral = vendedores.some((v) => v.isGeral);
+  const gerenteAbsorve = temGerente && modoGerente === 'restante';
+  const quemAbsorve = gerenteAbsorve ? 'gerente' : temGeral ? 'geral' : null;
+  return {
+    distribuido,
+    sobra,
+    valorGerente: temGerente ? (gerenteAbsorve ? Math.max(0, sobra) : lojaValor) : 0,
+    valorGeral: quemAbsorve === 'geral' ? Math.max(0, Math.round(sobra * 100) / 100) : 0,
+    absorveSobra: quemAbsorve !== null,
+    quemAbsorve,
+  };
+}
+
+export function valorEfetivoVendedor(v: VendedorState, restante: RestanteLoja): number {
+  if (v.isGerente) return restante.valorGerente;
+  if (v.isGeral) return restante.valorGeral;
+  return v.valor;
 }
 
 interface VendedoresLojaTableProps {
@@ -89,10 +140,8 @@ export function VendedoresLojaTable({
   onFechar,
   vendedorTag,
 }: VendedoresLojaTableProps) {
-  const regulares = vendedores.filter((v) => !v.isGerente);
-  const distribuido = regulares.reduce((s, v) => s + v.valor, 0);
-  const falta = loja.valor - distribuido;
-  const valorGerente = modoGerente === 'restante' ? Math.max(0, loja.valor - distribuido) : loja.valor;
+  const restante = calcularRestanteLoja(loja.valor, vendedores, modoGerente);
+  const { distribuido, sobra: falta } = restante;
 
   return (
     <div className="space-y-3">
@@ -120,17 +169,22 @@ export function VendedoresLojaTable({
           </thead>
           <tbody className="divide-y divide-gray-100">
             {vendedores.map((v) => {
-              const valorEfetivo = v.isGerente ? valorGerente : v.valor;
+              const valorEfetivo = valorEfetivoVendedor(v, restante);
               const participacao = loja.valor > 0 ? (valorEfetivo / loja.valor) * 100 : 0;
               const tag = vendedorTag?.(v.sellerCode);
               return (
                 <Fragment key={v.sellerCode}>
-                  <tr className={v.isGerente ? 'bg-purple-50' : ''}>
+                  <tr className={v.isGerente ? 'bg-purple-50' : v.isGeral ? 'bg-gray-50' : ''}>
                     <td className="px-3 py-1.5">
                       {v.sellerName}
                       {v.isGerente && (
                         <span className="ml-2 inline-block text-[10px] font-bold uppercase text-white bg-[var(--bbtk-purple)] rounded px-1.5 py-0.5">
                           Gerente
+                        </span>
+                      )}
+                      {v.isGeral && (
+                        <span className="ml-2 inline-block text-[10px] font-bold uppercase text-gray-700 bg-gray-200 rounded px-1.5 py-0.5">
+                          Recebe o restante
                         </span>
                       )}
                       {tag && (
@@ -148,18 +202,21 @@ export function VendedoresLojaTable({
                         min="0"
                         value={valorEfetivo}
                         onChange={(e) => onEditarValor(v.sellerCode, e.target.value)}
-                        disabled={v.isGerente}
+                        disabled={v.isGerente || v.isGeral}
+                        title={v.isGeral ? 'Calculado: meta da loja menos o que foi dividido entre as vendedoras' : undefined}
                         className="w-full"
                       />
                     </td>
                     <td className="px-3 py-1.5 text-center">
-                      <button
-                        type="button"
-                        onClick={() => onToggleGerente(v.sellerCode)}
-                        className={`text-xs hover:underline ${v.isGerente ? 'text-[var(--bbtk-purple)] font-semibold' : 'text-gray-400'}`}
-                      >
-                        {v.isGerente ? 'Remover gerente' : 'Definir como gerente'}
-                      </button>
+                      {!v.isGeral && (
+                        <button
+                          type="button"
+                          onClick={() => onToggleGerente(v.sellerCode)}
+                          className={`text-xs hover:underline ${v.isGerente ? 'text-[var(--bbtk-purple)] font-semibold' : 'text-gray-400'}`}
+                        >
+                          {v.isGerente ? 'Remover gerente' : 'Definir como gerente'}
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       {!v.isGerente && (
@@ -173,6 +230,13 @@ export function VendedoresLojaTable({
                       )}
                     </td>
                   </tr>
+                  {v.isGeral && restante.quemAbsorve === 'gerente' && (
+                    <tr>
+                      <td colSpan={6} className="px-3 pb-1.5 text-[11px] text-gray-500">
+                        A gerente está em &quot;Assume o restante&quot;: a sobra fica com ela e o GERAL fica com zero.
+                      </td>
+                    </tr>
+                  )}
                   {v.isGerente && (
                     <tr>
                       <td colSpan={6} className="px-3 pb-1.5">
@@ -229,11 +293,13 @@ export function VendedoresLojaTable({
 
       <div className="flex items-center justify-between text-xs">
         <span>Distribuído entre vendedores: <strong>{formatMoney(distribuido)}</strong></span>
-        {vendedores.some((v) => v.isGerente) && modoGerente === 'restante' ? (
+        {restante.absorveSobra ? (
           <span className={falta < -0.02 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
             {falta < -0.02
               ? `Vendedores ultrapassam a meta da loja em ${formatMoney(-falta)}`
-              : `Gerente assume o restante: ${formatMoney(valorGerente)}`}
+              : restante.quemAbsorve === 'gerente'
+                ? `Gerente assume o restante: ${formatMoney(restante.valorGerente)}`
+                : `GERAL recebe o restante: ${formatMoney(restante.valorGeral)}`}
           </span>
         ) : (
           <span className={Math.abs(falta) < 0.02 ? 'text-green-600 font-semibold' : 'text-yellow-700 font-semibold'}>

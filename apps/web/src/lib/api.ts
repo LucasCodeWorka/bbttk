@@ -663,6 +663,8 @@ export interface VendedorPorFilial {
   seller_code: number;
   seller_name: string;
   faturamento: number;
+  // Vendedor GERAL do TOTVS (50): recebe o restante da meta da loja.
+  is_geral?: boolean;
 }
 
 export interface VendedoresPorFilialResponse {
