@@ -1,0 +1,5 @@
+# sessao do navegador (contem o token de login), resultados e configuracao local
+perfil/
+saida/
+.env
+__pycache__/
