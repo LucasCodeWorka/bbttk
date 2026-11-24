@@ -91,12 +91,17 @@ def _prints(bloco: dict) -> list[dict]:
     return [{"arquivo": f.name, "legenda": f.stem} for f in sorted(pasta.glob("*.png"))]
 
 
-def montar_html(blocos: list[dict], app: str, cabecalho_devolutiva: str = "") -> str:
+def montar_html(blocos: list[dict], app: str, cabecalho_devolutiva: str = "",
+                titulo: str = "Conferência da devolutiva - BI Estoque", intro_html: str = "") -> str:
+    """`intro_html` (ja em HTML, confiavel) entra logo depois do titulo: usado no documento
+    de aprovacao, que abre com as decisoes e o quadro antes x depois."""
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
     partes = [f"<!doctype html><html><head><meta charset='utf-8'><style>{CSS}</style></head><body>"]
-    partes.append("<h1>Conferência da devolutiva - BI Estoque</h1>")
-    partes.append(f"<div class='meta'>Conferido em {agora} · Tela: {_e(app)}"
+    partes.append(f"<h1>{_e(titulo)}</h1>")
+    partes.append(f"<div class='meta'>Gerado em {agora} · Tela: {_e(app)}"
                   + (f"<br>{_e(cabecalho_devolutiva)}" if cabecalho_devolutiva else "") + "</div>")
+    if intro_html:
+        partes.append(intro_html)
 
     partes.append("<h3>Resumo</h3><table class='resumo'><tr><th>Ponto</th><th>Resultado</th><th>Observação</th></tr>")
     for b in blocos:
@@ -107,14 +112,14 @@ def montar_html(blocos: list[dict], app: str, cabecalho_devolutiva: str = "") ->
             obs = v.get("resumo", "")
         else:
             res, obs = "Só evidência (sem Codex)", ""
-        partes.append(f"<tr><td>{s['ponto']}. {_e(s['titulo'])}</td><td>{_e(res)}</td><td>{_e(obs)}</td></tr>")
+        partes.append(f"<tr><td>{_e(s.get('rotulo') or str(s['ponto']) + '. ' + s['titulo'])}</td><td>{_e(res)}</td><td>{_e(obs)}</td></tr>")
     partes.append("</table>")
     partes.append("<p class='meta'>Legenda: ✅ OK = a tela atende · ❌ Divergente = a tela mostra outra coisa · "
                   "⚠️ Não verificável = regra de dado que a tela sozinha não prova (conferida no banco à parte).</p>")
 
     for i, b in enumerate(blocos):
         s, ev, v = b["secao"], b["evid"] or {}, b["veredito"]
-        partes.append(f"<h2 class='quebra'>Ponto {s['ponto']}: {_e(s['titulo'])}</h2>")
+        partes.append(f"<h2 class='quebra'>{_e(s.get('rotulo') or 'Ponto ' + str(s['ponto']) + ': ' + s['titulo'])}</h2>")
         partes.append(f"<div class='meta'>{_e(ev.get('tela', ''))}</div>")
         partes.append("<table><tr><th style='width:34%'>Item da devolutiva</th><th>Situação</th><th>Evidência na tela</th></tr>")
         if v:
@@ -137,8 +142,9 @@ def montar_html(blocos: list[dict], app: str, cabecalho_devolutiva: str = "") ->
     return "".join(partes)
 
 
-def gerar(blocos: list[dict], app: str, destino: Path, cabecalho_devolutiva: str = "") -> Path:
-    conteudo = montar_html(blocos, app, cabecalho_devolutiva)
+def gerar(blocos: list[dict], app: str, destino: Path, cabecalho_devolutiva: str = "",
+          titulo: str = "Conferência da devolutiva - BI Estoque", intro_html: str = "") -> Path:
+    conteudo = montar_html(blocos, app, cabecalho_devolutiva, titulo, intro_html)
     destino.with_suffix(".html").write_text(conteudo, encoding="utf-8")
     with sync_playwright() as p:
         nav = p.chromium.launch(headless=True)

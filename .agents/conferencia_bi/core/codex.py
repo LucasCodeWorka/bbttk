@@ -47,32 +47,58 @@ Regras:
 - "resumo": uma ou duas frases para o desenvolvedor.
 """
 
+INSTRUCOES_LIVRE = """
+Esta devolutiva nao tem checklist pronto: sao paragrafos soltos do cliente. Monte voce
+o checklist, um item por PEDIDO verificavel (paragrafos de continuacao, exemplos e
+listas com "-" pertencem ao pedido anterior; um pedido com varias colunas pode virar
+um item por coluna). Em "item" escreva o pedido resumido em uma frase, fiel ao cliente.
+Pedido de funcionalidade que ainda nao existe na tela e "divergente" (pendente), nao
+"nao_verificavel". Se a evidencia explicar a reclamacao (ex.: um indicador de ordenacao
+lido como parte do titulo), diga isso na observacao.
+"""
 
-def conferir(secao: dict, evidencia: dict, pasta: Path, modelo: str | None = None) -> dict:
+
+def conferir(secao: dict, evidencia: dict, pasta: Path, modelo: str | None = None,
+             imagens: list[Path] | None = None) -> dict:
+    evidencia = {k: v for k, v in evidencia.items() if not k.startswith("_")}  # _prints e so para o PDF
+    if secao.get("livre"):
+        itens = "\n".join(it["texto"] for it in secao["itens"])
+        extra = INSTRUCOES_LIVRE + ("\nOs prints citados como [print N] estao anexados, na mesma ordem.\n" if imagens else "")
+    else:
+        itens = "\n".join(f"{i + 1}. {it['texto']}" for i, it in enumerate(secao["itens"]))
+        extra = ""
+    prompt = (
+        f"{INSTRUCOES}{extra}\n"
+        f"## {secao.get('rotulo') or secao['titulo']} (devolutiva)\n\n{itens}\n\n"
+        f"## Evidencia lida da tela (JSON)\n\n```json\n{json.dumps(evidencia, ensure_ascii=False, indent=1)}\n```\n"
+    )
+    return executar(prompt, SCHEMA, pasta, "veredito", modelo, imagens)
+
+
+def executar(prompt: str, schema: dict, pasta: Path, nome: str, modelo: str | None = None,
+             imagens: list[Path] | None = None) -> dict:
+    """Roda `codex exec` read-only com saida em JSON validado pelo schema.
+    Grava <nome>.json, prompt/schema/log com o mesmo prefixo (veredito -> prompt.md etc.)."""
     codex = shutil.which("codex")
     if not codex:
         raise SystemExit("Codex CLI nao encontrado no PATH (npm i -g @openai/codex).")
-
-    evidencia = {k: v for k, v in evidencia.items() if not k.startswith("_")}  # _prints e so para o PDF
-    itens = "\n".join(f"{i + 1}. {it['texto']}" for i, it in enumerate(secao["itens"]))
-    prompt = (
-        f"{INSTRUCOES}\n"
-        f"## Ponto {secao['ponto']} da devolutiva: {secao['titulo']}\n\n{itens}\n\n"
-        f"## Evidencia lida da tela (JSON)\n\n```json\n{json.dumps(evidencia, ensure_ascii=False, indent=1)}\n```\n"
-    )
-    (pasta / "prompt.md").write_text(prompt, encoding="utf-8")
-    schema = pasta / "schema.json"
-    schema.write_text(json.dumps(SCHEMA), encoding="utf-8")
-    saida = pasta / "veredito.json"
+    pref = "" if nome == "veredito" else f"{nome}_"
+    (pasta / f"{pref}prompt.md").write_text(prompt, encoding="utf-8")
+    arq_schema = pasta / f"{pref}schema.json"
+    arq_schema.write_text(json.dumps(schema), encoding="utf-8")
+    saida = pasta / f"{nome}.json"
+    log = pasta / f"{pref}codex.log"
 
     cmd = [codex, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
-           "--output-schema", str(schema), "-o", str(saida), "-C", str(pasta)]
+           "--output-schema", str(arq_schema), "-o", str(saida), "-C", str(pasta)]
     if modelo:
         cmd += ["-m", modelo]
+    for img in imagens or []:
+        cmd += ["-i", str(img)]
     cmd.append("-")
     proc = subprocess.run(cmd, input=prompt, text=True, encoding="utf-8", errors="replace",
                           capture_output=True, timeout=1200)
-    (pasta / "codex.log").write_text((proc.stdout or "") + "\n--- stderr ---\n" + (proc.stderr or ""), encoding="utf-8")
+    log.write_text((proc.stdout or "") + "\n--- stderr ---\n" + (proc.stderr or ""), encoding="utf-8")
     if proc.returncode != 0 or not saida.exists():
-        raise SystemExit(f"Codex falhou (codigo {proc.returncode}). Ver {pasta / 'codex.log'}")
+        raise SystemExit(f"Codex falhou (codigo {proc.returncode}). Ver {log}")
     return json.loads(saida.read_text(encoding="utf-8"))

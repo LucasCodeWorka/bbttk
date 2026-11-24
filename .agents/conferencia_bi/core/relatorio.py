@@ -9,14 +9,14 @@ def _cel(txt: str) -> str:
 
 def montar(secao: dict, evidencia: dict, veredito: dict | None, app: str) -> str:
     linhas = [
-        f"## Ponto {secao['ponto']}: {secao['titulo']}",
+        "## " + (secao.get("rotulo") or f"Ponto {secao['ponto']}: {secao['titulo']}"),
         "",
         f"Conferido em {app}, {evidencia.get('tela', '')}.",
         "",
     ]
     if veredito is None:
         linhas += ["| Item | Marcado no Word |", "|---|---|"]
-        linhas += [f"| {_cel(it['texto'])} | {'☒' if it['marcado'] else '☐'} |" for it in secao["itens"]]
+        linhas += [f"| {_cel(it['texto'])} | {'—' if it['marcado'] is None else ('☒' if it['marcado'] else '☐')} |" for it in secao["itens"]]
         linhas += ["", "_Sem Codex: so a evidencia foi coletada (ver evidencia.json)._"]
         return "\n".join(linhas)
 
