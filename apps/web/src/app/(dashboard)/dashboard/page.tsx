@@ -19,6 +19,7 @@ import { vendasApi, VendasResponse, VendasDiariasResponse, ComparativoAnoRespons
 import { formatDate, formatMoney, formatNumber, FABRICA_BRANCH_CODE, FABRICA_METADES, FILIAIS, getMonthStart, getToday, isMesUnico } from '@/lib/utils';
 import { exportMultiSheetExcel, ExcelColumn } from '@/lib/exportExcel';
 import { useAuth } from '@/contexts/AuthContext';
+import { ProdutoImagensModal } from '@/components/pcp/ProdutoImagensModal';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
 
@@ -106,6 +107,7 @@ export default function DashboardPage() {
   const [sortDirVendedores, setSortDirVendedores] = useState<'asc' | 'desc'>('desc');
   const [sortKeyProdutos, setSortKeyProdutos] = useState<string | null>(null);
   const [sortDirProdutos, setSortDirProdutos] = useState<'asc' | 'desc'>('desc');
+  const [fotosProduto, setFotosProduto] = useState<{ referencia: string; codigo: number | null } | null>(null);
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
   const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'semana'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
@@ -387,6 +389,12 @@ export default function DashboardPage() {
     };
   }, [vendedoresRanking]);
 
+  // Estoque fisico de hoje do Top Produtos (pedido da Gleici/Renata): por filial e total empresa.
+  const filiaisEstoque = produtos?.estoque?.filiais ?? [];
+  const estoqueReferencia = (referencia: string, filial: number) => produtos?.estoque?.porReferencia[referencia]?.[filial] ?? 0;
+  const estoqueTotalReferencia = (referencia: string) =>
+    Object.values(produtos?.estoque?.porReferencia[referencia] ?? {}).reduce((soma, qtd) => soma + qtd, 0);
+
   const produtosOrdenados = useMemo(() => {
     const lista = produtos?.produtos || [];
     if (!sortKeyProdutos) return lista;
@@ -416,7 +424,17 @@ export default function DashboardPage() {
           aVal = vendas?.total?.faturamento ? (a.valor / vendas.total.faturamento) * 100 : 0;
           bVal = vendas?.total?.faturamento ? (b.valor / vendas.total.faturamento) * 100 : 0;
           break;
+        case 'estoque_total':
+          aVal = estoqueTotalReferencia(a.referencia);
+          bVal = estoqueTotalReferencia(b.referencia);
+          break;
         default:
+          if (sortKeyProdutos.startsWith('estoque_')) {
+            const filial = Number(sortKeyProdutos.slice(8));
+            aVal = estoqueReferencia(a.referencia, filial);
+            bVal = estoqueReferencia(b.referencia, filial);
+            break;
+          }
           return 0;
       }
 
@@ -425,6 +443,7 @@ export default function DashboardPage() {
       }
       return ((aVal as number) - (bVal as number)) * (sortDirProdutos === 'asc' ? 1 : -1);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [produtos, sortKeyProdutos, sortDirProdutos, vendas]);
   useEffect(() => {
     const tabela = comparativoScrollRef.current;
@@ -772,6 +791,33 @@ export default function DashboardPage() {
       },
     ]);
   }
+  function exportarTopProdutos() {
+    const lista = produtosOrdenados;
+    const colunas: ExcelColumn[] = [
+      { header: 'Referência', key: 'referencia', width: 18 },
+      { header: 'Produto', key: 'nome', width: 40 },
+      { header: 'Qtd vendida', key: 'quantidade', width: 12 },
+      { header: 'Valor', key: 'valor', width: 14 },
+      ...filiaisEstoque.map(f => ({ header: `Estoque ${f.label}`, key: `est_${f.branchCode}`, width: 10 })),
+      { header: 'Estoque total empresa', key: 'est_total', width: 14 },
+    ];
+    const dados = lista.map(p => ({
+      referencia: p.referencia, nome: p.nome, quantidade: p.quantidade, valor: p.valor,
+      ...Object.fromEntries(filiaisEstoque.map(f => [`est_${f.branchCode}`, estoqueReferencia(p.referencia, f.branchCode)])),
+      est_total: estoqueTotalReferencia(p.referencia),
+    }));
+    const totais = {
+      referencia: 'TOTAL', nome: '',
+      quantidade: lista.reduce((s, p) => s + p.quantidade, 0),
+      valor: Math.round(lista.reduce((s, p) => s + p.valor, 0) * 100) / 100,
+      ...Object.fromEntries(filiaisEstoque.map(f => [`est_${f.branchCode}`, lista.reduce((s, p) => s + estoqueReferencia(p.referencia, f.branchCode), 0)])),
+      est_total: lista.reduce((s, p) => s + estoqueTotalReferencia(p.referencia), 0),
+    };
+    exportMultiSheetExcel(`top-produtos-${dataInicio}-a-${dataFim}`, [
+      { sheetName: 'Top produtos', columns: colunas, data: dados, title: `Top Produtos - ${dataInicio} a ${dataFim} (estoque físico de hoje)`, totals: totais },
+    ]);
+  }
+
   function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
     const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);
     const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
@@ -816,14 +862,14 @@ export default function DashboardPage() {
     );
   }
 
-  function ThSortProdutos({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+  function ThSortProdutos({ label, sortKeyName, align = 'right', divisor = false }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center'; divisor?: boolean }) {
     const active = sortKeyProdutos === sortKeyName;
     const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
     return (
       <TableCell
         isHeader
         align={align}
-        className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+        className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'} ${divisor ? 'border-l border-gray-200' : ''} ${sortKeyName.startsWith('estoque_') ? '!px-2 !text-[11px]' : ''}`}
         onClick={() => handleSortProdutos(sortKeyName)}
       >
         <span className={`flex items-center gap-1 ${justifyClass}`}>
@@ -1245,8 +1291,9 @@ export default function DashboardPage() {
         </LoadingOverlay>
       </Card>
 
-      {/* Vendedores e Produtos */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.8fr)_minmax(280px,1fr)] gap-6">
+      {/* Vendedores e Produtos: Top Produtos fica EMBAIXO do ranking, em largura total, pra
+          caber o estoque por filial (pedido da Renata, 24/11/2026). */}
+      <div className="grid grid-cols-1 gap-6">
         {/* Ranking Vendedores */}
         <Card>
           <CardHeader>
@@ -1365,17 +1412,38 @@ export default function DashboardPage() {
         {/* Top Produtos */}
         <Card>
           <CardHeader>
-            <CardTitle>Top Produtos</CardTitle>
+            <div>
+              <CardTitle>Top Produtos</CardTitle>
+              <p className="text-xs text-gray-500 mt-1">
+                Estoque físico de hoje (saldo físico, sem segunda qualidade e atacado)
+                {produtos?.estoque?.capturadoEm ? ` · atualizado em ${new Date(produtos.estoque.capturadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+              </p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={exportarTopProdutos} disabled={!produtos?.produtos.length}>
+              Exportar Excel
+            </Button>
           </CardHeader>
-          <LoadingOverlay active={isLoading} className="max-h-[600px] overflow-y-auto">
+          <LoadingOverlay active={isLoading} className="overflow-x-auto">
             <Table tableClassName="text-sm">
               <TableHead>
                 <TableRow>
-                  <TableCell isHeader className="!px-2 w-10">#</TableCell>
+                  <TableCell isHeader className="!px-2 w-10" rowSpan={2}>#</TableCell>
+                  <TableCell isHeader className="!py-1" colSpan={4}>Venda no período</TableCell>
+                  {filiaisEstoque.length > 0 && (
+                    <TableCell isHeader align="center" className="!py-1 border-l border-gray-200" colSpan={filiaisEstoque.length + 1}>
+                      Estoque físico hoje
+                    </TableCell>
+                  )}
+                </TableRow>
+                <TableRow>
                   <ThSortProdutos label="Produto" sortKeyName="referencia" align="left" />
                   <ThSortProdutos label="Qtd" sortKeyName="quantidade" align="right" />
                   <ThSortProdutos label="Valor" sortKeyName="valor" align="right" />
                   <ThSortProdutos label="% Total" sortKeyName="pct_total" align="right" />
+                  {filiaisEstoque.map((f, idx) => (
+                    <ThSortProdutos key={f.branchCode} label={f.label} sortKeyName={`estoque_${f.branchCode}`} align="right" divisor={idx === 0} />
+                  ))}
+                  {filiaisEstoque.length > 0 && <ThSortProdutos label="Total empresa" sortKeyName="estoque_total" align="right" />}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1392,19 +1460,38 @@ export default function DashboardPage() {
                         <span className="text-gray-500">{i + 1}</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium max-w-[100px]" title={`${p.referencia} - ${p.nome}`}>
+                    <TableCell className="font-medium min-w-[200px]" title={`${p.referencia} - ${p.nome}`}>
                       <div className="leading-tight">
-                        <div className="text-sm">{p.referencia}</div>
+                        <div className="text-sm whitespace-nowrap">{p.referencia}</div>
                         <div className="text-xs text-gray-500 font-normal line-clamp-2 mt-0.5">
                           {p.nome}
                         </div>
+                        <button type="button" aria-label={`Ver fotos da referência ${p.referencia}`}
+                          className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                          onClick={() => setFotosProduto({ referencia: p.referencia, codigo: p.productCode })}>
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                            <path d="M3 7h4l2-3h6l2 3h4v13H3V7Z" /><circle cx="12" cy="13" r="4" />
+                          </svg>
+                          Fotos
+                        </button>
                       </div>
                     </TableCell>
                     <TableCell align="right" className="!px-2">{formatNumber(p.quantidade)}</TableCell>
-                    <TableCell align="right" className="!px-2">{formatMoney(p.valor)}</TableCell>
+                    <TableCell align="right" className="!px-2 whitespace-nowrap">{formatMoney(p.valor)}</TableCell>
                     <TableCell align="right" className="!px-2">
                       {vendas?.total?.faturamento ? `${((p.valor / vendas.total.faturamento) * 100).toFixed(1)}%` : '-'}
                     </TableCell>
+                    {filiaisEstoque.map((f, idx) => {
+                      const qtd = estoqueReferencia(p.referencia, f.branchCode);
+                      return (
+                        <TableCell key={f.branchCode} align="right" className={`!px-2 text-xs tabular-nums ${idx === 0 ? 'border-l border-gray-200' : ''} ${qtd <= 0 ? 'text-red-600' : ''}`}>
+                          {formatNumber(qtd)}
+                        </TableCell>
+                      );
+                    })}
+                    {filiaisEstoque.length > 0 && (
+                      <TableCell align="right" className="!px-2 text-xs font-semibold tabular-nums">{formatNumber(estoqueTotalReferencia(p.referencia))}</TableCell>
+                    )}
                   </TableRow>
                 ))}
                 {(produtos?.produtos.length || 0) > 0 && (
@@ -1413,7 +1500,7 @@ export default function DashboardPage() {
                     <TableCell align="right" className="font-bold !px-2">
                       {formatNumber(produtos?.produtos.reduce((sum, p) => sum + p.quantidade, 0) || 0)}
                     </TableCell>
-                    <TableCell align="right" className="font-bold !px-2">
+                    <TableCell align="right" className="font-bold !px-2 whitespace-nowrap">
                       {formatMoney(produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0)}
                     </TableCell>
                     <TableCell align="right" className="font-bold !px-2">
@@ -1421,12 +1508,23 @@ export default function DashboardPage() {
                         ? `${(((produtos?.produtos.reduce((sum, p) => sum + p.valor, 0) || 0) / vendas.total.faturamento) * 100).toFixed(1)}%`
                         : '-'}
                     </TableCell>
+                    {filiaisEstoque.map((f, idx) => (
+                      <TableCell key={f.branchCode} align="right" className={`font-bold !px-2 tabular-nums ${idx === 0 ? 'border-l border-gray-200' : ''}`}>
+                        {formatNumber((produtos?.produtos ?? []).reduce((soma, p) => soma + estoqueReferencia(p.referencia, f.branchCode), 0))}
+                      </TableCell>
+                    ))}
+                    {filiaisEstoque.length > 0 && (
+                      <TableCell align="right" className="font-bold !px-2 tabular-nums">
+                        {formatNumber((produtos?.produtos ?? []).reduce((soma, p) => soma + estoqueTotalReferencia(p.referencia), 0))}
+                      </TableCell>
+                    )}
                   </TableRow>
                 )}
               </TableBody>
             </Table>
           </LoadingOverlay>
         </Card>
+      {fotosProduto && <ProdutoImagensModal {...fotosProduto} onClose={() => setFotosProduto(null)} />}
       </div>
     </div>
   );

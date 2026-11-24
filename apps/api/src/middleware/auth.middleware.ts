@@ -52,13 +52,14 @@ export function adminOnly(req: Request, res: Response, next: NextFunction) {
 
 // Exige que o usuario tenha o modulo liberado (admin sempre tem acesso a tudo).
 // Usar depois de authMiddleware.
-export function moduleAccess(moduleKey: string) {
+// Aceita um ou mais modulos: libera quem tiver QUALQUER um deles.
+export function moduleAccess(...moduleKeys: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (req.user?.role === 'admin') {
       next();
       return;
     }
-    if (!req.user?.moduleAccess?.includes(moduleKey)) {
+    if (!moduleKeys.some(key => req.user?.moduleAccess?.includes(key))) {
       res.status(403).json({ error: 'Acesso não autorizado a este modulo' });
       return;
     }

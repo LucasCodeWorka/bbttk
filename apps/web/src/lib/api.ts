@@ -689,11 +689,20 @@ export interface Produto {
   nome: string;
   quantidade: number;
   valor: number;
+  productCode: number | null;
+}
+
+// Estoque fisico de hoje (stock_code 1) por referencia e filial aberta.
+export interface EstoqueReferencias {
+  filiais: { branchCode: number; label: string }[];
+  porReferencia: Record<string, Record<number, number>>;
+  capturadoEm: string | null;
 }
 
 export interface TopProdutosResponse {
   periodo: { inicio: string; fim: string };
   produtos: Produto[];
+  estoque?: EstoqueReferencias;
 }
 
 export interface FilialComparativo {

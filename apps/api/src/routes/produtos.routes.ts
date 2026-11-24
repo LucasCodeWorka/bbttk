@@ -5,9 +5,10 @@ import { getProdutoImagens, ProdutoImagensError } from '../services/produtoImage
 
 const router = Router();
 
-router.use(authMiddleware, moduleAccess('pcp'));
-
-router.get('/produtos/:productCode/imagens', async (req: Request, res: Response) => {
+// Fotos sao usadas no PCP (Visao Geral) e no Comercial (Top Produtos do Dashboard): rota
+// registrada ANTES do router.use, com permissao propria, pra quem so tem o Comercial
+// conseguir abrir a foto. As demais rotas deste arquivo continuam so pro modulo pcp.
+router.get('/produtos/:productCode/imagens', authMiddleware, moduleAccess('pcp', 'pcp_servico', 'comercial'), async (req: Request, res: Response) => {
   const value = req.params.productCode;
   if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 2147483647) {
     res.status(400).json({ error: 'Código de produto inválido.' });
@@ -22,6 +23,8 @@ router.get('/produtos/:productCode/imagens', async (req: Request, res: Response)
     });
   }
 });
+
+router.use(authMiddleware, moduleAccess('pcp'));
 
 // Cores distintas cadastradas - ?tipo=cor_produto exclui cor ja usada em outro
 // agrupamento; ?grupoId=X mantem visiveis as cores do proprio grupo (tela de edicao)
