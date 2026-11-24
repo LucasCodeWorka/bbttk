@@ -156,6 +156,8 @@ export interface DashboardEstoqueGrade {
   tamanho: string;
   quantidade: number;
   valorCusto: number;
+  valorVarejo: number;
+  valorAtacado: number;
   custo: number | null;
   skus: number;
   saldos: DashboardEstoqueSaldoTipo[];
@@ -171,6 +173,8 @@ export interface DashboardEstoqueReferencia {
   status: string | null;
   quantidade: number;
   valorCusto: number;
+  valorVarejo: number;
+  valorAtacado: number;
   custo: number | null;
   skus: number;
   saldos: DashboardEstoqueSaldoTipo[];
@@ -187,6 +191,8 @@ export interface DashboardEstoqueResponse {
   total: {
     quantidade: number;
     valorCusto: number;
+    valorVarejo: number;
+    valorAtacado: number;
     skus: number;
     referencias: number;
     filiais: number;

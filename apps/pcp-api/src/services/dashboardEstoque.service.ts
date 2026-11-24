@@ -81,6 +81,8 @@ export interface DashboardEstoqueGrade {
   tamanho: string;
   quantidade: number;
   valorCusto: number;
+  valorVarejo: number;
+  valorAtacado: number;
   custo: number | null;
   skus: number;
   saldos: DashboardEstoqueSaldoTipo[];
@@ -96,6 +98,8 @@ export interface DashboardEstoqueReferencia {
   status: string | null;
   quantidade: number;
   valorCusto: number;
+  valorVarejo: number;
+  valorAtacado: number;
   custo: number | null;
   skus: number;
   saldos: DashboardEstoqueSaldoTipo[];
@@ -116,7 +120,12 @@ interface BucketRow {
   referencias: bigint | number;
 }
 
-interface ReferenciaRow {
+interface ValorVendaRow {
+  valor_varejo: Decimal | null;
+  valor_atacado: Decimal | null;
+}
+
+interface ReferenciaRow extends ValorVendaRow {
   referencia: string | null;
   descricao: string | null;
   colecao: string | null;
@@ -140,7 +149,7 @@ interface ReferenciaSaldoTipoRow extends SaldoTipoRow {
   referencia: string | null;
 }
 
-interface GradeRow {
+interface GradeRow extends ValorVendaRow {
   referencia: string | null;
   cor: string | null;
   tamanho: string | null;
@@ -156,7 +165,7 @@ interface GradeSaldoTipoRow extends SaldoTipoRow {
   tamanho: string | null;
 }
 
-interface TotalRow {
+interface TotalRow extends ValorVendaRow {
   quantidade: Decimal | null;
   valor_custo: Decimal | null;
   skus: bigint | number;
@@ -229,16 +238,42 @@ function buildStockCodeFiltro(stockCodes?: number[]): Prisma.Sql {
   return stockCodes?.length ? Prisma.sql`AND ps.stock_code IN (${Prisma.join(stockCodes)})` : Prisma.empty;
 }
 
-function baseCte(filtro: DashboardEstoqueFiltro): Prisma.Sql {
+// Preco de venda (tabela) usado pra valorizar o estoque: mesma filial de referencia e
+// mesmas tabelas de varejo/atacado da Visao Geral (config do relatorio_base).
+interface PrecoVendaConfig {
+  branchCode: number;
+  varejoCode: number;
+  atacadoCode: number;
+}
+
+// Devolutiva "Analise de Estoque" 13/11: no modo agrupado o cliente quer UMA linha por
+// cor, somando os tons (claro/medio/escuro) e os tamanhos - "AZUL TOTAL". Os grupos
+// cadastrados no Agrupamento de Cores sao de TOM ("azul claro", "amarelo escuro") e
+// muitas cores nem estao agrupadas ("AZUL 2103"), entao a familia e: nome do grupo (ou
+// da cor, se nao agrupada), sem numeros e sem as palavras de tom.
+export const FAMILIA_COR_SQL = Prisma.sql`
+  NULLIF(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(
+    UPPER(COALESCE(NULLIF(TRIM(ag.nome), ''), NULLIF(TRIM(a.color_name), ''), '')),
+    '[0-9]+', ' ', 'g'),
+    '\\m(CLAR[OA]|M[EÉ]DI[OA]|ESCUR[OA])\\M', ' ', 'g'),
+    '\\s+', ' ', 'g')), '')
+`;
+
+// Mesma regra dos cards da Visao Geral (montarIndicadoresEstoqueAtivos): SKU conta como
+// "com estoque" pelo saldo LIQUIDO somado em todos os locais (+5 numa loja e -5 noutra
+// = sem estoque) e status diferente de INATIVO.
+const SKU_ATIVO_SQL = Prisma.sql`UPPER(REGEXP_REPLACE(TRIM(COALESCE(status, '')), '\\s+', ' ', 'g')) <> 'INATIVO'`;
+
+function baseCte(filtro: DashboardEstoqueFiltro, preco: PrecoVendaConfig): Prisma.Sql {
   const produtoFiltro = buildProdutoFiltro(filtro);
   const localFiltro = buildEstoqueLocalFiltro(filtro.branches);
   const stockCodeFiltro = buildStockCodeFiltro(filtro.stockCodes);
 
-  // No modo agrupado a cor vira o nome do grupo do Agrupamento de Cores (com fallback
-  // pra cor original quando aquela cor ainda nao foi agrupada). Trocar aqui basta: a
-  // grade cor x tamanho e os buckets todos derivam desta CTE.
+  // No modo agrupado a cor vira a familia da cor (FAMILIA_COR_SQL), com fallback pra
+  // cor original. Trocar aqui basta: a grade e os buckets todos derivam desta CTE; o
+  // tamanho some da grade no proprio SELECT da grade (gradeTamanhoSql).
   const corSelect = filtro.agruparPorCorSalva
-    ? Prisma.sql`COALESCE(NULLIF(TRIM(ag.nome), ''), NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''))`
+    ? Prisma.sql`COALESCE(${FAMILIA_COR_SQL}, NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''))`
     : Prisma.sql`COALESCE(NULLIF(TRIM(a.color_name), ''), NULLIF(TRIM(a.color_code), ''))`;
 
   return Prisma.sql`
@@ -288,6 +323,16 @@ function baseCte(filtro: DashboardEstoqueFiltro): Prisma.Sql {
         AND cost_code = ${CUSTO_PRODUCAO_CODE}
       GROUP BY product_code
     ),
+    pdv AS (
+      SELECT
+        product_code,
+        MAX(valor) FILTER (WHERE price_code = ${preco.varejoCode}) AS pdv_var,
+        MAX(valor) FILTER (WHERE price_code = ${preco.atacadoCode}) AS pdv_ata
+      FROM produto_precos
+      WHERE branch_code = ${preco.branchCode}
+        AND price_code IN (${preco.varejoCode}, ${preco.atacadoCode})
+      GROUP BY product_code
+    ),
     saldo AS (
       SELECT
         pf.product_sku,
@@ -307,10 +352,13 @@ function baseCte(filtro: DashboardEstoqueFiltro): Prisma.Sql {
         NULLIF(TRIM(us.stock_description), '') AS stock_description,
         COALESCE(us.stock, 0) AS quantidade,
         pc.custo,
+        pv.pdv_var,
+        pv.pdv_ata,
         us.captured_at
       FROM ultimo_saldo us
       JOIN produtos_filtrados pf ON pf.product_sku = us.product_sku
       LEFT JOIN precos pc ON pc.product_code = pf.product_code
+      LEFT JOIN pdv pv ON pv.product_code = pf.product_code
     ),
     saldo_sku AS (
       SELECT
@@ -359,10 +407,10 @@ async function getConfig(db: PrismaClient = prisma) {
   });
 }
 
-async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
+async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, preco: PrecoVendaConfig, dimensao: 'colecao' | 'linha' | 'grupo' | 'categoria' | 'genero' | 'status') {
   const column = Prisma.raw(dimensao);
   return db.$queryRaw<BucketRow[]>`
-    ${baseCte(filtro)}
+    ${baseCte(filtro, preco)}
     SELECT
       ${column} AS label,
       SUM(quantidade) AS quantidade,
@@ -375,9 +423,9 @@ async function getBuckets(db: PrismaClient, filtro: DashboardEstoqueFiltro, dime
   `;
 }
 
-async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro) {
+async function getBucketFilial(db: PrismaClient, filtro: DashboardEstoqueFiltro, preco: PrecoVendaConfig) {
   return db.$queryRaw<BucketRow[]>`
-    ${baseCte(filtro)}
+    ${baseCte(filtro, preco)}
     SELECT
       branch_code::text AS label,
       SUM(quantidade) AS quantidade,
@@ -449,6 +497,13 @@ function dashboardEstoqueCacheKey(filtro: DashboardEstoqueFiltro) {
 
 async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoqueFiltro) {
   const config = await getConfig(db);
+  const preco: PrecoVendaConfig = {
+    branchCode: config.precoCustoBranchCode,
+    varejoCode: config.pdvVarejoCode,
+    atacadoCode: config.pdvAtacadoCode,
+  };
+  // Modo agrupado: uma linha por familia de cor, somando todos os tamanhos.
+  const gradeTamanhoSql = filtro.agruparPorCorSalva ? Prisma.sql`'TODOS'` : Prisma.sql`COALESCE(tamanho, 'SEM TAM')`;
   const [
     totais,
     porColecao,
@@ -463,24 +518,26 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     gradeSaldosRows,
   ] = await Promise.all([
     db.$queryRaw<TotalRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
-        COUNT(DISTINCT product_sku) AS skus,
-        COUNT(DISTINCT referencia) AS referencias,
+        SUM(quantidade * COALESCE(pdv_var, 0)) AS valor_varejo,
+        SUM(quantidade * COALESCE(pdv_ata, 0)) AS valor_atacado,
+        (SELECT COUNT(*) FROM saldo_sku WHERE ${SKU_ATIVO_SQL}) AS skus,
+        (SELECT COUNT(DISTINCT referencia) FROM saldo_sku WHERE ${SKU_ATIVO_SQL}) AS referencias,
         COUNT(DISTINCT branch_code) AS filiais,
         MAX(captured_at) AS atualizado_em
       FROM saldo
       WHERE quantidade <> 0
     `,
-    getBuckets(db, filtro, 'colecao'),
-    getBuckets(db, filtro, 'linha'),
-    getBuckets(db, filtro, 'categoria'),
-    getBuckets(db, filtro, 'status'),
-    getBucketFilial(db, filtro),
+    getBuckets(db, filtro, preco, 'colecao'),
+    getBuckets(db, filtro, preco, 'linha'),
+    getBuckets(db, filtro, preco, 'categoria'),
+    getBuckets(db, filtro, preco, 'status'),
+    getBucketFilial(db, filtro, preco),
     db.$queryRaw<SaldoTipoRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         stock_code,
         MIN(stock_description) AS stock_description,
@@ -498,7 +555,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
         stock_code
     `,
     db.$queryRaw<ReferenciaRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         referencia,
         MIN(descricao) AS descricao,
@@ -509,6 +566,8 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
         MIN(status) AS status,
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
+        SUM(quantidade * COALESCE(pdv_var, 0)) AS valor_varejo,
+        SUM(quantidade * COALESCE(pdv_ata, 0)) AS valor_atacado,
         CASE
           WHEN SUM(quantidade) FILTER (WHERE custo IS NOT NULL) = 0 THEN NULL
           ELSE SUM(quantidade * custo) FILTER (WHERE custo IS NOT NULL) / SUM(quantidade) FILTER (WHERE custo IS NOT NULL)
@@ -520,7 +579,7 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY SUM(quantidade) DESC, SUM(quantidade * COALESCE(custo, 0)) DESC
     `,
     db.$queryRaw<ReferenciaSaldoTipoRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         referencia,
         stock_code,
@@ -532,13 +591,15 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       ORDER BY referencia, stock_code
     `,
     db.$queryRaw<GradeRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         referencia,
         COALESCE(cor, 'SEM COR') AS cor,
-        COALESCE(tamanho, 'SEM TAM') AS tamanho,
+        ${gradeTamanhoSql} AS tamanho,
         SUM(quantidade) AS quantidade,
         SUM(quantidade * COALESCE(custo, 0)) AS valor_custo,
+        SUM(quantidade * COALESCE(pdv_var, 0)) AS valor_varejo,
+        SUM(quantidade * COALESCE(pdv_ata, 0)) AS valor_atacado,
         CASE
           WHEN SUM(quantidade) FILTER (WHERE custo IS NOT NULL) = 0 THEN NULL
           ELSE SUM(quantidade * custo) FILTER (WHERE custo IS NOT NULL) / SUM(quantidade) FILTER (WHERE custo IS NOT NULL)
@@ -546,22 +607,22 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
         COUNT(DISTINCT product_sku) AS skus
       FROM saldo
       WHERE quantidade <> 0
-      GROUP BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
-      ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM')
+      GROUP BY 1, 2, 3
+      ORDER BY 1, 2, 3
     `,
     db.$queryRaw<GradeSaldoTipoRow[]>`
-      ${baseCte(filtro)}
+      ${baseCte(filtro, preco)}
       SELECT
         referencia,
         COALESCE(cor, 'SEM COR') AS cor,
-        COALESCE(tamanho, 'SEM TAM') AS tamanho,
+        ${gradeTamanhoSql} AS tamanho,
         stock_code,
         MIN(stock_description) AS stock_description,
         SUM(quantidade) AS quantidade
       FROM saldo
       WHERE quantidade <> 0
-      GROUP BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM'), stock_code
-      ORDER BY referencia, COALESCE(cor, 'SEM COR'), COALESCE(tamanho, 'SEM TAM'), stock_code
+      GROUP BY 1, 2, 3, 4
+      ORDER BY 1, 2, 3, 4
     `,
   ]);
 
@@ -599,6 +660,8 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       tamanho,
       quantidade: round(decimalToNumber(row.quantidade), 0),
       valorCusto: round(decimalToNumber(row.valor_custo), 2),
+      valorVarejo: round(decimalToNumber(row.valor_varejo), 2),
+      valorAtacado: round(decimalToNumber(row.valor_atacado), 2),
       custo: row.custo === null ? null : round(decimalToNumber(row.custo), 2),
       skus: Number(row.skus),
       saldos: saldosPorGrade.get(gradeKey(referencia, cor, tamanho)) || [],
@@ -620,6 +683,8 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
       status: row.status,
       quantidade: round(decimalToNumber(row.quantidade), 0),
       valorCusto: round(decimalToNumber(row.valor_custo), 2),
+      valorVarejo: round(decimalToNumber(row.valor_varejo), 2),
+      valorAtacado: round(decimalToNumber(row.valor_atacado), 2),
       custo: row.custo === null ? null : round(decimalToNumber(row.custo), 2),
       skus: Number(row.skus),
       saldos: saldosPorReferencia.get(referencia) || [],
@@ -637,6 +702,8 @@ async function calcularDashboardEstoque(db: PrismaClient, filtro: DashboardEstoq
     total: {
       quantidade: round(totalQuantidade, 0),
       valorCusto: round(decimalToNumber(total?.valor_custo), 2),
+      valorVarejo: round(decimalToNumber(total?.valor_varejo), 2),
+      valorAtacado: round(decimalToNumber(total?.valor_atacado), 2),
       skus: Number(total?.skus || 0),
       referencias: Number(total?.referencias || 0),
       filiais: Number(total?.filiais || 0),

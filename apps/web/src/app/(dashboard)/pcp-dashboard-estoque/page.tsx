@@ -15,12 +15,28 @@ import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/u
 import { useAuth } from '@/contexts/AuthContext';
 import { ExcelColumn, exportToExcel } from '@/lib/exportExcel';
 import { DashboardEstoqueBucket, DashboardEstoqueProdutoSugestao, DashboardEstoqueReferencia, DashboardEstoqueResponse, DashboardEstoqueSaldoTipo, PcpClassificacaoDimensao, PcpLojaFiltro, pcpApi } from '@/lib/pcpApi';
-import { cn, formatDate, formatMoney, formatNumber, getToday } from '@/lib/utils';
+import { cn, formatDate, formatMoney, formatNumber } from '@/lib/utils';
 
 const FILTROS_OCULTOS = new Set(['grupo', 'campanha', 'motorPromocional']);
 const FILTROS_PRIORITARIOS = ['colecao', 'linha', 'categoria', 'genero', 'status', 'lancamento', 'modelo', 'tecido', 'tipo'];
 type SortDir = 'asc' | 'desc';
-type SortKey = 'referencia' | 'descricao' | 'colecao' | 'linha' | 'categoria' | 'quantidade' | 'custo' | 'valorCusto' | `saldo-${number}`;
+type SortKey = 'referencia' | 'descricao' | 'colecao' | 'linha' | 'categoria' | 'quantidade' | 'custo' | 'valorCusto' | 'participacao' | 'valorVarejo' | 'valorAtacado' | `saldo-${number}`;
+
+// Devolutiva 13/11: a tela abre no estoque do dia anterior, igual a Visao Geral.
+// Data LOCAL (nao toISOString, que e UTC e vira o dia seguinte depois das 21h).
+function getOntem(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatPercent(value: number) {
+  return `${formatNumber(value, 2)}%`;
+}
+
+function participacao(valor: number, total: number) {
+  return total > 0 ? (valor / total) * 100 : 0;
+}
 
 const GRAFICOS: Array<{ key: keyof DashboardEstoqueResponse['graficos']; title: string; color: string }> = [
   { key: 'filial', title: 'Estoque por filial', color: 'var(--bbtk-blue)' },
@@ -79,7 +95,12 @@ function sortValue(item: DashboardEstoqueReferencia, key: SortKey): string | num
     case 'quantidade':
       return item.quantidade;
     case 'valorCusto':
+    case 'participacao':
       return item.valorCusto;
+    case 'valorVarejo':
+      return item.valorVarejo;
+    case 'valorAtacado':
+      return item.valorAtacado;
     default:
       return 0;
   }
@@ -218,7 +239,7 @@ function ProdutoMultiSelect({
 export default function DashboardEstoquePage() {
   const { token, user } = useAuth();
   const carregouInicial = useRef(false);
-  const [dataCorte, setDataCorte] = useState(getToday());
+  const [dataCorte, setDataCorte] = useState(getOntem());
   const [produtosSelecionados, setProdutosSelecionados] = useState<DashboardEstoqueProdutoSugestao[]>([]);
   const [filiaisSelecionadas, setFiliaisSelecionadas] = useState<number[]>([]);
   const [tiposEstoqueSelecionados, setTiposEstoqueSelecionados] = useState<string[]>([]);
@@ -341,7 +362,8 @@ export default function DashboardEstoquePage() {
       <TableCell isHeader align={align} title={title || label} onClick={() => handleSort(sortKeyName)}>
         <span className={cn('inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
           <span className="truncate">{label}</span>
-          {active && <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '^' : 'v'}</span>}
+          {/* Seta grafica (era a letra "v", lida pelo cliente como parte do titulo: "PECAS V") */}
+          {active && <span className="text-[var(--bbtk-purple)]">{sortDir === 'asc' ? '▲' : '▼'}</span>}
         </span>
       </TableCell>
     );
@@ -349,7 +371,10 @@ export default function DashboardEstoquePage() {
 
   const total = data?.total;
   const tiposSaldoTabela = data?.tiposSaldo || [];
-  const tabelaColSpan = 8 + tiposSaldoTabela.length;
+  const tabelaColSpan = 11 + tiposSaldoTabela.length;
+  const totalValorCusto = total?.valorCusto || 0;
+  // A caixa recarrega na hora; a grade vem do backend ja somada por cor (tamanho 'TODOS').
+  const corAgrupada = agruparPorCorSalva;
   const itensOrdenados = useMemo(() => {
     const itens = data?.itens || [];
     return [...itens].sort((a, b) => {
@@ -371,7 +396,7 @@ export default function DashboardEstoquePage() {
       { key: 'colecao', header: 'Colecao', width: 24, type: 'text' },
       { key: 'linha', header: 'Linha', width: 18, type: 'text' },
       { key: 'categoria', header: 'Categoria', width: 18, type: 'text' },
-      { key: 'quantidade', header: 'Pecas', width: 12, type: 'number' },
+      { key: 'quantidade', header: 'TT Geral', width: 12, type: 'number' },
       ...tiposSaldoTabela.map((tipo) => ({
         key: `saldo_${tipo.stockCode}`,
         header: tipo.label,
@@ -380,6 +405,9 @@ export default function DashboardEstoquePage() {
       })),
       { key: 'custo', header: 'Custo un.', width: 13, type: 'currency' },
       { key: 'valorCusto', header: 'Valor a custo', width: 16, type: 'currency' },
+      { key: 'participacao', header: 'Part. % (custo)', width: 14, type: 'number' },
+      { key: 'valorVarejo', header: 'Valor a preco varejo', width: 18, type: 'currency' },
+      { key: 'valorAtacado', header: 'Valor a preco atacado', width: 18, type: 'currency' },
     ];
 
     const dados = itensOrdenados.map((item) => {
@@ -392,6 +420,9 @@ export default function DashboardEstoquePage() {
         quantidade: item.quantidade,
         custo: item.custo ?? '',
         valorCusto: item.valorCusto,
+        participacao: Math.round(participacao(item.valorCusto, totalValorCusto) * 100) / 100,
+        valorVarejo: item.valorVarejo,
+        valorAtacado: item.valorAtacado,
       };
 
       for (const tipo of tiposSaldoTabela) {
@@ -405,6 +436,9 @@ export default function DashboardEstoquePage() {
       referencia: 'Total',
       quantidade: itensOrdenados.reduce((sum, item) => sum + item.quantidade, 0),
       valorCusto: itensOrdenados.reduce((sum, item) => sum + item.valorCusto, 0),
+      participacao: 100,
+      valorVarejo: itensOrdenados.reduce((sum, item) => sum + item.valorVarejo, 0),
+      valorAtacado: itensOrdenados.reduce((sum, item) => sum + item.valorAtacado, 0),
     };
 
     for (const tipo of tiposSaldoTabela) {
@@ -435,7 +469,7 @@ export default function DashboardEstoquePage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Data do estoque</label>
             <Input type="date" value={dataCorte} onChange={(e) => setDataCorte(e.target.value)} />
           </div>
-          <label className="flex items-center gap-2 cursor-pointer pb-2 text-sm text-gray-700" title="Na grade cor x tamanho, soma na mesma celula as cores originais que foram unificadas no Agrupamento de Cores">
+          <label className="flex items-center gap-2 cursor-pointer pb-2 text-sm text-gray-700" title="Ao abrir a referencia, mostra uma linha por cor somando os tons (claro, medio, escuro) e todos os tamanhos. Usa os grupos do Agrupamento de Cores e ignora numeros e palavras de tom no nome da cor.">
             <input
               type="checkbox"
               checked={agruparPorCorSalva}
@@ -447,7 +481,7 @@ export default function DashboardEstoquePage() {
               }}
               className="h-4 w-4 rounded border-gray-300 text-[var(--bbtk-purple)] focus:ring-[var(--bbtk-purple)]"
             />
-            Agrupar por Agrupamento de Cores
+            Agrupamento por cores
           </label>
           <Button variant="secondary" onClick={limparFiltros} disabled={filtrosAtivos === 0}>
             Limpar filtros
@@ -538,12 +572,15 @@ export default function DashboardEstoquePage() {
               <ThSort label="Colecao" sortKeyName="colecao" />
               <ThSort label="Linha" sortKeyName="linha" />
               <ThSort label="Categoria" sortKeyName="categoria" />
-              <ThSort label="Pecas" sortKeyName="quantidade" align="right" />
+              <ThSort label="TT Geral" sortKeyName="quantidade" align="right" title="Total geral de pecas (todos os tipos de saldo)" />
               {tiposSaldoTabela.map((tipo) => (
                 <ThSort key={tipo.stockCode} label={tipo.label} sortKeyName={`saldo-${tipo.stockCode}`} align="right" title={tipo.label} />
               ))}
               <ThSort label="Custo un." sortKeyName="custo" align="right" />
               <ThSort label="Valor a custo" sortKeyName="valorCusto" align="right" />
+              <ThSort label="Part. %" sortKeyName="participacao" align="right" title="Participacao no valor total do estoque a preco de custo" />
+              <ThSort label="Valor varejo" sortKeyName="valorVarejo" align="right" title="Estoque total valorizado a preco de venda varejo (tabela)" />
+              <ThSort label="Valor atacado" sortKeyName="valorAtacado" align="right" title="Estoque total valorizado a preco de venda atacado (tabela)" />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -562,7 +599,25 @@ export default function DashboardEstoquePage() {
                 </TableCell>
               </TableRow>
             ) : (
-              itensOrdenados.map((item) => {
+              <>
+              {/* Devolutiva 13/11: linha de totais em cima (recorte inteiro, nao so o que esta visivel) */}
+              <TableRow className="bg-purple-50/70 font-semibold text-gray-900">
+                <TableCell className="font-bold">TOTAL</TableCell>
+                <TableCell className="text-gray-500">{formatNumber(total?.referencias || 0)} referencias · {formatNumber(total?.skus || 0)} SKUs</TableCell>
+                <TableCell>{''}</TableCell>
+                <TableCell>{''}</TableCell>
+                <TableCell>{''}</TableCell>
+                <TableCell align="right" className="font-bold">{formatNumber(total?.quantidade || 0)}</TableCell>
+                {tiposSaldoTabela.map((tipo) => (
+                  <TableCell key={`total-${tipo.stockCode}`} align="right">{formatNumber(tipo.quantidade)}</TableCell>
+                ))}
+                <TableCell align="right">{''}</TableCell>
+                <TableCell align="right">{formatMoney(totalValorCusto)}</TableCell>
+                <TableCell align="right">{formatPercent(100)}</TableCell>
+                <TableCell align="right">{formatMoney(total?.valorVarejo || 0)}</TableCell>
+                <TableCell align="right">{formatMoney(total?.valorAtacado || 0)}</TableCell>
+              </TableRow>
+              {itensOrdenados.map((item) => {
                 const aberta = referenciasAbertas.has(item.referencia);
                 return (
                   <Fragment key={item.referencia}>
@@ -596,13 +651,18 @@ export default function DashboardEstoquePage() {
                       ))}
                       <TableCell align="right">{item.custo === null ? '-' : formatMoney(item.custo)}</TableCell>
                       <TableCell align="right">{formatMoney(item.valorCusto)}</TableCell>
+                      <TableCell align="right">{formatPercent(participacao(item.valorCusto, totalValorCusto))}</TableCell>
+                      <TableCell align="right">{formatMoney(item.valorVarejo)}</TableCell>
+                      <TableCell align="right">{formatMoney(item.valorAtacado)}</TableCell>
                     </TableRow>
                     {aberta && item.grades.map((grade) => (
                       <TableRow key={`${item.referencia}-${grade.cor}-${grade.tamanho}`} className="bg-gray-50/60">
                         <TableCell className="pl-12 text-gray-700">
-                          {grade.cor} / {grade.tamanho}
+                          {corAgrupada ? `${grade.cor} TOTAL` : `${grade.cor} / ${grade.tamanho}`}
                         </TableCell>
-                        <TableCell className="text-gray-400">Cor / tamanho</TableCell>
+                        <TableCell className="text-gray-400">
+                          {corAgrupada ? `Tons e tamanhos somados · ${formatNumber(grade.skus)} SKUs` : 'Cor / tamanho'}
+                        </TableCell>
                         <TableCell>{item.colecao || '-'}</TableCell>
                         <TableCell>{item.linha || '-'}</TableCell>
                         <TableCell>{item.categoria || '-'}</TableCell>
@@ -614,11 +674,15 @@ export default function DashboardEstoquePage() {
                         ))}
                         <TableCell align="right">{grade.custo === null ? '-' : formatMoney(grade.custo)}</TableCell>
                         <TableCell align="right">{formatMoney(grade.valorCusto)}</TableCell>
+                        <TableCell align="right">{formatPercent(participacao(grade.valorCusto, totalValorCusto))}</TableCell>
+                        <TableCell align="right">{formatMoney(grade.valorVarejo)}</TableCell>
+                        <TableCell align="right">{formatMoney(grade.valorAtacado)}</TableCell>
                       </TableRow>
                     ))}
                   </Fragment>
                 );
-              })
+              })}
+              </>
             )}
           </TableBody>
         </Table>
