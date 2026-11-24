@@ -523,6 +523,7 @@ export interface RelatorioBaseResponse {
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
     status: RelatorioBaseMatrizLinha[];
+    colecao: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];
@@ -1309,6 +1310,7 @@ interface IdentidadeRow {
   modelo: string | null;
   status: string | null;
   lancamento: string | null;
+  colecao: string | null;
 }
 
 interface RelatorioBaseAnaliticoRow {
@@ -1329,6 +1331,7 @@ interface RelatorioBaseAnaliticoRow {
   modelo: string | null;
   status: string | null;
   lancamento: string | null;
+  colecao: string | null;
   branch_code: number;
   estoque: Decimal | null;
   giro_30d: Decimal | null;
@@ -1509,7 +1512,8 @@ async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<Identidad
       NULLIF(TRIM(a.class_genero), '') as genero,
       NULLIF(TRIM(a.class_modelo), '') as modelo,
       NULLIF(TRIM(a.class_status), '') as status,
-      NULLIF(TRIM(a.class_lancamento), '') as lancamento
+      NULLIF(TRIM(a.class_lancamento), '') as lancamento,
+      NULLIF(TRIM(a.class_colecao), '') as colecao
     FROM produto_analitico a
     LEFT JOIN produtos p ON p.product_sku = a.product_sku
     ${AGRUPAMENTO_COR_JOIN}
@@ -1588,6 +1592,7 @@ async function getRelatorioBaseAnalitico(
       rb.modelo,
       rb.status,
       rb.lancamento,
+      NULLIF(TRIM(a.class_colecao), '') AS colecao,
       rb.branch_code,
       rb.estoque,
       rb.giro_30d,
@@ -1703,6 +1708,7 @@ async function getRelatorioBaseAnalitico(
     modelo: string | null;
     status: string | null;
     lancamento: string | null;
+    colecao: string | null;
     ultimaEntrada: string | null;
     custo: number | null;
     // pdvVarTabela = PDV ORIGINAL; pdvVar/pdvAta = PDV ATUAL (promocao ja aplicada).
@@ -1750,6 +1756,7 @@ async function getRelatorioBaseAnalitico(
       modelo: row.modelo,
       status: row.status,
       lancamento: formatarLancamento(row.lancamento),
+      colecao: row.colecao,
       ultimaEntrada: null,
       custo,
       pdvVarTabela: null,
@@ -1797,6 +1804,7 @@ async function getRelatorioBaseAnalitico(
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
   const matrizStatusAgg = new Map<string, BucketAcc>();
+  const matrizColecaoAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>();
   let valorEstoqueTotal = 0;
   let estVarejoTotal = 0;
@@ -1929,10 +1937,11 @@ async function getRelatorioBaseAnalitico(
     acumularBucket(matrizCategoriaAgg, sku.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, sku.genero?.trim() || null, bucketValores);
     acumularBucket(matrizStatusAgg, agruparStatus(sku.status), bucketValores);
+    acumularBucket(matrizColecaoAgg, sku.colecao?.trim() || null, bucketValores);
     for (const [dimensao, label] of [
       ['linha', linhaBucket(sku.linha)], ['linhaCompleta', sku.linha],
       ['categoria', sku.categoria], ['genero', sku.genero],
-      ['status', agruparStatus(sku.status)],
+      ['status', agruparStatus(sku.status)], ['colecao', sku.colecao],
     ] as const) {
       referenciasMatriz.acumular(dimensao, label, sku.referenceCode, sku.referenceName,
         sku.status, bucketValores);
@@ -2221,6 +2230,7 @@ async function getRelatorioBaseAnalitico(
   const matrizCategoria = buildMatriz(matrizCategoriaAgg, 'categoria');
   const matrizGenero = buildMatriz(matrizGeneroAgg, 'genero');
   const matrizStatus = buildMatriz(matrizStatusAgg, 'status');
+  const matrizColecao = buildMatriz(matrizColecaoAgg, 'colecao');
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
     return linhas.find((l) => normalizarClassificacao(l.label) === labelNormalizado)?.coberturaGeral ?? null;
@@ -2294,6 +2304,7 @@ async function getRelatorioBaseAnalitico(
       categoria: matrizCategoria,
       genero: matrizGenero,
       status: matrizStatus,
+      colecao: matrizColecao,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),
@@ -2505,6 +2516,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizCategoriaAgg = new Map<string, BucketAcc>();
   const matrizGeneroAgg = new Map<string, BucketAcc>();
   const matrizStatusAgg = new Map<string, BucketAcc>();
+  const matrizColecaoAgg = new Map<string, BucketAcc>();
   const statusAgg = new Map<string, number>(); // balde de status -> soma de estTt
   let valorEstoqueTotal = 0;
   let estVarejoTotal = 0;
@@ -2727,10 +2739,11 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     acumularBucket(matrizCategoriaAgg, identidade.categoria?.trim() || null, bucketValores);
     acumularBucket(matrizGeneroAgg, identidade.genero?.trim() || null, bucketValores);
     acumularBucket(matrizStatusAgg, agruparStatus(identidade.status), bucketValores);
+    acumularBucket(matrizColecaoAgg, identidade.colecao?.trim() || null, bucketValores);
     for (const [dimensao, label] of [
       ['linha', linhaBucket(identidade.linha)], ['linhaCompleta', identidade.linha],
       ['categoria', identidade.categoria], ['genero', identidade.genero],
-      ['status', agruparStatus(identidade.status)],
+      ['status', agruparStatus(identidade.status)], ['colecao', identidade.colecao],
     ] as const) {
       referenciasMatriz.acumular(dimensao, label, identidade.reference_code || sku, identidade.reference_name || identidade.reference_code || sku,
         identidade.status, bucketValores);
@@ -3087,6 +3100,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const matrizCategoria = buildMatriz(matrizCategoriaAgg, 'categoria');
   const matrizGenero = buildMatriz(matrizGeneroAgg, 'genero');
   const matrizStatus = buildMatriz(matrizStatusAgg, 'status');
+  const matrizColecao = buildMatriz(matrizColecaoAgg, 'colecao');
 
   function coberturaPorLabel(linhas: RelatorioBaseMatrizLinha[], label: string): number | null {
     const labelNormalizado = normalizarClassificacao(label);
@@ -3164,6 +3178,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
       categoria: matrizCategoria,
       genero: matrizGenero,
       status: matrizStatus,
+      colecao: matrizColecao,
     },
     pagination: { page, pageSize, totalReferencias, totalPages },
     colunas: selecionarColunasRelatorioBase(colunasAtivas, lojasComValores),

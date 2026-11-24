@@ -422,6 +422,7 @@ export interface RelatorioBaseResponse {
     categoria: RelatorioBaseMatrizLinha[];
     genero: RelatorioBaseMatrizLinha[];
     status: RelatorioBaseMatrizLinha[];
+    colecao: RelatorioBaseMatrizLinha[];
   };
   pagination: { page: number; pageSize: number; totalReferencias: number; totalPages: number };
   colunas: { branchCode: number; label: string }[];

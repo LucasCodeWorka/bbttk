@@ -43,6 +43,7 @@ const DIMENSAO_OPTIONS = [
   { value: 'categoria', label: 'Por categoria' },
   { value: 'genero', label: 'Por gênero' },
   { value: 'status', label: 'Por status' },
+  { value: 'colecao', label: 'Por coleção' },
 ];
 
 function desvioPercentualDe(valor: number | null | undefined, base: number | null | undefined): number | null {
@@ -363,7 +364,7 @@ interface VisaoGeralPageState {
   verPorLoja?: boolean;
   sortKey?: string | null;
   sortDir?: 'asc' | 'desc';
-  dimensao?: 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status';
+  dimensao?: 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status' | 'colecao';
   visaoLinha?: 'referencia' | 'cor' | 'cor-agrupada';
 }
 
@@ -645,7 +646,7 @@ export default function PcpRelatorioBasePage() {
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
   const [extras, setExtras] = useState<VisaoGeralExtrasResponse | null>(null);
   const [isLoadingExtras, setIsLoadingExtras] = useState(true);
-  const [dimensao, setDimensao] = useState<'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status'>(
+  const [dimensao, setDimensao] = useState<'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status' | 'colecao'>(
     // Estado salvo na sessao com a visao resumida antiga cai na linha completa.
     () => (!initialPageState?.dimensao || initialPageState.dimensao === 'linha' ? 'linhaCompleta' : initialPageState.dimensao)
   );
@@ -1435,6 +1436,7 @@ export default function PcpRelatorioBasePage() {
           value={isLoading || !data ? '—' : `${data.kpisExtra.giroAnualizado.toFixed(2)}x`}
           meta={formatVezes(extras?.meta.metaGiroAnualizado)}
           gap={desvioPercentualDe(data?.kpisExtra.giroAnualizado, extras?.meta.metaGiroAnualizado)}
+          maiorEMelhor
           gapFormato="percentual"
           isLoading={isLoading || isLoadingExtras}
         />
@@ -1525,10 +1527,10 @@ export default function PcpRelatorioBasePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Cobertura por linha/categoria/gênero/status × canal</CardTitle>
+          <CardTitle>Cobertura por linha/categoria/gênero/status/coleção × canal</CardTitle>
           <Select
             value={dimensao}
-            onChange={(e) => setDimensao(e.target.value as 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status')}
+            onChange={(e) => setDimensao(e.target.value as 'linha' | 'linhaCompleta' | 'categoria' | 'genero' | 'status' | 'colecao')}
             options={DIMENSAO_OPTIONS}
             className="w-64"
           />

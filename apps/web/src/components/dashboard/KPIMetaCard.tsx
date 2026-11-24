@@ -9,12 +9,14 @@ interface KPIMetaCardProps {
   meta: string;
   gap: number | null;
   gapFormato?: 'numero' | 'percentual';
+  // Giro: acima da meta e bom, abaixo e ruim (o inverso da cobertura, onde acima da meta e excesso).
+  maiorEMelhor?: boolean;
   subtitle?: string;
   footer?: React.ReactNode;
   isLoading?: boolean;
 }
 
-export function KPIMetaCard({ title, value, meta, gap, gapFormato = 'numero', subtitle, footer, isLoading }: KPIMetaCardProps) {
+export function KPIMetaCard({ title, value, meta, gap, gapFormato = 'numero', maiorEMelhor = false, subtitle, footer, isLoading }: KPIMetaCardProps) {
   if (isLoading) {
     return (
       <Card className="border-l-4 border-l-gray-200">
@@ -25,8 +27,10 @@ export function KPIMetaCard({ title, value, meta, gap, gapFormato = 'numero', su
     );
   }
 
-  const gapCor = gap !== null && gap < 0 ? 'text-blue-600' : gap !== null && gap > 0 ? 'text-red-600' : 'text-gray-500';
-  const borderCor = gap !== null && gap < 0 ? 'border-l-[var(--bbtk-blue)]' : gap !== null && gap > 0 ? 'border-l-[var(--bbtk-red)]' : 'border-l-gray-200';
+  const ruim = gap !== null && (maiorEMelhor ? gap < 0 : gap > 0);
+  const bom = gap !== null && (maiorEMelhor ? gap > 0 : gap < 0);
+  const gapCor = ruim ? 'text-red-600' : bom ? 'text-blue-600' : 'text-gray-500';
+  const borderCor = ruim ? 'border-l-[var(--bbtk-red)]' : bom ? 'border-l-[var(--bbtk-blue)]' : 'border-l-gray-200';
   const gapTexto = gap === null ? '—' : `${gap > 0 ? '+' : ''}${gap.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${gapFormato === 'percentual' ? '%' : ''}`;
 
   return (
