@@ -1362,33 +1362,37 @@ export function getPeriodosCalendario(startDate: Date, endDate: Date): PeriodoMe
   return periodos;
 }
 
-// Meta do PERIODO por filial, nao a meta do mes da data fim. A meta e cadastrada por
-// mes; aqui ela e rateada pelos dias de cada mes que entraram no filtro
-// (meta mensal / dias do mes * dias selecionados) e somada.
-//
-// Antes isso usava so o mes da data fim, o que inflava o atingimento de qualquer
-// periodo multi-mes: 01/01 a 31/03/2026 comparava R$ 2.822.724,18 de venda contra a
-// meta so de marco (R$ 763.033,33) e exibia 369,9% em vez dos 122,1% reais.
-// Mesmo criterio que o PCP ja usa em vendaDia.service.ts calcularMetaPeriodo.
-export async function getMetasPorFilialPeriodo(
+// A meta do período soma o rateio pelos dias selecionados de cada mês.
+// A meta diária planejada usa a meta mensal integral e a faixa da data final do filtro.
+export async function getMetasComparativoPorFilial(
   startDate: Date,
   endDate: Date
-): Promise<Map<number, number>> {
+): Promise<Map<number, { periodo: number; diaPlanejado: number }>> {
   const periodos = getPeriodosCalendario(startDate, endDate);
-  const acumulado = new Map<number, number>();
+  const ultimoPeriodo = periodos.at(-1);
+  const corteDaPrimeiraFaixa = 15;
+  const primeiraFaixa = endDate.getUTCDate() <= corteDaPrimeiraFaixa;
+  const pesoFaixa = primeiraFaixa ? 0.6 : 0.4;
+  const metasPorFilial = new Map<number, { periodo: number; diaPlanejado: number }>();
 
   for (const periodo of periodos) {
     const metasDoMes = await getMetasPorFilial(periodo.ano, periodo.mes);
     const proporcao = periodo.diasSelecionados / periodo.diasNoMes;
+    const diasFaixa = primeiraFaixa ? corteDaPrimeiraFaixa : periodo.diasNoMes - corteDaPrimeiraFaixa;
     for (const [branchCode, valor] of metasDoMes) {
-      acumulado.set(branchCode, (acumulado.get(branchCode) || 0) + valor * proporcao);
+      const meta = metasPorFilial.get(branchCode) ?? { periodo: 0, diaPlanejado: 0 };
+      meta.periodo += valor * proporcao;
+      if (periodo === ultimoPeriodo && valor > 0) {
+        meta.diaPlanejado = round(valor * pesoFaixa / diasFaixa);
+      }
+      metasPorFilial.set(branchCode, meta);
     }
   }
 
-  for (const [branchCode, valor] of acumulado) {
-    acumulado.set(branchCode, round(valor));
+  for (const meta of metasPorFilial.values()) {
+    meta.periodo = round(meta.periodo);
   }
-  return acumulado;
+  return metasPorFilial;
 }
 
 // Mesma regra de rateio, no grao de vendedor (nivel_3 das metas com seller_code).

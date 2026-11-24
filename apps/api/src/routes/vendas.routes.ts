@@ -501,36 +501,18 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const endAnterior = new Date(endAtual);
     endAnterior.setFullYear(endAnterior.getFullYear() - 1);
 
-    // "Dias restantes" e "meta/dia" so fazem sentido quando o filtro cobre UM mes que
-    // ainda esta correndo - e a pergunta "quanto falta vender por dia ate fechar o
-    // mes". Num periodo de varios meses, ou num mes ja fechado, nao ha o que projetar:
-    // diasRestantes fica 0 e a tela mostra meta/dia vazia. Antes a conta misturava a
-    // meta do periodo inteiro com os dias que faltavam so do ultimo mes.
-    const periodos = vendasService.getPeriodosCalendario(startAtual, endAtual);
-    const ano = endAtual.getUTCFullYear();
-    const mes = endAtual.getUTCMonth() + 1;
-    const ultimoDiaMes = new Date(Date.UTC(ano, mes, 0));
-    const hoje = new Date();
-    const periodoEhMesUnicoCorrente =
-      periodos.length === 1 &&
-      ano === hoje.getUTCFullYear() &&
-      mes === hoje.getUTCMonth() + 1;
-    const diasRestantes = periodoEhMesUnicoCorrente
-      ? Math.max(ultimoDiaMes.getUTCDate() - endAtual.getUTCDate(), 0)
-      : 0;
-
     let [
       filiaisAtual,
       filiaisAnterior,
       devolucoesMap,
       clientesNovosMap,
-      metasMap,
+      metasPorFilial,
     ] = await Promise.all([
       vendasService.getVendasPeriodo(startAtual, endAtual, branchCodes, produtoFiltro, diasExcluidos),
       vendasService.getVendasPeriodo(startAnterior, endAnterior, branchCodes, produtoFiltro, diasExcluidosAA),
       vendasService.getDevolucoesPorFilial(startAtual, endAtual, produtoFiltro, diasExcluidos),
       vendasService.getClientesNovosPorFilial(startAtual, endAtual, produtoFiltro, diasExcluidos),
-      vendasService.getMetasPorFilialPeriodo(startAtual, endAtual),
+      vendasService.getMetasComparativoPorFilial(startAtual, endAtual),
     ]);
 
     // A filial 02 abriga dois negocios distintos - troca a linha unica por DPA (2) e
@@ -597,12 +579,7 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
     const totalFaturamentoAtual = filiaisAtual.reduce((sum, f) => sum + f.faturamento, 0);
     const totalPecasAtual = filiaisAtual.reduce((sum, f) => sum + f.pecas, 0);
 
-    // A meta da Fabrica fica cadastrada no branch_code 2, mas na visualizacao dividida
-    // ela deve contar apenas na linha de Atacado. As linhas FABRICA e DELIVERY ficam
-    // sem meta para nao duplicar o alvo no total.
-    const FABRICA_META_ATACADO_CODE = 2.3;
-    const FABRICA_DIVIDIDA_CODES = [2, FABRICA_META_ATACADO_CODE];
-    const metaFabricaAtacado = metasMap.get(2) || 0;
+    // A meta cadastrada na filial 2 pertence à linha de Atacado no comparativo.
     const filiaisComparativo = filiaisAtual.map(f => {
       const ant = anteriorDict.get(f.branch_code) || {
         faturamento: 0,
@@ -628,11 +605,11 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
 
       const devolucao = devolucoesMap.get(f.branch_code) || { valor: 0, qtde: 0 };
       const clientesNovos = clientesNovosMap.get(f.branch_code) || { qtde: 0, faturamento: 0 };
-      const ehFabricaDividida = FABRICA_DIVIDIDA_CODES.includes(f.branch_code);
-      const metaValor = ehFabricaDividida
-        ? (f.branch_code === FABRICA_META_ATACADO_CODE ? metaFabricaAtacado : 0)
-        : (metasMap.get(f.branch_code) || 0);
-      const faturamentoParaMeta = f.faturamento;
+      const codigoMeta = f.branch_code === vendasService.ATACADO_BRANCH_CODE
+        ? vendasService.FABRICA_BRANCH_CODE
+        : f.branch_code;
+      const meta = f.branch_code === vendasService.FABRICA_BRANCH_CODE ? undefined : metasPorFilial.get(codigoMeta);
+      const metaValor = meta?.periodo ?? 0;
 
       return {
         branch_code: f.branch_code,
@@ -686,10 +663,8 @@ router.get('/comparativo-ano/:start?/:end?', async (req: Request, res: Response)
         },
         meta: {
           valor: metaValor,
-          pct: metaValor > 0 ? Math.round((faturamentoParaMeta / metaValor) * 1000) / 10 : 0,
-          meta_dia: metaValor > 0 && diasRestantes > 0
-            ? Math.round(((metaValor - faturamentoParaMeta) / diasRestantes) * 100) / 100
-            : 0,
+          pct: metaValor > 0 ? Math.round((f.faturamento / metaValor) * 1000) / 10 : 0,
+          meta_dia: meta?.diaPlanejado ?? 0,
         },
       };
     });

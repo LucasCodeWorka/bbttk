@@ -23,6 +23,8 @@ import { ProdutoImagensModal } from '@/components/pcp/ProdutoImagensModal';
 
 type LinhaComparativo = FilialComparativo & { proj?: ProjecaoFilial; bateMeta: boolean | null; debitoMeta: number | null; isTotal?: boolean };
 
+const AREA_GRAFICO_HORIZONTAL = 'h-[500px] overflow-y-auto';
+
 interface FiltroClientesDashboard {
   inicio: string;
   fim: string;
@@ -109,6 +111,7 @@ export default function DashboardPage() {
   const [sortDirProdutos, setSortDirProdutos] = useState<'asc' | 'desc'>('desc');
   const [fotosProduto, setFotosProduto] = useState<{ referencia: string; codigo: number | null } | null>(null);
   const [limiteRankingVendedores, setLimiteRankingVendedores] = useState<'10' | '20' | 'todos'>('10');
+  const [exibirGraficoVendedores, setExibirGraficoVendedores] = useState(false);
   const [graficoVendasModo, setGraficoVendasModo] = useState<'dia' | 'semana'>('dia');
   const comparativoScrollRef = useRef<HTMLDivElement>(null);
   const comparativoTopScrollRef = useRef<HTMLDivElement>(null);
@@ -705,7 +708,7 @@ export default function DashboardPage() {
         tm: valorNumerico(f.atual.tm),
         tm_ant: valorNumerico(f.ano_anterior.tm),
         var_tm: f.isTotal ? '' : percentualNumerico(f.variacao.tm),
-        meta_dia: f.isTotal ? '' : valorNumerico(f.meta.meta_dia),
+        meta_dia: !f.isTotal && f.meta.meta_dia > 0 ? valorNumerico(f.meta.meta_dia) : '',
         pecas: f.atual.pecas,
         pecas_ant: f.ano_anterior.pecas,
         debito_meta: valorNumerico(f.debitoMeta),
@@ -818,13 +821,14 @@ export default function DashboardPage() {
     ]);
   }
 
-  function ThSort({ label, sortKeyName, align = 'right' }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center' }) {
+  function ThSort({ label, sortKeyName, align = 'right', title }: { label: string; sortKeyName: string; align?: 'left' | 'right' | 'center'; title?: string }) {
     const active = sortKey === sortKeyName || (sortKeyName === 'branch_name' && !sortKey);
     const justifyClass = align === 'left' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
     return (
       <TableCell
         isHeader
         align={align}
+        title={title}
         className={`whitespace-nowrap cursor-pointer select-none transition-colors ${active ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
         onClick={() => handleSort(sortKeyName)}
       >
@@ -1066,7 +1070,9 @@ export default function DashboardPage() {
             <p className="text-sm font-bold text-gray-900">{formatMoney(vendas?.total?.faturamento || 0)}</p>
           </div>
           <LoadingOverlay active={isLoading}>
-            <BarChart data={dadosBarras} horizontal />
+            <div className={AREA_GRAFICO_HORIZONTAL} role="region" aria-label="Gráfico de vendas por filial" tabIndex={0}>
+              <BarChart data={dadosBarras} horizontal />
+            </div>
           </LoadingOverlay>
         </Card>
       </div>
@@ -1122,7 +1128,11 @@ export default function DashboardPage() {
               <ThSort label="TM" sortKeyName="tm" />
               <ThSort label="TM Ant." sortKeyName="tm_ant" />
               <ThSort label="Var %" sortKeyName="var_tm" align="center" />
-              <ThSort label="Meta Dia" sortKeyName="meta_dia" />
+              <ThSort
+                label="Meta Dia"
+                sortKeyName="meta_dia"
+                title="Meta diária planejada para a data final do filtro. 60% da meta mensal nos dias 1 a 15 e 40% do dia 16 ao fim do mês, em dias corridos."
+              />
               <ThSort label="Pecas" sortKeyName="pecas" />
               <ThSort label="Pecas Ant." sortKeyName="pecas_ant" />
               <ThSort label="Debito p/ Meta" sortKeyName="debito_meta" />
@@ -1178,7 +1188,7 @@ export default function DashboardPage() {
                   <TableCell align="right" className="whitespace-nowrap">{formatMoney(f.atual.tm)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatMoney(f.ano_anterior.tm)}</TableCell>
                   <TableCell align="center" className="whitespace-nowrap"><VariationBadge value={f.variacao.tm} /></TableCell>
-                  <TableCell align="right" className="whitespace-nowrap">{f.meta.valor > 0 ? formatMoney(f.meta.meta_dia) : '-'}</TableCell>
+                  <TableCell align="right" className="whitespace-nowrap">{f.meta.meta_dia > 0 ? formatMoney(f.meta.meta_dia) : '-'}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{formatNumber(f.atual.pecas)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap text-gray-500">{formatNumber(f.ano_anterior.pecas)}</TableCell>
                   <TableCell align="right" className="whitespace-nowrap">{f.debitoMeta === null ? '-' : formatMoney(f.debitoMeta)}</TableCell>
@@ -1296,9 +1306,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-6">
         {/* Ranking Vendedores */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-wrap gap-2">
             <CardTitle>Ranking Vendedores</CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Select
                 aria-label="Quantidade de vendedores no ranking"
                 value={limiteRankingVendedores}
@@ -1310,13 +1320,34 @@ export default function DashboardPage() {
                 ]}
                 className="w-32"
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="whitespace-nowrap"
+                onClick={() => setExibirGraficoVendedores((exibir) => !exibir)}
+              >
+                {exibirGraficoVendedores ? 'Ver tabela' : 'Ver gráfico'}
+              </Button>
               <Button variant="secondary" size="sm" onClick={exportarRankingVendedores}>
                 Exportar Excel
               </Button>
             </div>
           </CardHeader>
           <LoadingOverlay active={isLoading}>
-          <div ref={vendedoresScrollRef} className="max-h-[600px] overflow-auto">
+          {exibirGraficoVendedores && (
+            <div className={AREA_GRAFICO_HORIZONTAL} role="region" aria-label="Gráfico de faturamento por vendedor" tabIndex={0}>
+              <BarChart
+                data={vendedoresRanking.map((vendedor) => ({
+                  id: vendedor.seller_code,
+                  name: vendedor.seller_name,
+                  value: vendedor.faturamento,
+                }))}
+                horizontal
+              />
+            </div>
+          )}
+          <div ref={vendedoresScrollRef} className="max-h-[600px] overflow-auto" hidden={exibirGraficoVendedores}>
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-gray-50">
                 <tr>

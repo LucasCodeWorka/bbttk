@@ -13,6 +13,7 @@ import {
 import { formatMoney } from '@/lib/utils';
 
 interface DataPoint {
+  id?: string | number;
   name: string;
   value: number;
   displayValue?: string;
@@ -60,7 +61,7 @@ function RankedBarList({
         const pct = Math.max((d.value / max) * 100, 2);
         const cor = d.color || CORES_MARCA[i % CORES_MARCA.length];
         return (
-          <div key={d.name}>
+          <div key={d.id ?? d.name}>
             <div className="flex items-center justify-between text-xs mb-1 gap-3">
               <span className="font-medium text-gray-700 truncate" title={d.name}>
                 {truncar(d.name, 26)}
