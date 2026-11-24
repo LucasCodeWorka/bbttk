@@ -298,6 +298,7 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
     const { startDate, endDate } = resolvePeriodo(req);
 
     const produtos = await vendasService.getTopProdutos(startDate, endDate, branchCodes, 10, produtoFiltro, diasExcluidos);
+    const estoque = await vendasService.getEstoqueReferencias(produtos.map(p => p.referencia));
 
     res.json({
       periodo: {
@@ -305,6 +306,7 @@ router.get('/top-produtos/:branchCode?', async (req: Request, res: Response) => 
         fim: endDate.toISOString().split('T')[0],
       },
       produtos,
+      estoque,
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });

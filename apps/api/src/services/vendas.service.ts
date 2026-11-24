@@ -129,6 +129,19 @@ interface Produto {
   nome: string;
   quantidade: number;
   valor: number;
+  // Um product_code da referencia, so pra abrir as fotos (a rota de imagens e por produto).
+  productCode: number | null;
+}
+
+// Lojas fechadas ficam fora das colunas de estoque do Top Produtos (mesma lista do pcp-api,
+// LOJAS_VAREJO_FECHADAS - sem import cruzado entre os apps).
+const FILIAIS_FECHADAS = [10, 16, 18, 19];
+
+export interface EstoqueReferencias {
+  filiais: { branchCode: number; label: string }[];
+  // referencia -> branch_code -> pecas
+  porReferencia: Record<string, Record<number, number>>;
+  capturadoEm: string | null;
 }
 
 // Helpers
@@ -1021,12 +1034,14 @@ export async function getTopProdutos(
     nome: string;
     quantidade: Decimal;
     valor: Decimal;
+    product_code: number | null;
   }>>`
     SELECT
       COALESCE(p.reference_code, ti.product_code::text) as referencia,
       COALESCE(p.reference_name, p.product_name, 'Produto ' || ti.product_code) as nome,
       SUM(${PECAS_COM_SINAL}) as quantidade,
-      SUM(${FATURAMENTO_COM_SINAL}) as valor
+      SUM(${FATURAMENTO_COM_SINAL}) as valor,
+      MIN(ti.product_code) as product_code
     FROM transacao_itens ti
     JOIN transacoes t ON t.branch_code = ti.branch_code
       AND t.transaction_code = ti.transaction_code
@@ -1050,7 +1065,53 @@ export async function getTopProdutos(
     nome: row.nome,
     quantidade: Math.round(decimalToNumber(row.quantidade)),
     valor: round(decimalToNumber(row.valor)),
+    productCode: row.product_code !== null ? Number(row.product_code) : null,
   }));
+}
+
+// Estoque FISICO de hoje (stock_code 1) por referencia e filial, pro Top Produtos do
+// Comercial (pedido da Gleici/Renata, 24/11/2026). prd_saldo e changelog: o saldo atual de
+// cada SKU/filial e a ultima linha gravada (DISTINCT ON ... captured_at DESC). Mostra todas
+// as filiais abertas, inclusive a Fabrica, independente do filtro de loja do dashboard -
+// o "total empresa" precisa ser a empresa inteira.
+export async function getEstoqueReferencias(referencias: string[]): Promise<EstoqueReferencias> {
+  if (referencias.length === 0) return { filiais: [], porReferencia: {}, capturadoEm: null };
+  const rows = await prisma.$queryRaw<Array<{ referencia: string; branch_code: number; estoque: Decimal; capturado: Date | null }>>`
+    WITH ultimo AS (
+      SELECT DISTINCT ON (s.product_sku, s.branch_code)
+        p.reference_code, s.branch_code, s.stock, s.captured_at
+      FROM prd_saldo s
+      JOIN produtos p ON p.product_sku = s.product_sku
+      WHERE s.stock_code = 1
+        AND p.reference_code IN (${Prisma.join(referencias)})
+        AND s.branch_code NOT IN (${Prisma.join(FILIAIS_FECHADAS)})
+      ORDER BY s.product_sku, s.branch_code, s.captured_at DESC
+    )
+    SELECT reference_code AS referencia, branch_code, SUM(stock) AS estoque, MAX(captured_at) AS capturado
+    FROM ultimo
+    GROUP BY reference_code, branch_code
+  `;
+  const filiaisRows = await prisma.$queryRaw<Array<{ branch_code: number; label: string }>>`
+    SELECT branch_code, COALESCE(NULLIF(TRIM(abrev), ''), description, branch_code::text) AS label
+    FROM branches
+    WHERE branch_code NOT IN (${Prisma.join(FILIAIS_FECHADAS)})
+    ORDER BY branch_code
+  `;
+  const porReferencia: Record<string, Record<number, number>> = {};
+  let capturadoEm: Date | null = null;
+  const comEstoque = new Set<number>();
+  for (const r of rows) {
+    const qtd = Math.round(decimalToNumber(r.estoque));
+    (porReferencia[r.referencia] ||= {})[r.branch_code] = qtd;
+    if (qtd !== 0) comEstoque.add(r.branch_code);
+    if (r.capturado && (!capturadoEm || r.capturado > capturadoEm)) capturadoEm = r.capturado;
+  }
+  // So filiais que existem no cadastro e tem algum saldo nessas referencias (evita coluna
+  // de filial tecnica sempre zerada).
+  const filiais = filiaisRows
+    .filter(f => comEstoque.has(f.branch_code))
+    .map(f => ({ branchCode: f.branch_code, label: f.label }));
+  return { filiais, porReferencia, capturadoEm: capturadoEm ? (capturadoEm as Date).toISOString() : null };
 }
 
 // Devoluções por filial (operações com operationsType='E' e operationMode='3' no TOTVS)
