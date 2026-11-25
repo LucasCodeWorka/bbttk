@@ -101,6 +101,7 @@ function relatorioFake(t, disponivel) {
       linha('PRODUCT_CODE:123', 123, 0), linha('REAL', 123, 0), linha('SO-PRODUCAO', 456, 0),
     ];
     if (sql.includes('FROM branches')) return [];
+    if (sql.includes('WITH venda AS')) return [];
     throw new Error(`Consulta inesperada: ${sql}`);
   });
 }

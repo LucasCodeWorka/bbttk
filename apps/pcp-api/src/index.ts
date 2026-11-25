@@ -42,6 +42,7 @@ const corsOrigins = [
 
 const HEAVY_REPORT_PATHS = new Set([
   '/relatorio-base',
+  '/relatorio-base/ruptura-itens',
   '/visao-geral',
   '/analise-grade',
   '/analise-grade/curva-abc-tamanho',

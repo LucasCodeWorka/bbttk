@@ -557,9 +557,47 @@ export const relatorioBaseApi = {
     return fetchPcpApi<RelatorioBaseComparativo>(`/api/pcp/relatorio-base/comparativo-ano-anterior?${query}`, { token, signal });
   },
 
+  getRupturaItens: (token: string, filtro: RelatorioBaseFiltro, signal?: AbortSignal) => {
+    const query = relatorioBaseParams(filtro);
+    return fetchPcpApi<RupturaItensResponse>(`/api/pcp/relatorio-base/ruptura-itens?${query}`, { token, signal });
+  },
+
   getFiltrosRelatorioBase: (token: string) =>
     fetchPcpApi<RelatorioBaseFiltrosResponse>('/api/pcp/relatorio-base/filtros', { token }),
 };
+
+// Relacao dos itens da ruptura (botao do card da Visao Geral). Base: Basico/Renovavel
+// ATIVO que ja tiveram entrada e venderam nos ultimos 12 meses.
+export interface RupturaItemSku {
+  productSku: string;
+  cor: string;
+  tamanho: string;
+  estoque: number;
+  emRuptura: boolean;
+  ultimaVenda: string | null;
+  venda12m: number;
+  ultimaEntrada: string | null;
+}
+
+export interface RupturaItemReferencia {
+  referencia: string;
+  nome: string;
+  linha: string;
+  productCode: number | null;
+  skusBase: number;
+  skusRuptura: number;
+  percent: number;
+  venda12m: number;
+  ultimaVenda: string | null;
+  skus: RupturaItemSku[];
+}
+
+export interface RupturaItensResponse {
+  dataPosicao: string;
+  referencias: RupturaItemReferencia[];
+  totalSkusBase: number;
+  totalSkusRuptura: number;
+}
 
 // ---- Visao Geral (indicadores extra, reusados de Analise de Grade/Estoque Sem
 // Giro/Curva ABC - ver apps/pcp-api/src/services/visaoGeral.service.ts) ----

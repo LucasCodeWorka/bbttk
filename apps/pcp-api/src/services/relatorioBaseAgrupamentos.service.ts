@@ -30,8 +30,10 @@ type ReferenciaAcumulada = Pick<ReferenciaAgrupamento, 'referenceCode' | 'descri
 export function agruparStatus(status: string | null): string | null {
   const original = status?.trim() || null;
   const normalizado = original?.replace(/\s+/g, ' ').toUpperCase();
-  return normalizado === 'FORA DE LINHA' || normalizado?.startsWith('FORA DE LINHA ')
-    ? 'FORA DE LINHA' : original;
+  // "FORA DE LINHA" puro (preco cheio) fica separado dos "FORA DE LINHA <campanha>"
+  // (Black, Promo, Liqui...), que sao os itens com desconto e viram um grupo so.
+  if (normalizado === 'FORA DE LINHA') return 'FORA DE LINHA';
+  return normalizado?.startsWith('FORA DE LINHA ') ? 'FORA DE LINHA PROMO' : original;
 }
 
 export function ordenarPorEstoque<T extends { estTt: number; referenceCode: string }>(a: T, b: T): number {
