@@ -47,6 +47,7 @@ for (const [nome, critico, restante, valorCritico, valorRestante, percentual, ve
         if (text.includes('rb.giro_30d')) return snapshot;
         if (text.includes('FROM produto_analitico a')) return snapshot;
         if (text.includes('FROM branches')) return [];
+        if (text.includes('WITH venda AS')) return [];
         throw new Error(`Consulta não prevista no teste: ${text}`);
       },
     };

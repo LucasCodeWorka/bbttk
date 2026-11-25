@@ -12,6 +12,7 @@ import { Table, TableHead, TableBody, TableRow, TableCell } from '@/components/u
 import { FilialMultiSelect } from '@/components/ui/FilialMultiSelect';
 import { ClassificacaoMultiSelect } from '@/components/ui/ClassificacaoMultiSelect';
 import { ProdutoImagensModal } from '@/components/pcp/ProdutoImagensModal';
+import { RupturaItensModal } from '@/components/pcp/RupturaItensModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -82,7 +83,6 @@ type MatrizSortKey = keyof Pick<
   | 'estoqueVarejo'
   | 'estoqueAtacado'
   | 'estoqueTotal'
-  | 'valorEstoque'
   | 'vendaVarejo'
   | 'vendaAtacado'
   | 'vendaTotal'
@@ -93,12 +93,12 @@ type MatrizSortKey = keyof Pick<
 
 // Colunas que ganham participacao (% sobre o total da propria coluna) logo ao lado.
 const MATRIZ_COLUNAS_PARTICIPACAO = [
-  'estoqueVarejo', 'estoqueAtacado', 'estoqueTotal', 'valorEstoque', 'vendaVarejo', 'vendaAtacado', 'vendaTotal',
+  'estoqueVarejo', 'estoqueAtacado', 'estoqueTotal', 'vendaVarejo', 'vendaAtacado', 'vendaTotal',
 ] as const;
 type MatrizColunaParticipacao = (typeof MATRIZ_COLUNAS_PARTICIPACAO)[number];
-// Grupo + 10 colunas de valor + 7 de participacao (colSpan das linhas de detalhe).
-const MATRIZ_TOTAL_COLUNAS = 1 + 10 + MATRIZ_COLUNAS_PARTICIPACAO.length;
-// 18 colunas: padding lateral menor (inline, porque cn() nao resolve conflito com o
+// Grupo + 9 colunas de valor + 6 de participacao (colSpan das linhas de detalhe).
+const MATRIZ_TOTAL_COLUNAS = 1 + 9 + MATRIZ_COLUNAS_PARTICIPACAO.length;
+// 16 colunas: padding lateral menor (inline, porque cn() nao resolve conflito com o
 // px-4 do TableCell) pra cobertura caber sem rolar em tela larga.
 const CELULA_MATRIZ = { paddingLeft: 6, paddingRight: 6 };
 
@@ -121,8 +121,6 @@ function MatrizValores({ valores, total }: {
     {participacao('estoqueAtacado')}
     <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.estoqueTotal)}</TableCell>
     {participacao('estoqueTotal')}
-    <TableCell align="center" style={CELULA_MATRIZ}>{valores.valorEstoque == null ? '—' : formatMoney(valores.valorEstoque)}</TableCell>
-    {participacao('valorEstoque')}
     <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.vendaVarejo)}</TableCell>
     {participacao('vendaVarejo')}
     <TableCell align="center" style={CELULA_MATRIZ}>{quantidade(valores.vendaAtacado)}</TableCell>
@@ -245,8 +243,6 @@ function MatrizTable({ linhas }: { linhas: RelatorioBaseMatrizLinha[] }) {
           {thParticipacao('Est. Atacado')}
           <ThSortPcp label="Est. Total" sortKeyName="estoqueTotal" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
           {thParticipacao('Est. Total')}
-          <ThSortPcp label="Valor em Estoque" sortKeyName="valorEstoque" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
-          {thParticipacao('Valor em Estoque')}
           <ThSortPcp label="Venda Varejo 30d" sortKeyName="vendaVarejo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
           {thParticipacao('Venda Varejo 30d')}
           <ThSortPcp label="Venda Atacado 30d" sortKeyName="vendaAtacado" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="center" style={CELULA_MATRIZ} />
@@ -641,6 +637,7 @@ export default function PcpRelatorioBasePage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => initialPageState?.ordenacaoVersao === 2 ? initialPageState.sortDir || 'desc' : 'desc');
   const [referenciaExpandida, setReferenciaExpandida] = useState<string | null>(null);
   const [fotosReferencia, setFotosReferencia] = useState<{ referencia: string; codigo: number | null } | null>(null);
+  const [rupturaItensAberto, setRupturaItensAberto] = useState(false);
 
   // Indicadores extra (Analise de Grade/Estoque Sem Giro/Curva ABC) - carregados em
   // paralelo com a tabela, loading proprio pra um nao travar o outro.
@@ -1507,9 +1504,14 @@ export default function PcpRelatorioBasePage() {
               : undefined
           }
           footer={rupturaTotal && (
-            <p className="text-xs text-gray-500 mt-1" title="Base de cálculo da ruptura: SKUs de Básico e Renovável com status ATIVO, conforme os filtros aplicados.">
-              Base: {formatNumber(rupturaTotal.totalSkus)} SKUs ativos
-            </p>
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <p className="text-xs text-gray-500" title="Base de cálculo da ruptura: SKUs de Básico e Renovável com status ATIVO que já tiveram entrada e venderam nos últimos 12 meses (rede inteira), conforme os filtros aplicados.">
+                Base: {formatNumber(rupturaTotal.totalSkus)} SKUs com venda em 12 meses
+              </p>
+              <button type="button" className="text-xs font-medium text-blue-600 hover:underline" onClick={() => setRupturaItensAberto(true)}>
+                Ver itens
+              </button>
+            </div>
           )}
           color="green"
           valueSize="md"
@@ -1925,6 +1927,21 @@ export default function PcpRelatorioBasePage() {
       </Card>
 
       {fotosReferencia && <ProdutoImagensModal {...fotosReferencia} onClose={() => setFotosReferencia(null)} />}
+      {data && (
+        <RupturaItensModal
+          isOpen={rupturaItensAberto}
+          onClose={() => setRupturaItensAberto(false)}
+          filtro={{
+            categoria: filtroAplicado.produtoFiltro.categoria,
+            linha: filtroAplicado.produtoFiltro.linha,
+            genero: filtroAplicado.produtoFiltro.genero,
+            status: filtroAplicado.produtoFiltro.status,
+            branches: filtroAplicado.filiaisSelecionadas.length > 0 ? filtroAplicado.filiaisSelecionadas : undefined,
+            search: filtroAplicado.search || undefined,
+            dataPosicao: data.dataPosicao,
+          }}
+        />
+      )}
 
       <Modal isOpen={metaModalAberto} onClose={() => setMetaModalAberto(false)} title="Editar metas da Visão Geral" size="md">
         {meta && (

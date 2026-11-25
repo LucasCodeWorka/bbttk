@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { acumularRuptura, montarRupturaLinhaKpi, getRelatorioBase } = require('../dist/services/relatorioBase.service.js');
+const { skuElegivelRuptura, ColetorItensRuptura } = require('../dist/services/relatorioBaseRuptura.service.js');
 const database = require('../dist/config/database.js');
 
 function calcular(skus) {
@@ -60,12 +61,44 @@ test('a elegibilidade normaliza acentos, espaços e caixa dos nomes cadastrados'
   assert.deepEqual(result.renovavel, { skus: 0, totalSkus: 1, percent: 0 });
 });
 
+test('regra de 24/11: só entra quem já teve entrada e vendeu em 12 meses; registro técnico do ETL nunca entra', () => {
+  const vida = new Map([[10, { ultimaVenda: '2026-11-01', venda12m: 4, ultimaEntrada: '2026-01-10' }]]);
+  assert.equal(skuElegivelRuptura('7800000000010', 10, vida), true);
+  assert.equal(skuElegivelRuptura('7800000000011', 11, vida), false);
+  assert.equal(skuElegivelRuptura('7800000000012', null, vida), false);
+  assert.equal(skuElegivelRuptura('PRODUCT_CODE:10', 10, vida), false);
+  const basico = { skus: 0, totalSkus: 0 };
+  const renovavel = { skus: 0, totalSkus: 0 };
+  assert.equal(acumularRuptura(basico, renovavel, 'BÁSICO', 'ATIVO', 0, false), false);
+  assert.equal(acumularRuptura(basico, renovavel, 'BÁSICO', 'ATIVO', 0, true), true);
+  assert.deepEqual(montarRupturaLinhaKpi(basico), { skus: 1, totalSkus: 1, percent: 100 });
+});
+
+test('a relação agrupa por referência, só lista referência com ruptura e põe os SKUs em ruptura primeiro', () => {
+  const vida = new Map([[1, { ultimaVenda: '2026-10-01', venda12m: 3, ultimaEntrada: '2026-01-01' }],
+    [2, { ultimaVenda: '2026-11-01', venda12m: 5, ultimaEntrada: '2026-01-01' }]]);
+  const coletor = new ColetorItensRuptura(vida);
+  const base = { referencia: 'REF A', nome: 'Camisa', linha: 'Básico', cor: 'AZUL' };
+  coletor.adicionar({ ...base, productSku: 'A-M', productCode: 1, tamanho: 'M', estoque: 4 });
+  coletor.adicionar({ ...base, productSku: 'A-P', productCode: 2, tamanho: 'P', estoque: 0 });
+  coletor.adicionar({ ...base, referencia: 'REF B', productSku: 'B-P', productCode: 1, tamanho: 'P', estoque: 2 });
+  const r = coletor.montar('2026-11-22');
+  assert.equal(r.totalSkusBase, 3);
+  assert.equal(r.totalSkusRuptura, 1);
+  assert.equal(r.referencias.length, 1);
+  const [a] = r.referencias;
+  assert.deepEqual([a.referencia, a.skusRuptura, a.skusBase, a.percent, a.venda12m, a.ultimaVenda, a.productCode],
+    ['REF A', 1, 2, 50, 8, '2026-11-01', 1]);
+  assert.deepEqual(a.skus.map(s => [s.productSku, s.emRuptura]), [['A-P', true], ['A-M', false]]);
+});
+
 test('a posição histórica inclui ativos ausentes do snapshot sem duplicar filiais nem alterar os demais KPIs', async (t) => {
   const catalogo = [
     { product_sku: 'B-COM-SALDO', linha: 'BÁSICO', status: 'ATIVO' },
-    { product_sku: 'B-SEM-MOVIMENTO', linha: 'BÁSICO', status: 'ATIVO' },
+    { product_sku: 'B-SEM-MOVIMENTO', product_code: 124, linha: 'BÁSICO', status: 'ATIVO' },
     { product_sku: 'R-ZERO', linha: 'BÁSICO RENOVÁVEL', status: 'ATIVO' },
-    { product_sku: 'R-SEM-MOVIMENTO', linha: 'BÁSICO RENOVÁVEL', status: 'ATIVO' },
+    // Sem venda em 12 meses (fora da vida abaixo): sai da base da ruptura.
+    { product_sku: 'R-SEM-MOVIMENTO', product_code: 125, linha: 'BÁSICO RENOVÁVEL', status: 'ATIVO' },
     { product_sku: 'STYLE', linha: 'STYLE', status: 'ATIVO' },
     { product_sku: 'FORA', linha: 'BÁSICO', status: 'FORA DE LINHA XXXX' },
   ];
@@ -88,6 +121,9 @@ test('a posição histórica inclui ativos ausentes do snapshot sem duplicar fil
     coberturaLimiteVerde: 3, coberturaLimiteVermelho: 6,
   }) }, $queryRaw: async (sql) => {
     const text = Array.isArray(sql) ? sql.join('?') : sql.text;
+    if (text.includes('WITH venda AS')) return [123, 124].map(product_code => ({
+      product_code, ultima_venda: new Date('2026-11-01'), qtd: 1, ultima_entrada: new Date('2026-01-01'),
+    }));
     if (text.includes('produto_precos_promocionais')) return [{ existe: false }];
     if (text.includes('AS possui_diario')) return [{ possui_diario: false, hoje: '2026-11-15' }];
     if (text.includes('information_schema.columns')) return [{ possui_marcador: true }];
@@ -99,7 +135,7 @@ test('a posição histórica inclui ativos ausentes do snapshot sem duplicar fil
   } };
   const result = await getRelatorioBase({ dataPosicao: '2026-11-12', incluirComparativoAnoAnterior: false, pageSize: 1 });
   assert.deepEqual(result.kpisExtra.ruptura.basico, { skus: 1, totalSkus: 2, percent: 50 });
-  assert.deepEqual(result.kpisExtra.ruptura.renovavel, { skus: 2, totalSkus: 2, percent: 100 });
+  assert.deepEqual(result.kpisExtra.ruptura.renovavel, { skus: 1, totalSkus: 1, percent: 100 });
   // Cards de referencias/SKUs: so INATIVO fica fora, entao STYLE e FORA entram na base
   // (6), ao contrario da ruptura acima, que segue restrita a Basico/Renovavel ATIVO.
   assert.deepEqual(result.kpisExtra.estoqueAtivos.referencias, { comEstoque: 1, totalAtivos: 6, percent: 16.67 });

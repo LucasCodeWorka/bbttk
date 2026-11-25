@@ -70,6 +70,20 @@ router.get('/relatorio-base/comparativo-ano-anterior', async (req: Request, res:
   }
 });
 
+// Relacao dos itens em ruptura (botao do card da Visao Geral): referencias com SKU em
+// ruptura, cada uma com seus SKUs da base. Mesmos filtros/data do relatorio.
+router.get('/relatorio-base/ruptura-itens', async (req: Request, res: Response) => {
+  try {
+    const resultado = await getRelatorioBase({
+      ...resolveFiltro(req), page: 1, pageSize: 1,
+      incluirComparativoAnoAnterior: false, incluirItensRuptura: true,
+    });
+    res.json(resultado.rupturaItens);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/relatorio-base', async (req: Request, res: Response) => {
   try {
     const page = Number(req.query.page || 1);

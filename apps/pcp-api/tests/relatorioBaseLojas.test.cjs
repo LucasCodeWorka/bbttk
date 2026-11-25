@@ -87,6 +87,7 @@ test('visibilidade histórica considera todos os SKUs, negativos e páginas, sem
     }));
     if (text.includes('FROM produto_analitico a')) return snapshot;
     if (text.includes('FROM branches')) return fechadas.map(c => ({ branch_code: c.branchCode, branch_name: c.label }));
+    if (text.includes('WITH venda AS')) return [];
     throw new Error(`Consulta não prevista: ${text}`);
   });
   const filtro = { dataPosicao: data, incluirComparativoAnoAnterior: false, pageSize: 1 };
@@ -123,6 +124,7 @@ test('consulta ao vivo aplica a mesma ordem e mantém fechadas com saldo negativ
       return [];
     }
     if (/FROM (produto_custos|produto_precos|ops_em_producao)/.test(text)) return [];
+    if (text.includes('WITH venda AS')) return [];
     throw new Error(`Consulta não prevista: ${text}`);
   });
   const result = await getRelatorioBase({ dataPosicao: '2026-11-15', incluirComparativoAnoAnterior: false, pageSize: 1 });

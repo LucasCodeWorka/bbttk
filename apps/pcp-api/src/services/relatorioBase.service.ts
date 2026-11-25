@@ -5,6 +5,7 @@ import { prisma } from '../config/database.js';
 import { filtroLocalEstoqueSql, getColunasEstoque, localEstoqueSql } from './estoqueLocal.service.js';
 import { ordenarColunasRelatorioBase, selecionarColunasRelatorioBase } from './relatorioBaseLojas.service.js';
 import { getProducaoRelatorio, ProducaoRelatorio, skusCanonicosProducao } from './relatorioBaseProducao.service.js';
+import { ColetorItensRuptura, getVidaRuptura, RupturaItensResponse, skuElegivelRuptura } from './relatorioBaseRuptura.service.js';
 import {
   ATACADO_BRANCH_CODE,
   DPA_BRANCH_CODE,
@@ -243,19 +244,23 @@ function rupturaLinhaAccVazio(): RupturaLinhaAcc {
   return { skus: 0, totalSkus: 0 };
 }
 
+// `elegivel` = ja teve entrada e vendeu nos ultimos 12 meses (regra de 24/11/2026,
+// ver relatorioBaseRuptura.service.ts). Devolve true quando o SKU entrou na base.
 export function acumularRuptura(
   basico: RupturaLinhaAcc,
   renovavel: RupturaLinhaAcc,
   linha: string | null,
   status: string | null,
-  estoque: number
-) {
-  if (!skuAtivoDoMix(linha, status)) return;
+  estoque: number,
+  elegivel = true
+): boolean {
+  if (!elegivel || !skuAtivoDoMix(linha, status)) return false;
   const bucket = linhaBucket(linha);
   const acc = bucket === LINHA_BUCKET_BASICO ? basico : bucket === LINHA_BUCKET_BASICO_RENOVAVEL ? renovavel : null;
-  if (!acc) return;
+  if (!acc) return false;
   acc.totalSkus += 1;
   if (estoque <= 0) acc.skus += 1;
+  return true;
 }
 
 export function montarRupturaLinhaKpi(acc: RupturaLinhaAcc): RelatorioBaseRupturaLinhaKpi {
@@ -284,6 +289,9 @@ export interface RelatorioBaseFiltro {
   // Quando true, o drill-down por cor usa o nome do grupo do Agrupamento de Cores
   // (cores originais unificadas viram uma linha so).
   agruparPorCorSalva?: boolean;
+  // Monta a relacao dos itens da ruptura (botao do card) em `rupturaItens`. So o
+  // endpoint /relatorio-base/ruptura-itens liga isso; a tela normal nao paga o peso.
+  incluirItensRuptura?: boolean;
   // Lista so as referencias com algum SKU no alerta de preco (cards "Preco abaixo do
   // custo"/"MKUP fora da faixa"). Filtra a TABELA (antes da paginacao); os KPIs
   // continuam descrevendo o recorte inteiro.
@@ -493,6 +501,7 @@ export interface RelatorioBaseMatrizLinha {
 
 export interface RelatorioBaseResponse {
   dataPosicao: string;
+  rupturaItens?: RupturaItensResponse;
   producao: ProducaoRelatorio;
   config: {
     giroDias: number;
@@ -1492,6 +1501,16 @@ export const COR_EXIBICAO_SELECT = Prisma.sql`
   )
 `;
 
+function itemRupturaDaIdentidade(identidade: IdentidadeRow, estoque: number) {
+  const referencia = identidade.reference_code || identidade.product_sku;
+  return {
+    productSku: identidade.product_sku, productCode: identidade.product_code, referencia,
+    nome: identidade.reference_name || referencia, linha: linhaBucket(identidade.linha),
+    cor: identidade.color_name?.trim() || identidade.color_code?.trim() || '-',
+    tamanho: identidade.size?.trim() || '-', estoque,
+  };
+}
+
 async function getIdentidadeRows(filtro: RelatorioBaseFiltro): Promise<IdentidadeRow[]> {
   const filtroSql = buildIdentidadeFiltro(filtro);
 
@@ -1560,6 +1579,7 @@ async function getRelatorioBaseAnalitico(
 ): Promise<RelatorioBaseResponse | null> {
   const dataAnalitica = await resolveDataAnalitica(filtro);
   if (!dataAnalitica) return null;
+  const vidaRupturaPromise = getVidaRuptura(dataAnalitica);
 
   // Compatibilidade durante a publicacao: o backend pode subir antes da rotina.
   const [schema] = await prisma.$queryRaw<Array<{ possui_marcador: boolean }>>`
@@ -1818,6 +1838,8 @@ async function getRelatorioBaseAnalitico(
   const estoqueAnaliseReferencias = new Map<string, EstoqueAnaliseReferencia>();
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
+  const vidaRuptura = await vidaRupturaPromise;
+  const coletorRuptura = filtro.incluirItensRuptura ? new ColetorItensRuptura(vidaRuptura) : null;
   const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
   const lojasComValores = new Set<number>();
   const kpis = { giroTt1: 0, giroTt3: 0, giroTt6: 0, giroTt30: 0, giroTt60: 0, giroTt90: 0, estTt: 0, skuCount: 0 };
@@ -1918,7 +1940,11 @@ async function getRelatorioBaseAnalitico(
       estoqueMortoValor += sku.valorEstoque;
     }
     acumularEstoqueAnaliseReferencia(estoqueAnaliseReferencias, sku.referenceCode, sku.estTt, sku.valorEstoque, sku.giro30, sku.giro60, sku.giro90);
-    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, sku.linha, sku.status, sku.estTt);
+    if (acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, sku.linha, sku.status, sku.estTt,
+      skuElegivelRuptura(sku.productSku, sku.productCode, vidaRuptura))) {
+      coletorRuptura?.adicionar({ productSku: sku.productSku, productCode: sku.productCode, referencia: sku.referenceCode,
+        nome: sku.referenceName, linha: linhaBucket(sku.linha), cor: sku.cor, tamanho: sku.tamanho, estoque: sku.estTt });
+    }
     acumularEstoqueAtivos(estoqueAtivosAcc, sku.productSku, sku.referenceCode, sku.linha, sku.status, sku.estTt);
     if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += sku.estTt;
@@ -2040,7 +2066,10 @@ async function getRelatorioBaseAnalitico(
   // referencias/SKUs, com estoque zero na selecao consultada.
   for (const identidade of await getIdentidadeRows(filtro)) {
     if (skus.has(identidade.product_sku)) continue;
-    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, 0);
+    if (acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, 0,
+      skuElegivelRuptura(identidade.product_sku, identidade.product_code, vidaRuptura))) {
+      coletorRuptura?.adicionar(itemRupturaDaIdentidade(identidade, 0));
+    }
     acumularEstoqueAtivos(estoqueAtivosAcc, identidade.product_sku, identidade.reference_code || identidade.product_sku, identidade.linha, identidade.status, 0);
   }
 
@@ -2253,6 +2282,7 @@ async function getRelatorioBaseAnalitico(
 
   return {
     dataPosicao: dataAnalitica,
+    rupturaItens: coletorRuptura?.montar(dataAnalitica),
     producao: producao.info,
     config: {
       giroDias: config.giroDias,
@@ -2345,6 +2375,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   // nao o universo de produtos), entao so ativa a restricao quando ha filtro de
   // classificacao/busca de verdade - evita montar uma lista IN(...) enorme (~catalogo
   // inteiro) sem necessidade quando o usuario nao filtrou por classificacao nenhuma.
+  const vidaRupturaPromise = getVidaRuptura(filtro.dataPosicao!);
   const identidadeRows = await getIdentidadeRows(filtro);
   const temFiltroClassificacao = !!(
     filtro.categoria?.length || filtro.linha?.length || filtro.genero?.length || filtro.status?.length || filtro.search?.trim()
@@ -2530,6 +2561,8 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
   const estoqueAnaliseReferencias = new Map<string, EstoqueAnaliseReferencia>();
   const rupturaBasicoAcc = rupturaLinhaAccVazio();
   const rupturaRenovavelAcc = rupturaLinhaAccVazio();
+  const vidaRuptura = await vidaRupturaPromise;
+  const coletorRuptura = filtro.incluirItensRuptura ? new ColetorItensRuptura(vidaRuptura) : null;
   const estoqueAtivosAcc = new Map<string, EstoqueAtivoSku>();
   const alertasPrecoAcc = alertasPrecoAccVazio();
   let skusEmPromocao = 0;
@@ -2720,7 +2753,10 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
     }
     const referenceCodeParaKpi = identidade.reference_code || sku;
     acumularEstoqueAnaliseReferencia(estoqueAnaliseReferencias, referenceCodeParaKpi, estTt, valorEstoqueSku, giroTt1, giroTt2, giroTt3);
-    acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, estTt);
+    if (acumularRuptura(rupturaBasicoAcc, rupturaRenovavelAcc, identidade.linha, identidade.status, estTt,
+      skuElegivelRuptura(sku, productCode, vidaRuptura))) {
+      coletorRuptura?.adicionar(itemRupturaDaIdentidade(identidade, estTt));
+    }
     acumularEstoqueAtivos(estoqueAtivosAcc, sku, referenceCodeParaKpi, identidade.linha, identidade.status, estTt);
     if (statusBucketKey === 'FORA DE LINHA PROMOCAO') {
       estoquePromocaoQtd += estTt;
@@ -3153,6 +3189,7 @@ export async function getRelatorioBase(filtro: RelatorioBaseFiltro): Promise<Rel
 
   return {
     dataPosicao: filtro.dataPosicao!,
+    rupturaItens: coletorRuptura?.montar(filtro.dataPosicao!),
     producao: producao.info,
     config: {
       giroDias: config.giroDias,

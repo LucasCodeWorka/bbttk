@@ -5,8 +5,10 @@ const { agruparStatus, ReferenciasMatriz } = require('../dist/services/relatorio
 const database = require('../dist/config/database.js');
 
 test('agrupa complementos, preserva demais status e respeita o limite da expressão', () => {
-  for (const status of ['FORA DE LINHA', 'FORA DE LINHA 2025', ' fora  de linha BLACK FRIDAY ']) {
-    assert.equal(agruparStatus(status), 'FORA DE LINHA');
+  assert.equal(agruparStatus('FORA DE LINHA'), 'FORA DE LINHA');
+  assert.equal(agruparStatus(' fora  de linha '), 'FORA DE LINHA');
+  for (const status of ['FORA DE LINHA 2025', ' fora  de linha BLACK FRIDAY ', 'FORA DE LINHA PROMO']) {
+    assert.equal(agruparStatus(status), 'FORA DE LINHA PROMO');
   }
   for (const status of ['ATIVO', 'INATIVO', 'FORA DE LINHAGEM', null]) {
     assert.equal(agruparStatus(status), status);
@@ -67,6 +69,7 @@ for (const historico of [true, false]) {
           return [];
         }
         if (/FROM (produto_custos|produto_precos|ops_em_producao)/.test(text)) return [];
+        if (text.includes('WITH venda AS')) return [];
         throw new Error(`Consulta não prevista: ${text}`);
       },
     };
@@ -76,28 +79,32 @@ for (const historico of [true, false]) {
     const p2 = await getRelatorioBase({ ...filtro, page: 2 });
     assert.equal(p2.rows[0].referenceCode, 'FDL1');
     const grupo = result.matriz.status.find(r => r.label === 'FORA DE LINHA');
-    assert.equal(grupo.estoqueTotal, 12);
+    assert.equal(grupo.estoqueTotal, 10);
     assert.deepEqual(grupo.referencias.map(({ referenceCode, descricao, statusOriginais, estTt }) => ({ referenceCode, descricao, statusOriginais, estTt })), [
-      { referenceCode: 'FDL1', descricao: 'Descrição FDL1', statusOriginais: ['FORA DE LINHA', 'FORA DE LINHA 2026'], estTt: 8 },
-      { referenceCode: 'FDL2', descricao: 'Descrição FDL2', statusOriginais: ['FORA DE LINHA 2025'], estTt: 4 },
+      { referenceCode: 'FDL1', descricao: 'Descrição FDL1', statusOriginais: ['FORA DE LINHA'], estTt: 10 },
     ]);
     const detalhe = grupo.referencias[0];
-    assert.equal(detalhe.estoqueVarejo, 8);
+    assert.equal(detalhe.estoqueVarejo, 10);
     assert.equal(detalhe.estoqueAtacado, 0);
-    assert.equal(detalhe.estoqueTotal, 8);
-    assert.equal(detalhe.valorEstoque, historico ? 80 : 0);
+    assert.equal(detalhe.estoqueTotal, 10);
+    assert.equal(detalhe.valorEstoque, historico ? 100 : 0);
     assert.equal(detalhe.vendaVarejo, 50);
     assert.equal(detalhe.vendaAtacado, 0);
     assert.equal(detalhe.vendaTotal, 50);
-    assert.equal(detalhe.coberturaVarejo, 0.16);
+    assert.equal(detalhe.coberturaVarejo, 0.2);
     assert.equal(detalhe.coberturaAtacado, null);
-    assert.equal(detalhe.coberturaGeral, 0.16);
-    assert.equal(grupo.referencias[1].coberturaGeral, null);
+    assert.equal(detalhe.coberturaGeral, 0.2);
+    const promo = result.matriz.status.find(r => r.label === 'FORA DE LINHA PROMO');
+    assert.equal(promo.estoqueTotal, 2);
+    assert.deepEqual(promo.referencias.map(r => [r.referenceCode, r.statusOriginais, r.estTt]), [
+      ['FDL2', ['FORA DE LINHA 2025'], 4],
+      ['FDL1', ['FORA DE LINHA 2026'], -2],
+    ]);
     const parteAtiva = result.matriz.status.find(r => r.label === 'ATIVO').referencias.find(r => r.referenceCode === 'FDL1');
     assert.equal(parteAtiva.estoqueTotal, 1);
     assert.equal(parteAtiva.vendaTotal, 5);
     assert.deepEqual(parteAtiva.statusOriginais, ['ATIVO']);
-    assert.equal(result.matriz.status.filter(r => r.label.startsWith('FORA DE LINHA')).length, 1);
+    assert.equal(result.matriz.status.filter(r => r.label.startsWith('FORA DE LINHA')).length, 2);
     assert.equal(p2.rows[0].status, 'FORA DE LINHA');
     // O KPI de promoção mantém a regra anterior dos complementos: -2 + 4 = 2.
     assert.equal(result.kpisExtra.estoquePromocaoQtd, 2);
