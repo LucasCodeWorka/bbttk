@@ -43,6 +43,19 @@ e redige.
 - Gera junto um `_vocabulario_cliente.md` (uso interno): os termos que a cliente usa e
   o que significam no sistema, para a equipe falar a língua dela.
 
+## Documentação completa (leia primeiro se for reaproveitar)
+
+- [docs/MODO_DE_OPERAR.md](docs/MODO_DE_OPERAR.md): o método ponta a ponta (pedido, plano,
+  correção, prints antes/depois, PDF, aprovação, publicar), as regras do Lucas e o que
+  somos capazes de fazer.
+- [docs/IDEIAS_E_HISTORICO.md](docs/IDEIAS_E_HISTORICO.md): de onde veio a ideia, linha do
+  tempo, decisões técnicas, armadilhas já pagas e próximos passos.
+- [docs/PORTAR_PARA_OUTRO_PROJETO.md](docs/PORTAR_PARA_OUTRO_PROJETO.md): o que é genérico,
+  como escrever receitas e o passo a passo para usar nos projetos da Liebe.
+- [docs/VOCABULARIO.md](docs/VOCABULARIO.md): como a cliente fala e o que é no sistema.
+- [exemplos/](exemplos/): scripts avulsos usados nas demandas pequenas (card + modal,
+  quadro com seletor, tela do Comercial, montagem do PDF antes x depois).
+
 ## Divisão de trabalho
 
 | Camada | Quem faz | Custo |
